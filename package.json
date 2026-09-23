@@ -1,0 +1,24 @@
+{
+  "name": "photo-booth",
+  "version": "0.1.0",
+  "description": "Photo booth tactile pour Raspberry Pi : Canon EOS via gphoto2, impression CUPS, templates et thèmes personnalisables.",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "demo-assets": "node scripts/make-demo-assets.js",
+    "smoke": "node scripts/smoke-test.js"
+  },
+  "dependencies": {
+    "@elgato-stream-deck/node": "^7.7.0",
+    "express": "^5.1.0",
+    "multer": "^2.0.1",
+    "qrcode": "^1.5.4",
+    "sharp": "^0.34.3",
+    "ws": "^8.18.3"
+  }
+}

@@ -1,0 +1,11 @@
+node_modules/
+output/
+data/db.json
+data/uploads/*
+!data/uploads/.gitkeep
+.DS_Store
+# Réglages locaux : codes PIN admin et opérateur (recréés avec les valeurs par défaut au premier démarrage)
+data/config.json
+# Templates propres à un événement (le template « default » reste versionné)
+data/templates/*
+!data/templates/default/

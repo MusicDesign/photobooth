@@ -1,0 +1,13 @@
+{
+  "id": "festive",
+  "name": "Festif",
+  "colors": {
+    "primary": "#ff4d6d",
+    "secondary": "#7209b7",
+    "background": "#fff0f3",
+    "surface": "#ffffff",
+    "text": "#2b2d42",
+    "onPrimary": "#ffffff"
+  },
+  "font": "rounded"
+}

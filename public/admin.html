@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Administration · Photo Booth</title>
+<link rel="stylesheet" href="/admin.css">
+</head>
+<body>
+<div id="login" class="login hidden">
+  <form id="loginForm" class="card login-card">
+    <h1>Administration</h1>
+    <label>Code PIN <input id="loginPin" type="password" inputmode="numeric" autocomplete="off" autofocus></label>
+    <button class="btn primary" type="submit">Entrer</button>
+    <p id="loginError" class="error"></p>
+  </form>
+</div>
+
+<div id="shell" class="shell hidden">
+  <nav class="nav">
+    <div class="nav-title">Photo Booth</div>
+    <a href="#dashboard" class="active">Tableau de bord</a>
+    <a href="#limits">Limites d'impression</a>
+    <a href="#theme">Thème &amp; textes</a>
+    <a href="#templates">Templates</a>
+    <a href="#hardware">Caméra &amp; imprimante</a>
+    <a href="#sessions">Sessions</a>
+    <a href="#security">Codes &amp; partage</a>
+    <div class="nav-foot">
+      <a href="/" target="_blank">Ouvrir la borne ↗</a>
+      <button id="btnLogout" class="btn ghost small">Déconnexion</button>
+    </div>
+  </nav>
+  <main id="main" class="main"></main>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script type="module" src="/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#f8f9fa">
+<title>Photo Booth</title>
+<link rel="stylesheet" href="/booth.css">
+</head>
+<body data-font="system">
+<div id="app" class="app">
+  <header class="brand"><span id="logo" class="logo-slot"></span><span id="boothName" class="booth-name"></span></header>
+
+  <!-- Accueil -->
+  <section class="screen active" id="screen-idle">
+    <div class="center-col">
+      <span id="logoBig" class="logo-slot logo-big"></span>
+      <h1 id="txtWelcome" class="headline"></h1>
+      <div class="pulse"></div>
+    </div>
+  </section>
+
+  <!-- Choix du template -->
+  <section class="screen" id="screen-template">
+    <h2 id="txtChooseTemplate" class="title"></h2>
+    <div id="templateGrid" class="template-grid"></div>
+    <button id="btnTemplateBack" class="btn btn-ghost back">← Retour</button>
+  </section>
+
+  <!-- Prise de vue : aperçu live DANS le template -->
+  <section class="screen" id="screen-capture">
+    <div class="capture-layout">
+      <div class="preview-wrap">
+        <canvas id="preview"></canvas>
+        <div id="countdown" class="countdown hidden"></div>
+        <div id="flash" class="flash"></div>
+      </div>
+      <div class="side">
+        <div id="shotLabel" class="shot-label"></div>
+        <p id="txtGetReady" class="hint"></p>
+        <button id="btnStart" class="btn btn-primary btn-xl"></button>
+        <button id="btnCancel" class="btn btn-ghost">Annuler</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Relecture : refaire ou garder -->
+  <section class="screen" id="screen-review">
+    <h2 id="txtReview" class="title"></h2>
+    <div class="review-layout">
+      <div class="final-wrap"><img id="finalImg" class="final-img" alt="Votre photo"></div>
+      <div class="side">
+        <div id="retakeChooser" class="retake-chooser hidden"></div>
+        <button id="btnKeep" class="btn btn-primary btn-xl"></button>
+        <button id="btnRetake" class="btn btn-secondary btn-xl"></button>
+        <div class="timeout-bar"><div id="timeoutFill"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Nombre de copies -->
+  <section class="screen" id="screen-copies">
+    <h2 id="txtCopies" class="title"></h2>
+    <div class="review-layout">
+      <div class="final-wrap"><img id="finalThumb" class="final-img" alt=""></div>
+      <div class="side">
+        <div id="stepper" class="stepper">
+          <button id="btnMinus" class="btn btn-round" data-icon="minus" aria-label="Moins"></button>
+          <div id="copiesValue" class="copies-value">1</div>
+          <button id="btnPlus" class="btn btn-round" data-icon="plus" aria-label="Plus"></button>
+        </div>
+        <p id="copiesHint" class="hint"></p>
+        <button id="btnPrint" class="btn btn-primary btn-xl"></button>
+        <button id="btnNoPrint" class="btn btn-ghost"></button>
+        <button id="btnOperator" class="link">Code opérateur</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Impression -->
+  <section class="screen" id="screen-printing">
+    <div class="center-col">
+      <div class="spinner"></div>
+      <h2 id="txtPrinting" class="title"></h2>
+      <p id="printStatus" class="hint"></p>
+    </div>
+  </section>
+
+  <!-- Fin + QR code -->
+  <section class="screen" id="screen-done">
+    <div class="review-layout">
+      <div class="qr-wrap"><img id="qrImg" class="qr" alt="QR code"></div>
+      <div class="side">
+        <h2 id="txtThanks" class="title"></h2>
+        <p id="shareUrl" class="share-url"></p>
+        <button id="btnFinish" class="btn btn-primary btn-xl"></button>
+      </div>
+    </div>
+  </section>
+
+  <div id="toast" class="toast hidden"></div>
+  <div id="adminHotspot" class="admin-hotspot" aria-hidden="true"></div>
+</div>
+
+<video id="video" playsinline muted autoplay class="offscreen"></video>
+<img id="mjpeg" alt="" class="offscreen">
+
+<!-- Pavé numérique (codes admin / opérateur) -->
+<dialog id="pinDialog" class="pin-dialog">
+  <h3 id="pinTitle">Code</h3>
+  <div id="pinDisplay" class="pin-display"></div>
+  <div class="keypad">
+    <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+    <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+    <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+    <button data-k="del" class="key-alt">⌫</button><button data-k="0">0</button><button data-k="ok" class="key-ok">OK</button>
+  </div>
+  <button id="pinCancel" class="btn btn-ghost">Annuler</button>
+</dialog>
+
+<script type="module" src="/booth.js"></script>
+</body>
+</html>

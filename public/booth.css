@@ -1,0 +1,147 @@
+:root {
+  --primary: #e63946;
+  --secondary: #1d3557;
+  --bg: #f8f9fa;
+  --surface: #ffffff;
+  --text: #1a1a1a;
+  --on-primary: #ffffff;
+  --on-secondary: #ffffff;   /* calculé par booth.js : lisible sur la couleur secondaire */
+  --on-surface: #1a1a1a;     /* calculé par booth.js : lisible sur la couleur des cartes */
+  --radius: 28px;
+  --shadow: 0 16px 50px rgba(0, 0, 0, 0.14);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  background-size: cover;
+  background-position: center;
+  color: var(--text);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  cursor: default;
+}
+body[data-font="rounded"] { font-family: "Arial Rounded MT Bold", "Nunito", "Quicksand", -apple-system, sans-serif; }
+body[data-font="serif"] { font-family: Georgia, "Times New Roman", serif; }
+
+.app { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+.offscreen { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; left: -10px; top: -10px; }
+.hidden { display: none !important; }
+
+.brand { position: absolute; top: 20px; left: 28px; z-index: 5; pointer-events: none; display: flex; align-items: center; gap: 14px; }
+.booth-name { font-weight: 800; font-size: 26px; color: var(--secondary); }
+.booth-name:empty { display: none; }
+.logo-slot { display: inline-flex; align-items: center; color: var(--secondary); }
+.logo-slot svg, .logo-slot img { height: 56px; width: auto; max-width: 320px; object-fit: contain; }
+.logo-big svg, .logo-big img { height: 140px; max-width: 70vw; }
+
+/* Écrans empilés, un seul actif */
+.screen {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 90px 40px 40px; gap: 24px; opacity: 0; pointer-events: none; transform: scale(0.985);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.screen.active { opacity: 1; pointer-events: auto; transform: none; }
+
+.center-col { display: flex; flex-direction: column; align-items: center; gap: 28px; text-align: center; }
+.headline { font-size: clamp(32px, 4.5vw, 64px); font-weight: 800; color: var(--secondary); margin: 0; max-width: 18ch; line-height: 1.1; }
+.title { font-size: clamp(26px, 3.4vw, 46px); font-weight: 800; color: var(--secondary); margin: 0; text-align: center; }
+.hint { font-size: clamp(16px, 1.6vw, 22px); opacity: 0.75; margin: 0; text-align: center; max-width: 34ch; }
+
+.pulse { width: 84px; height: 84px; border-radius: 50%; border: 6px solid var(--primary); animation: pulse 1.6s ease-out infinite; }
+@keyframes pulse { 0% { transform: scale(0.6); opacity: 1; } 100% { transform: scale(1.5); opacity: 0; } }
+
+/* Boutons */
+.btn {
+  appearance: none; border: 0; border-radius: 999px; font: inherit; font-weight: 800; cursor: pointer;
+  padding: 18px 34px; font-size: 22px; min-height: 64px; min-width: 200px; transition: transform 0.08s ease, filter 0.15s ease;
+}
+.btn:active { transform: scale(0.96); }
+.btn:disabled { opacity: 0.35; pointer-events: none; }
+.btn-primary { background: var(--primary); color: var(--on-primary); box-shadow: 0 10px 30px color-mix(in srgb, var(--primary) 40%, transparent); }
+/* Bouton secondaire : même couleur que le principal, en contour ; toujours placé sous le principal. */
+.btn-secondary { background: transparent; color: var(--primary); border: 3px solid var(--primary); }
+.btn-ghost { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+.btn-xl { padding: 24px 44px; font-size: 28px; min-height: 84px; min-width: 300px; }
+.btn-round {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 96px; height: 96px; min-width: 96px; min-height: 96px; padding: 0; border-radius: 50%;
+  font-size: 0; line-height: 0; background: var(--secondary); color: var(--on-secondary);
+}
+/* Icônes dessinées en CSS : centrage géométrique, indépendant de la police du thème */
+.btn-round::before, .btn-round::after { content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: currentColor; border-radius: 4px; }
+.btn-round::before { width: 36px; height: 8px; }
+.btn-round[data-icon="plus"]::after { width: 8px; height: 36px; }
+.link { appearance: none; background: none; border: 0; color: var(--text); opacity: 0.5; font: inherit; font-size: 16px; text-decoration: underline; cursor: pointer; padding: 12px; }
+.back { position: absolute; left: 32px; bottom: 32px; }
+
+.side { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; min-width: 340px; }
+
+/* Choix du template */
+.template-grid { display: flex; flex-wrap: wrap; gap: 32px; justify-content: center; align-items: flex-end; max-width: 1400px; }
+.template-card { appearance: none; border: 0; background: var(--surface); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 14px; transition: transform 0.12s ease; }
+.template-card:active { transform: scale(0.97); }
+.template-card canvas { border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); background: repeating-conic-gradient(#e9e9e9 0 25%, #fff 0 50%) 0 0 / 20px 20px; }
+.template-name { font-weight: 800; font-size: 22px; color: var(--on-surface); }
+
+/* Prise de vue */
+.capture-layout, .review-layout { display: flex; align-items: center; justify-content: center; gap: 56px; width: 100%; height: 100%; }
+.preview-wrap { position: relative; flex: 1 1 auto; height: 100%; max-height: calc(100vh - 140px); display: flex; align-items: center; justify-content: center; }
+#preview { border-radius: 18px; box-shadow: var(--shadow); background: #ddd; max-width: 100%; max-height: 100%; }
+.countdown {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: clamp(120px, 24vw, 340px); font-weight: 900; color: #fff; text-shadow: 0 10px 50px rgba(0,0,0,0.55); pointer-events: none;
+}
+.countdown.pop { animation: pop 0.9s ease-out; }
+/* Message « Gardez la pose ! » au même endroit que les chiffres, entre le « 0 » et l'arrivée de la photo */
+.countdown.msg { font-size: clamp(28px, 5vw, 64px); line-height: 1.15; padding: 0 28px; text-align: center; letter-spacing: 0.5px; }
+@keyframes pop { 0% { transform: scale(1.35); opacity: 0.2; } 30% { transform: scale(1); opacity: 1; } 100% { transform: scale(0.9); opacity: 0.9; } }
+.flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; border-radius: 18px; }
+.flash.on { animation: flash 0.45s ease-out; }
+@keyframes flash { 0% { opacity: 1; } 100% { opacity: 0; } }
+.shot-label { font-size: 30px; font-weight: 800; color: var(--primary); min-height: 36px; }
+
+/* Relecture / copies */
+.final-wrap { flex: 1 1 auto; height: 100%; max-height: calc(100vh - 220px); display: flex; align-items: center; justify-content: center; }
+.final-img { max-width: 100%; max-height: 100%; border-radius: 16px; box-shadow: var(--shadow); background: #fff; }
+.retake-chooser { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; max-width: 420px; }
+.retake-thumb { appearance: none; border: 4px solid transparent; background: var(--surface); border-radius: 16px; padding: 8px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 6px; font: inherit; font-weight: 700; color: var(--on-surface); box-shadow: var(--shadow); }
+.retake-thumb:active { border-color: var(--primary); }
+.retake-thumb img { width: 110px; height: 82px; object-fit: cover; border-radius: 10px; }
+.timeout-bar { width: 300px; height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--text) 12%, transparent); overflow: hidden; }
+#timeoutFill { height: 100%; width: 100%; background: var(--primary); }
+.stepper { display: flex; align-items: center; gap: 26px; }
+.copies-value { font-size: 96px; font-weight: 900; min-width: 120px; text-align: center; color: var(--secondary); line-height: 1; }
+
+/* Impression / fin */
+.spinner { width: 90px; height: 90px; border-radius: 50%; border: 10px solid color-mix(in srgb, var(--primary) 20%, transparent); border-top-color: var(--primary); animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.qr-wrap { background: #fff; padding: 24px; border-radius: var(--radius); box-shadow: var(--shadow); }
+.qr { width: min(46vh, 420px); height: auto; display: block; }
+.share-url { font-size: 18px; opacity: 0.6; word-break: break-all; text-align: center; max-width: 36ch; }
+
+/* Toast + zone admin cachée */
+.toast { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); background: var(--secondary); color: var(--on-secondary); padding: 16px 26px; border-radius: 999px; font-weight: 700; font-size: 18px; z-index: 50; box-shadow: var(--shadow); max-width: 80vw; text-align: center; }
+.admin-hotspot { position: fixed; top: 0; right: 0; width: 120px; height: 120px; z-index: 60; }
+
+/* Pavé numérique */
+.pin-dialog { border: 0; border-radius: var(--radius); padding: 28px; background: var(--surface); color: var(--on-surface); box-shadow: var(--shadow); width: 360px; text-align: center; }
+.pin-dialog::backdrop { background: rgba(0,0,0,0.45); }
+.pin-dialog h3 { margin: 0 0 12px; color: var(--on-surface); font-size: 24px; }
+.pin-display { font-size: 40px; letter-spacing: 10px; min-height: 52px; margin-bottom: 14px; color: var(--on-surface); }
+.keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
+.keypad button { appearance: none; border: 0; border-radius: 16px; background: color-mix(in srgb, var(--on-surface) 10%, transparent); color: var(--on-surface); font: inherit; font-size: 30px; font-weight: 700; height: 72px; cursor: pointer; }
+.keypad button:active { filter: brightness(0.85); }
+.keypad .key-ok { background: var(--primary); color: var(--on-primary); }
+.pin-dialog .btn { min-width: 0; width: 100%; }
+
+/* Portrait (écran officiel Pi en mode portrait) */
+@media (orientation: portrait) {
+  .capture-layout, .review-layout { flex-direction: column; gap: 24px; }
+  .preview-wrap, .final-wrap { max-height: 58vh; width: 100%; }
+  .side { min-width: 0; width: 100%; }
+  .screen { padding: 100px 24px 32px; }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "default-light",
+  "name": "Clair",
+  "colors": {
+    "primary": "#e63946",
+    "secondary": "#1d3557",
+    "background": "#f8f9fa",
+    "surface": "#ffffff",
+    "text": "#1a1a1a",
+    "onPrimary": "#ffffff"
+  },
+  "font": "system"
+}
