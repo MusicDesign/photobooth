@@ -11,6 +11,13 @@ import { app, BrowserWindow, dialog, session } from 'electron';
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform-hint', 'auto'); // Wayland (tactile)
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
+// Lancée depuis le Finder, l'app hérite d'un PATH minimal (/usr/bin:/bin…) : sans Homebrew, gphoto2 est introuvable.
+if (process.platform === 'darwin') {
+  const dirs = (process.env.PATH || '').split(':');
+  for (const d of ['/usr/local/bin', '/opt/homebrew/bin']) if (!dirs.includes(d)) dirs.unshift(d);
+  process.env.PATH = dirs.join(':');
+}
+
 // Une seule borne : relancer l'icône ramène la fenêtre existante.
 if (!app.requestSingleInstanceLock()) app.quit();
 else start().catch((e) => {
@@ -39,11 +46,22 @@ async function start() {
   installFileLog();
 
   let stopped = false;
-  const { server, port, close } = await createApp({ onShutdown: () => { stopped = true; app.quit(); } });
-  await new Promise((resolve, reject) => {
-    server.once('error', (e) => reject(e.code === 'EADDRINUSE' ? new Error(`le port ${port} est déjà utilisé par une autre application`) : e));
-    server.listen(port, resolve);
+  const { server, port, close } = await createApp({
+    onShutdown: () => { stopped = true; app.quit(); },
+    // Redémarrer : nouvelle instance au départ de celle-ci (même dossier d'app, même environnement)
+    onRestart: () => { stopped = true; app.relaunch(app.isPackaged ? {} : { args: [app.getAppPath()] }); app.exit(0); }
   });
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', (e) => reject(e.code === 'EADDRINUSE' ? new Error(`le port ${port} est déjà utilisé (serveur lancé dans un terminal ?)`) : e));
+      server.listen(port, resolve);
+    });
+  } catch (e) {
+    // Démarrage raté : on rend la caméra et le Stream Deck avant d'afficher l'erreur, sinon ils restent pris.
+    stopped = true;
+    await close().catch(() => {});
+    throw e;
+  }
   const url = `http://localhost:${server.address().port}`;
   console.log(`[app] borne : ${url}`);
 

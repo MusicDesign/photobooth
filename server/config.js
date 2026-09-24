@@ -12,6 +12,7 @@ export const DEFAULTS = {
     name: 'Photo Booth',
     language: 'fr',
     idleReturnSec: 20,
+    menuIdleSec: 30,       // choix du cadre et galerie : retour à l'accueil sans interaction (0 = jamais)
     mirrorPreview: true,
     lensPosition: 'top',   // où est l'objectif par rapport à l'écran : top | bottom | left | right (sens de la flèche « Regardez l'objectif »)
     showName: true,        // affiche le nom à côté du logo
@@ -131,6 +132,7 @@ export const DEFAULTS = {
     // le DNS du hotspot la fait pointer sur la borne ; ailleurs, la page distante (npm run remote) invite à s'y connecter.
     publicUrl: '',
     qrOnDone: true,        // QR code de la photo sur l'écran de fin
+    requireWifi: true,     // QR codes de photo masqués quand la borne n'est pas en Wi-Fi (aucun téléphone ne la joindrait)
     // QR code Wi-Fi affiché en permanence en bas à droite de la borne : le téléphone rejoint le hotspot en un scan.
     // Doit reprendre le nom et le mot de passe du hotspot (TUTORIEL.md, étape 10.7). security : WPA | nopass (réseau ouvert)
     wifi: { enabled: false, ssid: '', password: '', security: 'WPA' }

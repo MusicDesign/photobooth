@@ -3,12 +3,14 @@ import path from 'node:path';
 import QRCode from 'qrcode';
 import { SESSIONS_DIR, PUBLIC_DIR } from './paths.js';
 import { HttpError, newId, lanIp } from './util.js';
+import { wifiStatus } from './network.js';
+import { samplePhotos } from './samples.js';
 import { compose, thumbnail, normalizeShot } from './compositor.js';
 
 /** Version du code de la borne (date de modification des fichiers servis) : la page se recharge si elle change. */
 function clientVersion() {
   let v = 0;
-  for (const f of ['index.html', 'booth.js', 'booth.css', 'template-render.js']) {
+  for (const f of ['index.html', 'booth.js', 'booth.css', 'template-render.js', 'cutout.js', 'cutout-live.js']) {
     try { v = Math.max(v, fs.statSync(path.join(PUBLIC_DIR, f)).mtimeMs); } catch { /* absent */ }
   }
   return Math.round(v);
@@ -74,6 +76,7 @@ export class Booth {
   bootstrap() {
     const cfg = this.cfg();
     const { operatorPin, ...limits } = cfg.limits;
+    const wifi = cfg.share.requireWifi === false || wifiStatus().connected;
     return {
       booth: cfg.booth,
       adminOpen: !String(cfg.admin.pin ?? ''), // code admin vide : accès direct (tests)
@@ -88,8 +91,10 @@ export class Booth {
       },
       theme: this.themes.resolve(cfg),
       counters: this.publicCounters(),
-      share: { baseUrl: this.shareBaseUrl(), qrOnDone: cfg.share.qrOnDone !== false },
-      gallery: { enabled: !!cfg.gallery.booth, reprint: cfg.gallery.reprint, qr: cfg.gallery.qr !== false },
+      samples: samplePhotos().map((s) => s.url), // photos d'exemple des cadres proposés
+      // QR codes de photo seulement en Wi-Fi (share.requireWifi) : sans lui, aucun téléphone ne peut joindre la borne.
+      share: { baseUrl: this.shareBaseUrl(), qrOnDone: cfg.share.qrOnDone !== false && wifi },
+      gallery: { enabled: !!cfg.gallery.booth, reprint: cfg.gallery.reprint, qr: cfg.gallery.qr !== false && wifi },
       clientVersion: clientVersion()
     };
   }
@@ -116,7 +121,7 @@ export class Booth {
 
   shareBaseUrl() {
     const configured = this.cfg().share.baseUrl?.trim();
-    return (configured || `http://${lanIp()}:${this.port}`).replace(/\/$/, '');
+    return (configured || `http://${wifiStatus().ip || lanIp()}:${this.port}`).replace(/\/$/, ''); // l'IP Wi-Fi : celle que joignent les téléphones
   }
 
   // ---------- Sessions ----------
@@ -141,6 +146,8 @@ export class Booth {
       retakes: 0,
       copies: 0,
       unlocked: false,
+      // Aperçu en miroir : la photo finale l'est aussi (fixé à la création, un changement d'admin ne coupe pas une session)
+      mirror: !!cfg.booth.mirrorPreview,
       final: null,
       printJobs: []
     };
@@ -323,6 +330,7 @@ export class Booth {
       status: s.status,
       shotsExpected: template?.shots ?? s.shots.length,
       shots: s.shots.map((sh, index) => (sh ? { index, url: urlFor(sh.file), takenAt: sh.takenAt } : null)),
+      mirror: !!s.mirror,
       retakes: s.retakes,
       retakesLeft: cfg.limits.maxRetakesPerSession < 0 ? null : Math.max(0, cfg.limits.maxRetakesPerSession - s.retakes), // null = illimité
       copies: s.copies,
@@ -411,7 +419,7 @@ export class Booth {
     const dir = this.sessionDir(s.id);
     const finalFile = path.join(dir, 'final.jpg');
     const thumbFile = path.join(dir, 'thumb.jpg');
-    await compose(template, s.shots.map((sh) => sh.file), finalFile);
+    await compose(template, s.shots.map((sh) => sh.file), finalFile, { mirror: !!s.mirror });
     await thumbnail(finalFile, thumbFile);
     s.final = { file: finalFile, thumb: thumbFile, composedAt: new Date().toISOString() };
     s.status = 'review';

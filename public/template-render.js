@@ -144,8 +144,15 @@ export function fontCss(l) {
 export function renderTemplate(ctx, template, opts = {}) {
   const {
     scale = 1, photos = {}, live = null, assets = new Map(), placeholder = true,
-    mirror = false, highlightShot = null, highlightColor = '#e63946', frameRadius = 0
+    mirror = false, highlightShot = null, highlightColor = '#e63946', frameRadius = 0,
+    cutter = null // (src, sw, sh, layer, dest, mirror, isLive) → canvas détouré à dessiner, ou null (voir booth.js)
   } = opts;
+  // Calque détouré : la source passe par le cutter (fond vert / bleu, IA), sinon dessin direct.
+  const drawPhoto = (src, sw, sh, l, d, isLive) => {
+    const cut = cutter && l.cutout && l.cutout !== 'none' ? cutter(src, sw, sh, l, d, mirror, isLive) : null;
+    if (cut) ctx.drawImage(cut, d.x, d.y, d.w, d.h);
+    else drawCover(ctx, src, sw, sh, d, mirror);
+  };
   // À l'écran, le canvas est arrondi par le CSS : dans les coins d'un calque qui touchent le bord
   // du template, le liseré (et donc le flux visible) suit cet arrondi au lieu de rester carré.
   const displayRadii = (l) => {
@@ -182,9 +189,9 @@ export function renderTemplate(ctx, template, opts = {}) {
       const img = photos[l.shot];
       const iw = img ? (img.naturalWidth || img.videoWidth) : 0;
       if (img && iw) {
-        drawCover(ctx, img, iw, img.naturalHeight || img.videoHeight, d, false);
+        drawPhoto(img, iw, img.naturalHeight || img.videoHeight, l, d, false); // photos prises : même sens que le live
       } else if (live && live.shot === l.shot && (live.w || live.shutter > 0)) {
-        if (live.w) drawCover(ctx, live.el, live.w, live.h, d, mirror);
+        if (live.w) drawPhoto(live.el, live.w, live.h, l, d, true);
         else { ctx.fillStyle = '#101010'; ctx.fillRect(d.x, d.y, d.w, d.h); }
         // Obturateur à lamelles : fermé tant que le boîtier n'envoie rien, s'ouvre sur la première image.
         if (live.shutter > 0) drawIris(ctx, d, live.shutter, scale);

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Administration · Photo Booth</title>
+<link id="favicon" rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="/admin.css">
 </head>
 <body>
@@ -21,15 +22,19 @@
   <nav class="nav">
     <div class="nav-title">Photo Booth</div>
     <a href="#dashboard" class="active">Tableau de bord</a>
-    <a href="#limits">Limites d'impression</a>
-    <a href="#theme">Thème &amp; textes</a>
+    <a href="#sessions">Événements &amp; photos</a>
     <a href="#templates">Templates</a>
-    <a href="#hardware">Caméra &amp; imprimante</a>
-    <a href="#sessions">Sessions</a>
-    <a href="#security">Codes &amp; partage</a>
+    <div class="nav-group">Réglages</div>
+    <a href="#flow">Parcours invité</a>
+    <a href="#printing">Impression</a>
+    <a href="#sharing">Partage</a>
+    <a href="#theme">Apparence</a>
+    <a href="#hardware">Matériel</a>
+    <a href="#security">Sécurité</a>
     <div class="nav-foot">
       <button id="btnBooth" class="btn primary small">← Retour à la borne</button>
       <button id="btnLogout" class="btn ghost small">Déconnexion</button>
+      <button id="btnRestart" class="btn ghost small hidden">Redémarrer la borne</button>
       <button id="btnShutdown" class="btn danger small hidden">Éteindre la borne</button>
     </div>
   </nav>
@@ -37,6 +42,11 @@
 </div>
 
 <div id="toast" class="toast hidden"></div>
+<!-- Confirmation dans la page (et non confirm()) : se valide aussi depuis le Stream Deck -->
+<dialog id="confirmDialog" class="confirm-dialog">
+  <p id="confirmText"></p>
+  <div class="row"><button id="cfCancel" class="btn" type="button">Annuler</button><button id="cfOk" class="btn danger" type="button"></button></div>
+</dialog>
 <script type="module" src="/admin.js"></script>
 </body>
 </html>

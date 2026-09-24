@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { createCamera, detectGphoto2 } from './camera/index.js';
 import { createPrinter, detectCupsPrinter } from './printer/index.js';
+import { wifiStatus } from './network.js';
 
 /**
  * Gestion du matériel à chaud. Choisit le pilote caméra et imprimante d'après
@@ -11,7 +12,8 @@ import { createPrinter, detectCupsPrinter } from './printer/index.js';
  *   printer.driver = 'auto' → cups si la file configurée existe et que l'imprimante
  *                             répond, sinon printer.fallback ('none' = impression désactivée)
  *
- * Émet 'camera' et 'printer' (nouveau pilote, ancien pilote) après chaque bascule.
+ * Émet 'camera' et 'printer' (nouveau pilote, ancien pilote) après chaque bascule,
+ * et 'network' quand le Wi-Fi apparaît ou disparaît (les QR codes en dépendent).
  */
 export class Devices extends EventEmitter {
   constructor({ config, pollMs = 10000, printerBusy = () => false }) {
@@ -23,7 +25,7 @@ export class Devices extends EventEmitter {
     this.printer = null;
     this.cameraKey = null;
     this.printerKey = null;
-    this.state = { camera: null, printer: null };
+    this.state = { camera: null, printer: null, network: null };
     this.timer = null;
     this.pending = null;
     this.closed = false;
@@ -59,6 +61,18 @@ export class Devices extends EventEmitter {
     const cfg = this.config.get();
     await this._refreshCamera(cfg.camera);
     await this._refreshPrinter(cfg.printer);
+    this._refreshNetwork();
+  }
+
+  // ---------- Réseau ----------
+
+  _refreshNetwork() {
+    const prev = this.state.network;
+    const w = wifiStatus();
+    this.state.network = { wifi: w.connected, iface: w.iface, ip: w.ip, checkedAt: new Date().toISOString() };
+    if (prev && prev.wifi === w.connected && prev.ip === w.ip) return;
+    console.log(`[devices] réseau : ${w.connected ? `Wi-Fi ${w.iface} (${w.ip})` : 'pas de Wi-Fi → QR codes masqués'}`);
+    if (prev) this.emit('network', this.state.network);
   }
 
   // ---------- Caméra ----------

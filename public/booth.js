@@ -1,5 +1,6 @@
 /* Interface tactile de la borne. Vanilla JS, aucune dépendance. */
 import { renderTemplate, loadAssets } from './template-render.js';
+import { createCutter, preloadAi } from './cutout-live.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -21,7 +22,8 @@ const state = {
   timers: {},
   copies: 1,
   maxCopies: 1,
-  gallery: { items: [], index: 0, copies: 1, printingId: null, qr: new Map() },
+  gallery: { items: [], index: 0, page: 0, copies: 1, printingId: null, qr: new Map() },
+  deck: null, // Stream Deck branché : { connected, gallery: { perPage, cols } | null } (message 'deckInfo')
   pendingConfigReload: false
 };
 
@@ -109,6 +111,7 @@ function applyBoot() {
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', theme.colors.background);
   document.title = booth.name;
   renderLogo(theme.logo);
+  $('#favicon')?.setAttribute('href', theme.logo); // l'onglet suit le logo, même changé en direct
   const shownName = booth.showName === false ? '' : booth.name;
   $('#boothName').textContent = shownName;
   state.primaryColor = theme.colors.primary;
@@ -118,9 +121,26 @@ function applyBoot() {
   t('#btnStart', 'start'); t('#txtReview', 'review'); t('#btnRetake', 'retake'); t('#btnKeep', 'keep');
   t('#txtCopies', 'copies'); t('#btnPrint', 'print'); t('#btnNoPrint', 'noPrint'); t('#txtPrinting', 'printing');
   t('#txtThanks', 'thanks'); t('#btnFinish', 'finish');
-  t('#btnGallery', 'gallery'); t('#txtGalleryTitle', 'galleryTitle'); t('#txtGalleryEmpty', 'galleryEmpty'); t('#btnReprint', 'reprint'); t('#txtGalleryQr', 'galleryQr'); t('#txtWifiQr', 'wifiQr');
+  t('#txtGallery', 'gallery'); t('#txtGalleryTitle', 'galleryTitle'); t('#txtGalleryEmpty', 'galleryEmpty'); t('#btnReprint', 'reprint'); t('#txtGalleryQr', 'galleryQr'); t('#txtWifiQr', 'wifiQr');
   renderWifiQr();
-  $('#btnGallery').classList.toggle('hidden', !state.boot.gallery?.enabled);
+  renderIdleGallery();
+}
+
+/** Bouton Galerie de l'accueil : les 3 dernières photos de l'événement en éventail et leur nombre. Caché sans photo. */
+async function renderIdleGallery() {
+  const btn = $('#btnGallery');
+  let items = [];
+  if (state.boot?.gallery?.enabled) {
+    try { items = (await api('/api/gallery')).items; } catch { /* galerie fermée : bouton caché */ }
+  }
+  btn.classList.toggle('hidden', !items.length);
+  if (!items.length) return;
+  const latest = items.slice(0, 3).reverse(); // la plus récente au-dessus de la pile
+  const stack = btn.querySelector('.gal-stack');
+  stack.style.setProperty('--n', latest.length);
+  stack.innerHTML = latest.map((it) => `<img src="${it.thumbUrl}" alt="" decoding="async">`).join('');
+  $('#galleryCount').textContent = `${items.length} photo${items.length > 1 ? 's' : ''} ›`;
+  delete btn.dataset.deckThumb;
 }
 
 /**
@@ -150,7 +170,7 @@ async function renderWifiQr() {
 function renderPaperBadge() {
   const c = state.boot?.counters;
   const el = $('#paperBadge');
-  el.classList.toggle('hidden', !c?.lowPaper);
+  el.classList.toggle('hidden', !c?.lowPaper || state.boot.printer?.available === false); // sans imprimante, le papier n'importe pas
   el.classList.toggle('empty', !!c?.paperEmpty);
   if (c?.lowPaper) el.textContent = c.paperEmpty ? 'Plus de papier' : `Papier : ${c.paperRemaining}`;
 }
@@ -203,15 +223,21 @@ function showScreen(name) {
   // le serveur coupe alors le live view et referme l'obturateur du boîtier.
   if (!['template', 'capture'].includes(name)) stopLiveStream();
   if (name === 'idle' && state.pendingConfigReload) reloadBoot().catch(() => {});
+  else if (name === 'idle') renderIdleGallery(); // nouvelle photo validée depuis le dernier passage
   // Sécurité : un écran laissé sans interaction revient à l'accueil.
-  if (['template', 'copies'].includes(name)) setTimer('idleReturn', goIdle, 120000);
-  if (GALLERY_SCREENS.includes(name)) galleryActivity();
+  if (name === 'copies') setTimer('idleReturn', goIdle, 120000);
+  if (MENU_SCREENS.includes(name)) menuActivity();
 }
 
 function goIdle() {
+  dropSession();
+  showScreen('idle');
+}
+
+/** Quitte la session en cours. Pas validée (« Je la garde ») : le serveur la supprime avec ses photos (il vérifie lui-même). */
+function dropSession() {
   clearAllTimers();
   state.doneReturnAt = null;
-  // Session pas validée (« Je la garde ») : le serveur la supprime avec ses photos (il vérifie lui-même).
   const s = state.session;
   if (s && ['shooting', 'review'].includes(s.status) && !state.kept) api(`/api/session/${s.id}/abandon`, { method: 'POST' }).catch(() => {});
   state.kept = false;
@@ -219,7 +245,16 @@ function goIdle() {
   state.template = null;
   state.shotImages = {};
   state.assets = new Map();
-  showScreen('idle');
+}
+
+/** Aperçu, avant la première photo : l'invité revient au choix du cadre (le live reste ouvert). */
+function canChangeTemplate() {
+  const { guestCanChoose, items } = state.boot.templates;
+  return guestCanChoose && items.length > 1 && !state.session?.shots?.some(Boolean);
+}
+function backToTemplates() {
+  dropSession();
+  showScreen('template');
 }
 
 // ---------- Flux live ----------
@@ -325,11 +360,18 @@ function fitCanvas() {
   const t = state.template;
   if (!t) return;
   const wrap = c.parentElement;
-  const maxW = wrap.clientWidth || 800;
+  // Place disponible : la largeur de l'écran moins la colonne des boutons. Le cadre prend ensuite la taille
+  // de l'aperçu, pas toute la place : sur un écran très large, aperçu et boutons restent groupés au centre.
+  const layout = wrap.parentElement;
+  const side = layout.querySelector(':scope > .side');
+  const column = getComputedStyle(layout).flexDirection === 'column'; // écran en portrait
+  const gap = parseFloat(getComputedStyle(layout).columnGap) || 0;
+  const maxW = (column ? layout.clientWidth : layout.clientWidth - (side?.offsetWidth || 0) - gap) || 800;
   const maxH = wrap.clientHeight || 600;
   const cssScale = Math.min(maxW / t.width, maxH / t.height);
   const cssW = Math.floor(t.width * cssScale);
   const cssH = Math.floor(t.height * cssScale);
+  wrap.style.setProperty('--fit-w', `${cssW}px`); // largeur du cadre hors décompte (voir booth.css)
   // Arrondi CSS du canvas (18 px) ramené en unités du template : le liseré et le flux suivent la même courbe.
   state.frameRadius = 18 / cssScale;
   // Résolution interne plafonnée : confortable pour un PC modeste.
@@ -341,22 +383,28 @@ function fitCanvas() {
   c.style.height = `${cssH}px`;
 }
 
+// Calques photo détourés (fond vert / bleu, IA) : voir cutout-live.js
+const previewCutter = createCutter(() => state.previewScale);
+const usesAi = (t) => t?.layers?.some((l) => l.type === 'photo' && l.cutout === 'ai');
+
 function renderPreview() {
   const c = $('#preview');
   const t = state.template;
   if (!t) return;
   const live = liveSize();
-  const shutter = state.live ? shutterValue() : 0;
+  const shutter = shutterValue(); // fermé tant que la caméra n'envoie rien (webcam comprise), puis s'ouvre
   renderTemplate(c.getContext('2d'), t, {
     scale: state.previewScale,
     photos: state.shotImages,
-    live: state.live ? { el: state.live.el, w: live?.w || 0, h: live?.h || 0, shot: state.currentShot, shutter } : null,
-    mirror: !!state.boot.booth.mirrorPreview,
+    // Toujours un live pour la photo en cours : pas de gris « Photo 1 » pendant que la caméra démarre
+    live: { el: state.live?.el || null, w: live?.w || 0, h: live?.h || 0, shot: state.currentShot, shutter },
+    mirror: state.session ? !!state.session.mirror : !!state.boot.booth.mirrorPreview,
     assets: state.assets,
     placeholder: true,
     highlightShot: state.currentShot,
     highlightColor: state.primaryColor,
-    frameRadius: state.frameRadius || 0
+    frameRadius: state.frameRadius || 0,
+    cutter: previewCutter
   });
 }
 
@@ -379,19 +427,35 @@ function stopRenderLoop() {
 
 // ---------- Choix du template ----------
 
+// Photos d'exemple posées dans les emplacements photo des cadres proposés (au lieu du gris « Photo 1 ») :
+// template-photo.jpg, -2, -3 (voir server/samples.js). La photo N du cadre prend l'exemple N, en boucle.
+const samplePhotos = new Map(); // url → Image
+function loadSamplePhotos() {
+  for (const url of state.boot.samples || []) {
+    if (samplePhotos.has(url)) continue;
+    const img = new Image();
+    img.onload = () => renderTemplateGrid();
+    img.src = url;
+    samplePhotos.set(url, img);
+  }
+}
+
 function renderTemplateGrid() {
+  loadSamplePhotos();
+  const ready = (state.boot.samples || []).map((u) => samplePhotos.get(u)).filter((img) => img?.complete && img.naturalWidth);
   const grid = $('#templateGrid');
   grid.innerHTML = '';
   for (const t of state.boot.templates.items) {
     const card = document.createElement('button');
     card.className = 'template-card';
     const cv = document.createElement('canvas');
-    const scale = 300 / Math.max(t.width, t.height);
+    const scale = 720 / Math.max(t.width, t.height); // net même affiché en grand (voir .template-card canvas)
     cv.width = Math.round(t.width * scale);
     cv.height = Math.round(t.height * scale);
     const ctx = cv.getContext('2d');
-    renderTemplate(ctx, t, { scale, placeholder: true });
-    loadAssets(t).then((assets) => renderTemplate(ctx, t, { scale, assets, placeholder: true }));
+    const photos = ready.length ? Object.fromEntries(Array.from({ length: t.shots }, (_, i) => [i, ready[i % ready.length]])) : {};
+    renderTemplate(ctx, t, { scale, photos, placeholder: true });
+    loadAssets(t).then((assets) => renderTemplate(ctx, t, { scale, photos, assets, placeholder: true }));
     const label = document.createElement('div');
     label.className = 'template-name';
     label.textContent = t.name;
@@ -399,12 +463,36 @@ function renderTemplateGrid() {
     card.addEventListener('click', () => startSession(t.id));
     grid.appendChild(card);
   }
+  sizeTemplateCards();
+}
+
+/**
+ * Cartes des cadres aussi grandes que l'écran le permet : jusqu'à 4 par rangée en paysage ; en portrait empilées
+ * (jusqu'à 3 cadres) puis 2 par rangée,
+ * chacune à la taille de sa case (proportions du cadre gardées, 560 px de haut au plus).
+ */
+function sizeTemplateCards() {
+  const cards = [...document.querySelectorAll('#templateGrid .template-card')];
+  if (!cards.length) return;
+  const portrait = innerHeight > innerWidth;
+  const cols = portrait ? (cards.length <= 3 ? 1 : 2) : Math.min(cards.length, 4); // portrait : empilés, jusqu'à 3
+  const rows = Math.ceil(cards.length / cols);
+  const GAP = 32, PAD = 36, LABEL = 50; // espacement, marges de la carte, nom sous l'aperçu
+  const boxW = (innerWidth * 0.92 - (cols - 1) * GAP) / cols - PAD;
+  const boxH = Math.min(560, (innerHeight - 280 - (rows - 1) * GAP) / rows - PAD - LABEL);
+  for (const card of cards) {
+    const cv = card.querySelector('canvas');
+    const k = Math.min(boxW / cv.width, boxH / cv.height);
+    cv.style.width = `${Math.max(80, Math.floor(cv.width * k))}px`;
+    cv.style.height = `${Math.max(60, Math.floor(cv.height * k))}px`;
+  }
 }
 
 function onIdleTap() {
   const { items, guestCanChoose, default: def } = state.boot.templates;
   if (!items.length) return toast('Aucun template activé, voir l\'admin');
   startLive(); // réveille le live view du boîtier pendant que l'invité choisit son cadre
+  if (items.some(usesAi)) preloadAi();
   if (guestCanChoose && items.length > 1) showScreen('template');
   else startSession(items.some((t) => t.id === def) ? def : items[0].id);
 }
@@ -417,6 +505,7 @@ async function startSession(templateId) {
     const session = await api('/api/session', { method: 'POST', body: { templateId } });
     state.session = session;
     state.template = state.boot.templates.items.find((t) => t.id === session.templateId);
+    if (usesAi(state.template)) preloadAi(); // modèle de détourage chargé pendant que le live démarre
     state.currentShot = 0;
     state.shotImages = {};
     state.assets = new Map();
@@ -437,6 +526,8 @@ function prepareShot(index, manual) {
   resetShutter(); // chaque photo commence obturateur fermé, qui s'ouvre sur le flux
   const total = state.template.shots;
   $('#shotLabel').textContent = total > 1 ? `Photo ${index + 1} / ${total}` : '';
+  $('#btnCaptureBack').classList.toggle('hidden', !(manual && canChangeTemplate()));
+  fitCanvas(); // l'aperçu se redimensionne selon la place que prend ce bouton
   if (manual) {
     $('#btnStart').classList.remove('hidden');
     $('#txtGetReady').classList.remove('hidden');
@@ -453,6 +544,7 @@ function prepareShot(index, manual) {
 async function runCountdown(index) {
   clearTimer('idleReturn');
   $('#btnStart').classList.add('hidden');
+  $('#btnCaptureBack').classList.add('hidden'); // décompte lancé : plus de retour au choix du cadre
   $('#txtGetReady').classList.add('hidden');
   await waitLive(); // le boîtier peut mettre une à deux secondes à rouvrir l'obturateur
   if (state.screen !== 'capture') return;
@@ -610,6 +702,7 @@ function onRetakeClick() {
     b.className = 'retake-thumb';
     const img = document.createElement('img');
     img.src = `${sh.url}?t=${Date.now()}`;
+    if (state.session.mirror) img.style.transform = 'scaleX(-1)'; // comme dans l'aperçu et la photo finale
     const lbl = document.createElement('span');
     lbl.textContent = `Refaire la ${i + 1}`;
     b.append(img, lbl);
@@ -639,18 +732,18 @@ function keepPhoto() {
     api(`/api/session/${s.id}/keep`, { method: 'POST' }).catch(() => {});
   }
   const { texts, limits, counters, printer } = state.boot;
+  // Pas d'imprimante détectée : pas d'écran de copies, on passe directement à la fin.
+  if (printer?.available === false) return finishWithoutPrint();
   state.maxCopies = s.maxCopies;
   if (!s.unlocked && counters.quotaRemaining !== null) state.maxCopies = Math.min(state.maxCopies, counters.quotaRemaining);
   if (counters.paperRemaining !== null) state.maxCopies = Math.min(state.maxCopies, counters.paperRemaining); // papier : même déverrouillé
   $('#finalThumb').src = s.final.thumbUrl;
 
-  const quotaReached = state.maxCopies <= 0; // quota atteint ou plus de papier
-  const printerOff = printer?.available === false; // imprimante absente (auto-détection) : QR code seulement
-  const noPrint = quotaReached || printerOff;
+  const noPrint = state.maxCopies <= 0; // quota atteint ou plus de papier
   $('#stepper').classList.toggle('hidden', noPrint);
   $('#btnPrint').classList.toggle('hidden', noPrint);
   if (noPrint) {
-    $('#copiesHint').textContent = printerOff ? texts.printerUnavailable : counters.paperEmpty ? texts.paperEmpty || texts.quotaReached : texts.quotaReached;
+    $('#copiesHint').textContent = counters.paperEmpty ? texts.paperEmpty || texts.quotaReached : texts.quotaReached;
     $('#btnNoPrint').textContent = texts.finish;
     $('#btnNoPrint').classList.remove('hidden');
   } else {
@@ -661,6 +754,15 @@ function keepPhoto() {
     renderCopies();
   }
   showScreen('copies');
+}
+
+async function finishWithoutPrint() {
+  try {
+    state.session = await api(`/api/session/${state.session.id}/print`, { method: 'POST', body: { copies: 0 } });
+  } catch (e) {
+    toast(e.message, 5000);
+  }
+  showDone();
 }
 
 function renderCopies() {
@@ -780,11 +882,14 @@ async function adminAccess() {
 // ---------- Galerie : photos de l'événement, navigation, réimpression ----------
 
 const GALLERY_SCREENS = ['gallery', 'photo'];
-const GALLERY_IDLE_MS = 60000;
+// Choix du cadre et galerie : retour à l'accueil sans interaction (booth.menuIdleSec, réglable dans l'admin).
+const MENU_SCREENS = ['template', ...GALLERY_SCREENS];
 
-/** Un geste dans la galerie repousse le retour automatique à l'accueil. */
-function galleryActivity() {
-  if (GALLERY_SCREENS.includes(state.screen)) setTimer('idleReturn', goIdle, GALLERY_IDLE_MS);
+/** Un geste (écran, clavier, Stream Deck) sur ces écrans repousse le retour automatique à l'accueil. */
+function menuActivity() {
+  if (!MENU_SCREENS.includes(state.screen)) return;
+  const sec = state.boot?.booth?.menuIdleSec ?? 30;
+  if (sec > 0) setTimer('idleReturn', goIdle, sec * 1000);
 }
 
 async function openGallery() {
@@ -794,9 +899,15 @@ async function openGallery() {
     toast(e.message);
     return;
   }
+  state.gallery.page = 0;
   renderGalleryGrid();
   showScreen('gallery');
   $('#galleryGrid').scrollTop = 0;
+}
+
+/** Nombre de miniatures par page quand le Stream Deck pilote la galerie, sinon 0 (toutes, avec défilement). */
+function galleryPerPage() {
+  return state.deck?.connected && state.deck.gallery ? state.deck.gallery.perPage : 0;
 }
 
 function renderGalleryGrid() {
@@ -804,13 +915,37 @@ function renderGalleryGrid() {
   const grid = $('#galleryGrid');
   grid.innerHTML = '';
   $('#txtGalleryEmpty').classList.toggle('hidden', items.length > 0);
-  items.forEach((it, i) => {
+  const per = galleryPerPage();
+  const pages = per ? Math.max(1, Math.ceil(items.length / per)) : 1;
+  state.gallery.page = Math.max(0, Math.min(pages - 1, state.gallery.page));
+  const start = per ? state.gallery.page * per : 0;
+  grid.classList.toggle('paged', !!per);
+  grid.style.gridTemplateColumns = per ? `repeat(${state.deck.gallery.cols}, minmax(0, 1fr))` : '';
+  (per ? items.slice(start, start + per) : items).forEach((it, k) => {
     const b = document.createElement('button');
     b.className = 'gallery-thumb';
-    b.innerHTML = `<img src="${it.thumbUrl}" alt="" loading="lazy" decoding="async">`;
-    b.addEventListener('click', () => showPhoto(i));
+    b.innerHTML = `<img src="${it.thumbUrl}" alt="" decoding="async"${per ? '' : ' loading="lazy"'}>`;
+    b.addEventListener('click', () => showPhoto(start + k));
     grid.appendChild(b);
   });
+  $('#galleryNav').classList.toggle('hidden', !per || !items.length);
+  $('#galleryPage').textContent = `${state.gallery.page + 1} / ${pages}`;
+  $('#btnGalleryPrev').disabled = state.gallery.page === 0;
+  $('#btnGalleryNext').disabled = state.gallery.page >= pages - 1;
+}
+
+function galleryPage(delta) {
+  state.gallery.page += delta;
+  renderGalleryGrid();
+  menuActivity();
+}
+
+/** Retour de la visionneuse : la page de la galerie contient la dernière photo regardée. */
+function backToGallery() {
+  const per = galleryPerPage();
+  if (per) state.gallery.page = Math.floor(state.gallery.index / per);
+  renderGalleryGrid();
+  showScreen('gallery');
 }
 
 function showPhoto(index) {
@@ -825,8 +960,15 @@ function showPhoto(index) {
   $('#btnPhotoNext').disabled = state.gallery.index === items.length - 1;
   renderPhotoQr(it.id);
   renderReprint();
+  photoLayout();
   if (state.screen !== 'photo') showScreen('photo');
-  else galleryActivity();
+  else menuActivity();
+}
+
+/** Ni QR code ni réimpression : la colonne de droite ne sert plus, photo centrée et compteur dessous. */
+function photoLayout() {
+  const solo = $('.photo-qr').classList.contains('hidden') && $('#photoPrint').classList.contains('hidden');
+  $('#screen-photo').classList.toggle('solo', solo);
 }
 
 /** QR code vers la page de la photo (/g/:id), pour la récupérer sur un téléphone. Mis en cache par photo. */
@@ -851,7 +993,8 @@ function renderReprint() {
   const { boot } = state;
   const mode = boot.gallery?.reprint;
   const box = $('#photoPrint');
-  box.classList.toggle('hidden', mode !== 'operator' && mode !== 'guest');
+  box.classList.toggle('hidden', (mode !== 'operator' && mode !== 'guest') || boot.printer?.available === false);
+  photoLayout();
   if (box.classList.contains('hidden')) return;
   const it = state.gallery.items[state.gallery.index];
   const c = boot.counters;
@@ -919,9 +1062,9 @@ function deckKind(el) {
 
 // Pictogramme par bouton, dessiné par le serveur sur la touche.
 const DECK_ICONS = {
-  btnStart: 'camera', btnCancel: 'x', pinCancel: 'x', btnTemplateBack: 'back', btnKeep: 'check', btnRetake: 'retake',
-  btnPrint: 'printer', btnNoPrint: 'qr', btnFinish: 'home', btnMinus: 'minus', btnPlus: 'plus',
-  btnGalleryBack: 'home', btnPhotoBack: 'x', btnPhotoPrev: 'back', btnPhotoNext: 'next', btnReprint: 'printer',
+  btnStart: 'camera', btnCancel: 'x', pinCancel: 'x', btnTemplateBack: 'back', btnCaptureBack: 'back', btnKeep: 'check', btnRetake: 'retake',
+  btnPrint: 'printer', btnNoPrint: 'qr', btnOperator: 'key', btnFinish: 'home', btnMinus: 'minus', btnPlus: 'plus',
+  btnGallery: 'gallery', btnGalleryBack: 'back', btnGalleryPrev: 'chevronLeft', btnGalleryNext: 'chevronRight', btnPhotoBack: 'back', btnPhotoPrev: 'chevronLeft', btnPhotoNext: 'chevronRight', btnReprint: 'printer',
   btnPhotoMinus: 'minus', btnPhotoPlus: 'plus'
 };
 
@@ -935,7 +1078,9 @@ function deckThumb(el) {
   const c = document.createElement('canvas');
   const k = 120 / Math.max(w, h);
   c.width = Math.round(w * k); c.height = Math.round(h * k);
-  try { c.getContext('2d').drawImage(src, 0, 0, c.width, c.height); el.dataset.deckThumb = c.toDataURL('image/jpeg', 0.75); } catch { return null; }
+  const ctx = c.getContext('2d');
+  if (src.style.transform.includes('scaleX(-1)')) { ctx.translate(c.width, 0); ctx.scale(-1, 1); } // photo en miroir
+  try { ctx.drawImage(src, 0, 0, c.width, c.height); el.dataset.deckThumb = c.toDataURL('image/jpeg', 0.75); } catch { return null; }
   return el.dataset.deckThumb;
 }
 
@@ -974,6 +1119,16 @@ function deckStyle(el) {
   return { bg, fg, border, page };
 }
 
+// Pendant le décompte (.looking), l'écran recolore ses boutons pour le grand fond plein écran : les touches du
+// Stream Deck, toujours sur fond noir, gardent les couleurs relevées juste avant.
+const deckStyleCache = new Map();
+function deckKeyStyle(el, root) {
+  if (root.classList.contains('looking') && el.id && deckStyleCache.has(el.id)) return deckStyleCache.get(el.id);
+  const st = deckStyle(el);
+  if (el.id && !root.classList.contains('looking')) deckStyleCache.set(el.id, st);
+  return st;
+}
+
 function visible(el) {
   return !!el && !el.classList.contains('hidden') && el.offsetParent !== null;
 }
@@ -983,7 +1138,15 @@ function deckItems() {
   const dlg = $('#pinDialog');
   const root = dlg.open ? dlg : $('.screen.active');
   if (!root) return [];
-  if (root.id === 'screen-idle') return [{ id: 'start', label: 'Commencer', kind: 'primary', icon: 'camera', style: deckStyle($('#btnStart')) }];
+  if (root.id === 'screen-idle') {
+    const idle = [{ id: 'start', label: 'Commencer', kind: 'primary', icon: 'camera', style: deckStyle($('#btnStart')) }];
+    const g = $('#btnGallery');
+    if (visible(g)) { // galerie activée : une touche lui est réservée, les autres lancent la session
+      g.dataset.deck = 'btnGallery';
+      idle.push({ id: 'btnGallery', label: state.boot.texts.gallery || 'Galerie', kind: 'ghost', icon: 'gallery', style: deckStyle(g) });
+    }
+    return idle;
+  }
   const items = [];
   const cd = $('#countdown');
   if (root.id === 'screen-capture' && visible(cd) && cd.textContent) {
@@ -992,7 +1155,7 @@ function deckItems() {
   }
   let n = 0;
   for (const el of root.querySelectorAll('button, #copiesValue, #photoCopies')) {
-    if (!visible(el) || el.classList.contains('link')) continue;
+    if (!visible(el) || (el.classList.contains('link') && el.id !== 'btnOperator')) continue; // code opérateur : aussi sur le Stream Deck
     if (el.id === 'copiesValue' || el.id === 'photoCopies') {
       const st = deckStyle(el);
       items.push({ id: 'copies', label: el.textContent, kind: 'display', display: true, style: { bg: st.page, fg: st.fg, border: null } });
@@ -1008,9 +1171,12 @@ function deckItems() {
     if (!el.dataset.deck) el.dataset.deck = el.id || `deck-${Date.now().toString(36)}-${n++}`;
     const glyph = { minus: '−', plus: '+' }[el.dataset.icon]; // boutons dont l'icône est dessinée en CSS
     const label = glyph || (el.querySelector('.template-name, span')?.textContent || el.textContent || el.getAttribute('aria-label') || '').trim();
-    const image = CHOICE_CLASSES.some((c) => el.classList.contains(c)) ? deckThumb(el) : null;
-    const icon = DECK_ICONS[el.id] || { del: 'delete', ok: 'check' }[el.dataset.k] || null; // pavé du code : ⌫ et OK en pictogrammes
-    items.push({ id: el.dataset.deck, label: label || '•', kind: deckKind(el), disabled: el.disabled, icon, image, style: deckStyle(el) });
+    // Miniature sur la touche, sauf pour les cadres : leur nom, plus lisible qu'un cadre réduit à 72 px
+    const image = CHOICE_CLASSES.some((c) => el.classList.contains(c)) && !el.classList.contains('template-card') ? deckThumb(el) : null;
+    let icon = DECK_ICONS[el.id] || { del: 'delete', ok: 'check' }[el.dataset.k] || null; // pavé du code : ⌫ et OK en pictogrammes
+    // « Sans impression » : QR code seulement s'il s'affichera vraiment (Wi-Fi, option active), sinon retour à l'accueil
+    if (el.id === 'btnNoPrint' && state.boot.share?.qrOnDone === false) icon = 'home';
+    items.push({ id: el.dataset.deck, label: label || '•', kind: deckKind(el), disabled: el.disabled, icon, image, style: deckKeyStyle(el, root) });
   }
   return items;
 }
@@ -1085,6 +1251,15 @@ function onKeyDown(e) {
 }
 
 function onDeckPress(id) {
+  menuActivity();
+  if (id === '__admin') { // code secret G D G D du Stream Deck
+    if ($('#pinDialog').open) return;
+    // Session lancée par les premiers appuis du code (pas encore validée) : abandonnée avant l'admin
+    if (state.session && !state.kept && ['shooting', 'review'].includes(state.session.status)) goIdle();
+    adminAccess();
+    return;
+  }
+  if (id.startsWith('__')) return; // pages tournées sur le Stream Deck lui-même : juste une interaction
   if (id === 'start') { if (state.screen === 'idle') onIdleTap(); return; }
   if (id === 'finish') { if (state.screen === 'done' && !$('#pinDialog').open) goIdle(); return; }
   const el = document.querySelector(`[data-deck="${CSS.escape(id)}"]`);
@@ -1103,6 +1278,12 @@ function connectWs() {
     let msg;
     try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'deck') { onDeckPress(msg.id); return; }
+    if (msg.type === 'sessions' && state.screen === 'idle') renderIdleGallery(); // photo supprimée depuis l'admin
+    if (msg.type === 'deckInfo') { // Stream Deck branché ou débranché : la galerie se met à sa taille
+      state.deck = msg;
+      if (state.screen === 'gallery') renderGalleryGrid();
+      return;
+    }
     if (msg.type === 'config') {
       if (state.screen === 'idle') reloadBoot().catch(() => {});
       else state.pendingConfigReload = true;
@@ -1147,6 +1328,7 @@ function bind() {
   $('#btnTemplateBack').addEventListener('click', goIdle);
   $('#btnStart').addEventListener('click', () => runCountdown(state.currentShot));
   $('#btnCancel').addEventListener('click', goIdle);
+  $('#btnCaptureBack').addEventListener('click', backToTemplates);
   $('#btnRetake').addEventListener('click', onRetakeClick);
   $('#btnKeep').addEventListener('click', keepPhoto);
   $('#btnMinus').addEventListener('click', () => { state.copies = Math.max(1, state.copies - 1); renderCopies(); });
@@ -1157,14 +1339,16 @@ function bind() {
   $('#btnFinish').addEventListener('click', goIdle);
   $('#btnGallery').addEventListener('click', (e) => { e.stopPropagation(); openGallery(); }); // pas de départ de session
   $('#btnGalleryBack').addEventListener('click', goIdle);
-  $('#btnPhotoBack').addEventListener('click', () => showScreen('gallery'));
+  $('#btnPhotoBack').addEventListener('click', backToGallery);
+  $('#btnGalleryPrev').addEventListener('click', () => galleryPage(-1));
+  $('#btnGalleryNext').addEventListener('click', () => galleryPage(1));
   $('#btnPhotoPrev').addEventListener('click', () => showPhoto(state.gallery.index - 1));
   $('#btnPhotoNext').addEventListener('click', () => showPhoto(state.gallery.index + 1));
   $('#btnPhotoMinus').addEventListener('click', () => { state.gallery.copies -= 1; renderReprint(); });
   $('#btnPhotoPlus').addEventListener('click', () => { state.gallery.copies += 1; renderReprint(); });
   $('#btnReprint').addEventListener('click', galleryReprint);
   bindPhotoSwipe();
-  for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, galleryActivity, true);
+  for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, menuActivity, true);
 
   // Zone invisible en haut à droite : 5 appuis en 3 s ouvrent l'admin.
   let taps = [];
@@ -1176,7 +1360,7 @@ function bind() {
   });
 
   document.addEventListener('contextmenu', (e) => e.preventDefault());
-  window.addEventListener('resize', () => { if (state.screen === 'capture') fitCanvas(); });
+  window.addEventListener('resize', () => { if (state.screen === 'capture') fitCanvas(); sizeTemplateCards(); });
 }
 
 async function init() {

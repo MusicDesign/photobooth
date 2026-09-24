@@ -39,6 +39,11 @@ async function refresh() {
   render();
 }
 
+/** L'icône de l'onglet suit le logo de la borne (changé dans Apparence). */
+function syncFavicon() {
+  if (S?.theme?.logo) document.getElementById('favicon')?.setAttribute('href', S.theme.logo);
+}
+
 // ---------- Photos d'exemple (aperçus, éditeur) ----------
 
 const sampleCache = {};
@@ -91,6 +96,7 @@ function dashboard() {
       <h3>Matériel</h3>
       <p>Caméra <code>${esc(S.camera.driver)}</code> <span class="badge ${S.camera.ok ? 'ok' : 'err'}">${S.camera.ok ? 'OK' : 'problème'}</span>${S.camera.standby ? ' <small>live view en veille, obturateur fermé</small>' : ''}${S.camera.driver === 'gphoto2' ? `<br><small>Flash : ${flashState()}</small>` : ''}${S.devices.camera.requested === 'auto' ? `<br><small>auto · ${esc(S.devices.camera.reason)}</small>` : ''}${S.camera.lastError ? `<br><small>${esc(S.camera.lastError)}</small>` : ''}${S.camera.lastCaptureError ? `<br><small><b>Dernier échec de photo</b> (${new Date(S.camera.lastCaptureError.at).toLocaleTimeString('fr-FR')}) : ${esc(S.camera.lastCaptureError.message)}</small>` : ''}</p>
       <p>Imprimante <code>${esc(S.printer.driver)}</code> <span class="badge ${S.printer.ok ? 'ok' : 'err'}">${S.printer.ok ? 'OK' : 'problème'}</span>${S.devices.printer.requested === 'auto' ? `<br><small>auto · ${esc(S.devices.printer.reason)}</small>` : ''}<br><small>${esc(S.printer.message)}</small></p>
+      ${S.devices.network ? `<p>Wi-Fi <span class="badge ${S.devices.network.wifi ? 'ok' : 'err'}">${S.devices.network.wifi ? 'connecté' : 'absent'}</span><br><small>${S.devices.network.wifi ? `${esc(S.devices.network.iface)} · ${esc(S.devices.network.ip)}` : S.config.share.requireWifi === false ? 'QR codes affichés quand même (réglage <a href="#sharing">Partage</a>)' : 'QR codes des photos masqués'}</small></p>` : ''}
       <p>Stream Deck ${deckState()}</p>
       <p>Partage : <code>${esc(S.shareBaseUrl)}</code></p>
     </div>
@@ -113,30 +119,81 @@ function dashboard() {
   </div>`;
 }
 
-function limits() {
+const sel = (name, list, cur) => `<select name="${name}">${list.map((d) => `<option value="${d}" ${cur === d ? 'selected' : ''}>${d}</option>`).join('')}</select>`;
+const when = (iso) => (iso ? new Date(iso).toLocaleTimeString('fr-FR') : '—');
+const det = (d) => `<div class="detect"><b>${esc(d.driver)}</b> <small>· ${esc(d.reason)} · vérifié à ${when(d.checkedAt)}</small></div>`;
+
+function flow() {
   const l = S.config.limits;
+  const b = S.config.booth;
   return `
-  <h2>Limites d'impression</h2>
-  <p class="sub">Ce que l'invité peut faire à chaque passage, et le plafond global de l'événement.</p>
-  <form id="formLimits" class="card">
+  <h2>Parcours invité</h2>
+  <p class="sub">Le déroulé d'un passage à la borne, de l'accueil à la fin, et la galerie de l'événement.</p>
+  <form id="formFlow" class="card">
     <div class="grid-2">
       <div>
-        <h3>Par session</h3>
-        <label>Copies maximum par passage <input name="maxCopiesPerSession" type="number" min="1" max="50" value="${l.maxCopiesPerSession}"></label>
-        <label class="inline"><input name="allowZeroCopies" type="checkbox" ${l.allowZeroCopies ? 'checked' : ''}> Autoriser « sans impression » (QR code seulement)</label>
+        <h3>Séance photo</h3>
+        <label>Décompte avant la photo (secondes) <input name="countdownSec" type="number" min="1" max="10" value="${l.countdownSec}"></label>
         <label>Reprises de photo autorisées (0 = aucune)
           <div class="row"><input name="maxRetakesPerSession" type="number" min="0" max="50" value="${Math.max(0, l.maxRetakesPerSession)}" ${l.maxRetakesPerSession < 0 ? 'disabled' : ''} style="width:120px">
           <label class="inline"><input name="retakesUnlimited" type="checkbox" ${l.maxRetakesPerSession < 0 ? 'checked' : ''} onchange="this.form.maxRetakesPerSession.disabled = this.checked"> Illimité</label></div>
         </label>
         <label>Validation automatique de la relecture (secondes, 0 = jamais) <input name="reviewTimeoutSec" type="number" min="0" max="300" value="${l.reviewTimeoutSec}"></label>
-        <label>Retour à l'accueil si personne ne lance la photo (secondes, 0 = jamais) <input name="captureTimeoutSec" type="number" min="0" max="600" value="${l.captureTimeoutSec ?? 30}"></label>
-        <label>Décompte avant la photo (secondes) <input name="countdownSec" type="number" min="1" max="10" value="${l.countdownSec}"></label>
+        <label class="inline"><input name="mirrorPreview" type="checkbox" ${b.mirrorPreview ? 'checked' : ''}> Aperçu en miroir (plus naturel pour l'invité)</label>
+        <small>La photo finale est retournée elle aussi : chacun reste là où il s'est vu par rapport aux éléments du template. Un texte dans la scène (t-shirt, pancarte) sort à l'envers.</small>
       </div>
       <div>
-        <h3>Événement</h3>
-        <label>Quota total de tirages (0 = illimité) <input name="eventQuota" type="number" min="0" value="${l.eventQuota}"></label>
-        <label>Alerte papier en dessous de <input name="lowPaperThreshold" type="number" min="0" value="${l.lowPaperThreshold}"></label>
+        <h3>Retours automatiques à l'accueil</h3>
+        <label>Personne ne lance la photo (secondes, 0 = jamais) <input name="captureTimeoutSec" type="number" min="0" max="600" value="${l.captureTimeoutSec ?? 30}"></label>
+        <label>Choix du cadre et galerie sans interaction (secondes, 0 = jamais) <input name="menuIdleSec" type="number" min="0" max="600" value="${b.menuIdleSec ?? 30}"></label>
+        <label>Après l'écran final (secondes) <input name="idleReturnSec" type="number" min="5" max="300" value="${b.idleReturnSec}"></label>
+        <small>Un toucher, une touche du clavier ou du Stream Deck repousse le retour.</small>
+      </div>
+    </div>
+    <button class="btn primary" type="submit">Enregistrer</button>
+  </form>
+  ${galleryCard()}`;
+}
+
+function printing() {
+  const cfg = S.config;
+  const l = cfg.limits;
+  return `
+  <h2>Impression</h2>
+  <p class="sub">Sans imprimante détectée, la borne n'affiche rien de l'impression : l'invité termine directement (avec le QR code en Wi-Fi). Les changements s'appliquent sans redémarrage.</p>
+  <form id="formPrinter" class="card">
+    <h3>Imprimante</h3>
+    <div class="grid-2">
+      <div>
+        <label>Pilote ${sel('printerDriver', S.drivers.printer, cfg.printer.driver)}</label>
+        <small><b>auto</b> : la file CUPS ci-contre si l'imprimante répond, sinon le repli. <b>cups</b> : commande <code>lp</code> (Linux + Gutenprint, ou macOS). <b>mock</b> : simulation, écrit le fichier dans <code>output/prints</code>. <b>none</b> : pas d'impression.</small>
+        <label>Repli quand l'imprimante est absente ${sel('printerFallback', S.drivers.printerFallbacks, cfg.printer.fallback || 'none')}</label>
+        <label>En ce moment ${det(S.devices.printer)}</label>
+      </div>
+      <div>
+        <label>Nom de la file CUPS (obligatoire en auto, pour ne jamais imprimer ailleurs) <input name="cupsName" value="${esc(cfg.printer.cups.name)}" placeholder="DNP_DS-RX1"></label>
+        <label>Options lp, une par ligne (passées avec -o) <textarea name="cupsOptions">${esc((cfg.printer.cups.options || []).join('\n'))}</textarea></label>
+        <label>Délai simulé de l'imprimante mock (ms) <input name="mockDelayMs" type="number" min="0" value="${cfg.printer.mockDelayMs}"></label>
+      </div>
+    </div>
+    <div class="row">
+      <button class="btn primary" type="submit">Enregistrer</button>
+      <button class="btn btn-detect" type="button">Détecter maintenant</button>
+    </div>
+  </form>
+  <form id="formPrintLimits" class="card">
+    <h3>Limites</h3>
+    <div class="grid-2">
+      <div>
+        <label>Copies maximum par passage <input name="maxCopiesPerSession" type="number" min="1" max="50" value="${l.maxCopiesPerSession}"></label>
         <label>Copies maximum avec le code opérateur <input name="operatorMaxCopies" type="number" min="1" max="100" value="${l.operatorMaxCopies}"></label>
+        <label class="inline"><input name="allowZeroCopies" type="checkbox" ${l.allowZeroCopies ? 'checked' : ''}> L'invité peut terminer sans imprimer</label>
+        <small>Bouton « ${esc(cfg.texts.noPrint)} » sur l'écran des copies, quand une imprimante est branchée. Décoché : au moins un tirage par passage.</small>
+      </div>
+      <div>
+        <label>Quota de tirages de l'événement (0 = illimité) <input name="eventQuota" type="number" min="0" value="${l.eventQuota}"></label>
+        <label>Alerte papier en dessous de (feuilles) <input name="lowPaperThreshold" type="number" min="0" value="${l.lowPaperThreshold}"></label>
+        <small>Le stock de papier se met à jour depuis le tableau de bord.</small>
       </div>
     </div>
     <button class="btn primary" type="submit">Enregistrer</button>
@@ -150,10 +207,11 @@ function themeSection() {
   const logo = S.theme.logo;
   const bg = S.theme.backgroundImage;
   const options = S.themes.map((t) => `<option value="${esc(t.id)}" ${cfg.theme.active === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
-  const colorField = (k, label) => `<label>${label}<input type="color" name="color_${k}" value="${esc(colors[k])}"></label>`;
+  // Nom de la couleur, puis où elle apparaît sur la borne
+  const colorField = (k, label, where) => `<label class="swatch"><span>${label}</span><input type="color" name="color_${k}" value="${esc(colors[k])}"><small>${where}</small></label>`;
   const textFields = Object.entries(cfg.texts).map(([k, v]) => `<label>${esc(k)}<input name="text_${k}" value="${esc(v)}"></label>`).join('');
   return `
-  <h2>Thème &amp; textes</h2>
+  <h2>Apparence</h2>
   <p class="sub">Le nom, le logo et l'image de fond s'appliquent quel que soit le thème. Les changements arrivent sur la borne en direct.</p>
   <form id="formTheme" class="card">
     <div class="grid-2">
@@ -161,16 +219,18 @@ function themeSection() {
         <h3>Identité de la borne</h3>
         <label>Nom de la borne <input name="boothName" value="${esc(cfg.booth.name)}"></label>
         <label class="inline"><input name="showName" type="checkbox" ${cfg.booth.showName !== false ? 'checked' : ''}> Afficher le nom à côté du logo sur la borne</label>
-        <label class="inline"><input name="mirrorPreview" type="checkbox" ${cfg.booth.mirrorPreview ? 'checked' : ''}> Aperçu en miroir (plus naturel pour l'invité)</label>
-        <label>Retour à l'accueil après l'écran final (secondes) <input name="idleReturnSec" type="number" min="5" max="300" value="${cfg.booth.idleReturnSec}"></label>
         <h3 style="margin-top:18px">Couleurs</h3>
         <label>Thème actif <select name="active">${options}<option value="custom" ${cfg.theme.active === 'custom' ? 'selected' : ''}>Personnalisé (couleurs ci-contre)</option></select></label>
       </div>
       <div>
         <h3>Couleurs personnalisées</h3>
-        <div class="row">
-          ${colorField('primary', 'Principale')} ${colorField('secondary', 'Secondaire')} ${colorField('background', 'Fond')}
-          ${colorField('surface', 'Cartes')} ${colorField('text', 'Texte')} ${colorField('onPrimary', 'Texte sur bouton')}
+        <div class="swatches">
+          ${colorField('primary', 'Accent', 'Boutons principaux, décompte, cercle de l\'accueil')}
+          ${colorField('onPrimary', 'Texte des boutons', 'Écrit sur la couleur d\'accent')}
+          ${colorField('secondary', 'Titres', 'Titres, nom de la borne, logo SVG, nombre de copies')}
+          ${colorField('background', 'Fond d\'écran', 'Arrière-plan de tous les écrans')}
+          ${colorField('surface', 'Cartes', 'Cadres à choisir, photos de la galerie, pavé du code')}
+          ${colorField('text', 'Texte courant', 'Consignes, boutons secondaires')}
         </div>
         <label>Police <select name="font">
           ${['system', 'rounded', 'serif'].map((f) => `<option value="${f}" ${custom.font === f ? 'selected' : ''}>${f}</option>`).join('')}
@@ -188,17 +248,19 @@ function themeSection() {
     <button class="btn primary" type="submit">Enregistrer</button>
   </form>
   <div class="grid-2">
-    <form id="formLogo" class="card">
+    <form id="formLogo" class="card upload-card">
       <h3>Logo (PNG transparent, SVG, JPEG)</h3>
-      <div class="row"><img class="logo-prev" src="${esc(logo)}" alt=""><input type="file" name="logo" accept="image/png,image/svg+xml,image/jpeg,image/webp" required><button class="btn secondary" type="submit">Envoyer</button>
+      <div class="upload-current"><img class="logo-prev" src="${esc(logo)}" alt=""><small>Affiché en haut à gauche et sur l'accueil, pour tous les thèmes.</small></div>
+      <input type="file" name="logo" accept="image/png,image/svg+xml,image/jpeg,image/webp" required>
+      <div class="row"><button class="btn secondary" type="submit">Envoyer</button>
       ${cfg.booth.logo ? '<button class="btn" type="button" id="btnLogoReset">Logo par défaut</button>' : ''}</div>
-      <small>Affiché en haut à gauche et sur l'accueil, pour tous les thèmes.</small>
     </form>
-    <form id="formBg" class="card">
+    <form id="formBg" class="card upload-card">
       <h3>Image de fond (optionnelle)</h3>
-      <div class="row"><input type="file" name="image" accept="image/png,image/jpeg,image/webp" required><button class="btn secondary" type="submit">Envoyer</button>
+      <div class="upload-current">${bg ? `<img class="logo-prev" src="${esc(bg)}" alt="">` : ''}<small>Actuelle : <code>${esc(bg || 'aucune')}</code></small></div>
+      <input type="file" name="image" accept="image/png,image/jpeg,image/webp" required>
+      <div class="row"><button class="btn secondary" type="submit">Envoyer</button>
       ${cfg.booth.backgroundImage ? '<button class="btn" type="button" id="btnBgReset">Retirer</button>' : ''}</div>
-      <small>Actuelle : <code>${esc(bg || 'aucune')}</code></small>
     </form>
   </div>
   <form id="formTexts" class="card">
@@ -251,63 +313,57 @@ function templatesSection() {
 
 function hardware() {
   const cfg = S.config;
-  const sel = (name, list, cur) => `<select name="${name}">${list.map((d) => `<option value="${d}" ${cur === d ? 'selected' : ''}>${d}</option>`).join('')}</select>`;
-  const when = (iso) => (iso ? new Date(iso).toLocaleTimeString('fr-FR') : '—');
-  const det = (d) => `<div class="detect"><b>${esc(d.driver)}</b> <small>· ${esc(d.reason)} · vérifié à ${when(d.checkedAt)}</small></div>`;
+  const g = cfg.camera.gphoto2;
   return `
-  <h2>Caméra &amp; imprimante</h2>
-  <p class="sub">Les changements s'appliquent immédiatement, sans redémarrage. En mode <b>auto</b>, la borne surveille le matériel toutes les 10 secondes et bascule toute seule quand un appareil est branché ou débranché.</p>
-  <form id="formHardware">
+  <h2>Matériel</h2>
+  <p class="sub">Les changements s'appliquent immédiatement, sans redémarrage. En mode <b>auto</b>, la borne surveille le matériel toutes les 10 secondes et bascule toute seule quand un appareil est branché ou débranché. L'imprimante se règle dans <a href="#printing">Impression</a>.</p>
+  <form id="formCamera" class="card">
+    <h3>Caméra</h3>
     <div class="grid-2">
-      <div class="card">
-        <h3>Caméra</h3>
+      <div>
         <label>Pilote ${sel('cameraDriver', S.drivers.camera, cfg.camera.driver)}</label>
-        <small><b>auto</b> : boîtier gphoto2 s'il est branché, sinon le repli ci-dessous. <b>browser</b> : webcam du navigateur (Mac, ou webcam USB sur la borne). <b>mock</b> : photos d'exemple. <b>gphoto2</b> : Canon EOS en USB.</small><br><br>
+        <small><b>auto</b> : boîtier gphoto2 s'il est branché, sinon le repli ci-dessous. <b>browser</b> : webcam du navigateur (Mac, ou webcam USB sur la borne). <b>mock</b> : photos d'exemple. <b>gphoto2</b> : Canon EOS en USB.</small>
         <label>Repli quand aucun boîtier n'est détecté ${sel('cameraFallback', S.drivers.cameraFallbacks, cfg.camera.fallback || 'browser')}</label>
         <label>En ce moment ${det(S.devices.camera)}</label>
-        <label>Position de l'objectif par rapport à l'écran <select name="lensPosition">${[['top', 'Au-dessus'], ['bottom', 'En dessous'], ['left', 'À gauche'], ['right', 'À droite']].map(([v, l]) => `<option value="${v}" ${(cfg.booth.lensPosition || 'top') === v ? 'selected' : ''}>${l}</option>`).join('')}</select><small>Oriente la flèche « Regardez l'objectif » affichée juste avant la photo (gauche / droite vues par l'invité)</small></label>
-        <hr>
+        <label>Position de l'objectif par rapport à l'écran <select name="lensPosition">${[['top', 'Au-dessus'], ['bottom', 'En dessous'], ['left', 'À gauche'], ['right', 'À droite']].map(([v, lb]) => `<option value="${v}" ${(cfg.booth.lensPosition || 'top') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select><small>Oriente la flèche « Regardez l'objectif » affichée juste avant la photo (gauche / droite vues par l'invité)</small></label>
+      </div>
+      <div>
         ${S.camera.flashControl === false ? `
         <label>Flash intégré ${flashState()}</label>
-        <small>Le ${esc(S.camera.model || 'boîtier')} ne lève pas son flash par USB, n'indique pas sa position avant la photo et ne permet pas d'empêcher un flash levé de partir : c'est sa position qui décide, et la borne le constate sur chaque photo. Levé = à chaque photo, rabattu = jamais. Pour l'interdire même levé : menu du boîtier, contrôle du flash, émission de l'éclair désactivée.</small><br><br>` : `
-        <label>Flash intégré ${sel('flash', ['off', 'on', 'auto'], cfg.camera.gphoto2.flash || 'off')}</label>
-        <div class="row"><label>Seuil du mode auto (luminosité 0-255, flash levé en dessous) <input name="flashAutoThreshold" type="number" min="0" max="255" value="${cfg.camera.gphoto2.flashAutoThreshold ?? 60}" style="width:120px"></label></div>
-        <small><b>off</b> : la borne ne lève jamais le flash. <b>on</b> : levé par USB avant chaque photo. <b>auto</b> : levé si la scène est sombre d'après le live view${S.camera.sceneLuma != null ? ` (luminosité actuelle : ${S.camera.sceneLuma}/255)` : ''}. Une fois levé, le flash intégré ne se rabat qu'à la main. État actuel : ${flashState()}.${S.camera.lastFlashError ? ` <b>Dernière levée refusée par le boîtier : ${esc(S.camera.lastFlashError)}</b>` : ''}</small><br><br>`}
-        <label>Commande exécutée quand le boîtier est détecté (vide = rien) <input name="setupCommand" value="${esc(cfg.camera.gphoto2.setupCommand ?? '')}"></label>
-        <small>Réglages à pousser au boîtier. Attention : le 2000D accepte <code>autopoweroff=0</code> sans en tenir compte, l'arrêt automatique se désactive dans son menu.</small><br><br>
-        <label>Décompte : mise au point puis déclenchement programmé, en une commande (<code>{wait}</code> = ms avant le déclenchement, <code>{file}</code> = fichier ; vide = tout se fait à « 0 ») <textarea name="armFireCommand">${esc(cfg.camera.gphoto2.armFireCommand ?? '')}</textarea></label>
-        <small>Index <code>eosremoterelease</code> sur un EOS : 1 demi-pression avec AF · 2 pression complète avec AF · 3 demi-pression sans AF · 4 pression complète sans AF · 5 relâcher à moitié · 6 relâcher complètement.</small><br><br>
-        <label>Commande de capture gphoto2 sans préparation (<code>{file}</code> = fichier de sortie) <textarea name="captureCommand">${esc(cfg.camera.gphoto2.captureCommand)}</textarea></label>
-        <label>Commande de live view gphoto2 <input name="liveviewCommand" value="${esc(cfg.camera.gphoto2.liveviewCommand)}"></label>
-        <label class="inline"><input name="liveview" type="checkbox" ${cfg.camera.gphoto2.liveview ? 'checked' : ''}> Aperçu live via gphoto2</label>
-        <label>Pause après arrêt du live avant capture (ms) <input name="settleMs" type="number" min="0" value="${cfg.camera.gphoto2.settleMs}"></label>
-        <label>Coupure du live view quand l'aperçu n'est plus affiché (secondes) <input name="liveIdleSec" type="number" min="0" step="1" value="${Math.round((cfg.camera.gphoto2.liveIdleMs ?? 8000) / 1000)}"></label>
+        <small>Le ${esc(S.camera.model || 'boîtier')} ne lève pas son flash par USB, n'indique pas sa position avant la photo et ne permet pas d'empêcher un flash levé de partir : c'est sa position qui décide, et la borne le constate sur chaque photo. Levé = à chaque photo, rabattu = jamais. Pour l'interdire même levé : menu du boîtier, contrôle du flash, émission de l'éclair désactivée.</small>` : `
+        <label>Flash intégré ${sel('flash', ['off', 'on', 'auto'], g.flash || 'off')}</label>
+        <div class="row"><label>Seuil du mode auto (luminosité 0-255, flash levé en dessous) <input name="flashAutoThreshold" type="number" min="0" max="255" value="${g.flashAutoThreshold ?? 60}" style="width:120px"></label></div>
+        <small><b>off</b> : la borne ne lève jamais le flash. <b>on</b> : levé par USB avant chaque photo. <b>auto</b> : levé si la scène est sombre d'après le live view${S.camera.sceneLuma != null ? ` (luminosité actuelle : ${S.camera.sceneLuma}/255)` : ''}. Une fois levé, le flash intégré ne se rabat qu'à la main. État actuel : ${flashState()}.${S.camera.lastFlashError ? ` <b>Dernière levée refusée par le boîtier : ${esc(S.camera.lastFlashError)}</b>` : ''}</small>`}
+        <label>Coupure du live view quand l'aperçu n'est plus affiché (secondes) <input name="liveIdleSec" type="number" min="0" step="1" value="${Math.round((g.liveIdleMs ?? 8000) / 1000)}"></label>
         <small>Hors prise de vue, l'obturateur du boîtier est refermé : capteur et batterie au repos. Le live redémarre dès qu'un invité touche l'écran.</small>
       </div>
-      <div class="card">
-        <h3>Imprimante</h3>
-        <label>Pilote ${sel('printerDriver', S.drivers.printer, cfg.printer.driver)}</label>
-        <small><b>auto</b> : la file CUPS ci-dessous si l'imprimante répond, sinon le repli. <b>cups</b> : commande <code>lp</code> (Linux + Gutenprint, ou macOS). <b>mock</b> : écrit le fichier dans <code>output/prints</code>. <b>none</b> : impression désactivée, l'invité repart avec le QR code.</small><br><br>
-        <label>Repli quand l'imprimante est absente ${sel('printerFallback', S.drivers.printerFallbacks, cfg.printer.fallback || 'none')}</label>
-        <label>En ce moment ${det(S.devices.printer)}</label>
-        <hr>
-        <label>Nom de la file CUPS (obligatoire en auto, pour ne jamais imprimer ailleurs) <input name="cupsName" value="${esc(cfg.printer.cups.name)}" placeholder="DNP_DS-RX1"></label>
-        <label>Options lp, une par ligne (<code>-o</code>) <textarea name="cupsOptions">${esc((cfg.printer.cups.options || []).join('\n'))}</textarea></label>
-        <label>Délai simulé de l'imprimante mock (ms) <input name="mockDelayMs" type="number" min="0" value="${cfg.printer.mockDelayMs}"></label>
-      </div>
     </div>
-    <div class="card" style="margin-top:22px">
-      <h3>Stream Deck</h3>
-      <label class="inline"><input name="deckEnabled" type="checkbox" ${(cfg.booth.streamDeck?.enabled ?? true) ? 'checked' : ''}> Utiliser un Stream Deck Elgato branché en USB comme télécommande</label>
-      <label>Position du Stream Deck par rapport à l'écran <select name="deckPosition">${[['bottom', 'En dessous'], ['top', 'Au-dessus'], ['left', 'À gauche'], ['right', 'À droite']].map(([v, l]) => `<option value="${v}" ${(cfg.booth.streamDeck?.position || 'bottom') === v ? 'selected' : ''}>${l}</option>`).join('')}</select><small>Écran non tactile : l'accueil affiche une flèche vers le Stream Deck (gauche / droite vues par l'invité)</small></label>
-      <label>Luminosité des touches (%) <input name="deckBrightness" type="number" min="10" max="100" value="${cfg.booth.streamDeck?.brightness ?? 70}" style="width:120px"></label>
-      <label>En ce moment ${deckState()}</label>
-      <small>Les touches reprennent les boutons de l'écran affiché, aux couleurs du thème, y compris le pavé du code opérateur. Sur Mac, quitter l'application Stream Deck d'Elgato, qui réserve l'appareil.</small>
-    </div>
+    <details>
+      <summary>Réglages avancés du boîtier (commandes gphoto2)</summary>
+      <label class="inline"><input name="liveview" type="checkbox" ${g.liveview ? 'checked' : ''}> Aperçu live via gphoto2</label>
+      <label>Commande de live view <input name="liveviewCommand" value="${esc(g.liveviewCommand)}"></label>
+      <label>Pause après arrêt du live avant capture (ms) <input name="settleMs" type="number" min="0" value="${g.settleMs}"></label>
+      <label>Commande exécutée quand le boîtier est détecté (vide = rien) <input name="setupCommand" value="${esc(g.setupCommand ?? '')}"></label>
+      <small>Réglages à pousser au boîtier. Attention : le 2000D accepte <code>autopoweroff=0</code> sans en tenir compte, l'arrêt automatique se désactive dans son menu.</small>
+      <label>Décompte : mise au point puis déclenchement programmé, en une commande (<code>{wait}</code> = ms avant le déclenchement, <code>{file}</code> = fichier ; vide = tout se fait à « 0 ») <textarea name="armFireCommand">${esc(g.armFireCommand ?? '')}</textarea></label>
+      <small>Index <code>eosremoterelease</code> sur un EOS : 1 demi-pression avec AF · 2 pression complète avec AF · 3 demi-pression sans AF · 4 pression complète sans AF · 5 relâcher à moitié · 6 relâcher complètement.</small>
+      <label>Commande de capture sans préparation (<code>{file}</code> = fichier de sortie) <textarea name="captureCommand">${esc(g.captureCommand)}</textarea></label>
+    </details>
     <div class="row">
       <button class="btn primary" type="submit">Enregistrer</button>
-      <button class="btn" type="button" id="btnDetect">Détecter maintenant</button>
+      <button class="btn btn-detect" type="button">Détecter maintenant</button>
     </div>
+  </form>
+  <form id="formDeck" class="card">
+    <h3>Stream Deck</h3>
+    <label class="inline"><input name="deckEnabled" type="checkbox" ${(cfg.booth.streamDeck?.enabled ?? true) ? 'checked' : ''}> Utiliser un Stream Deck Elgato branché en USB comme télécommande</label>
+    <div class="grid-2">
+      <label>Position du Stream Deck par rapport à l'écran <select name="deckPosition">${[['bottom', 'En dessous'], ['top', 'Au-dessus'], ['left', 'À gauche'], ['right', 'À droite']].map(([v, lb]) => `<option value="${v}" ${(cfg.booth.streamDeck?.position || 'bottom') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select><small>Écran non tactile : l'accueil affiche une flèche vers le Stream Deck (gauche / droite vues par l'invité)</small></label>
+      <label>Luminosité des touches (%) <input name="deckBrightness" type="number" min="10" max="100" value="${cfg.booth.streamDeck?.brightness ?? 70}" style="width:120px"></label>
+    </div>
+    <label>En ce moment ${deckState()}</label>
+    <small>Les touches reprennent les boutons de l'écran affiché, aux couleurs du thème, y compris le pavé du code opérateur. Branché, il pilote aussi la galerie de la borne (autant de photos par page que de touches). Sur Mac, quitter l'application Stream Deck d'Elgato, qui réserve l'appareil.</small>
+    <button class="btn primary" type="submit">Enregistrer</button>
   </form>`;
 }
 
@@ -362,7 +418,7 @@ function sessions() {
     ? `<a class="btn small secondary" href="/api/admin/events/${encodeURIComponent(ev.id)}/export?content=${content}" download>${label}</a>`
     : `<button class="btn small secondary" disabled>${label}</button>`;
   return `
-  <h2>Sessions</h2>
+  <h2>Événements &amp; photos</h2>
   <p class="sub">Un dossier par événement. Les nouvelles sessions vont dans l'événement <b>en cours</b>, qui porte aussi le quota et le compteur de tirages du tableau de bord.</p>
   <div class="folders">
     ${folders}
@@ -409,33 +465,52 @@ async function resetSessions(eventId = S.activeEventId) {
   } catch (e) { toast(e.message, true); }
 }
 
-function security() {
+function sharing() {
   const cfg = S.config;
+  const n = S.devices.network;
   return `
-  <h2>Codes &amp; partage</h2>
-  <form id="formSecurity" class="card">
+  <h2>Partage</h2>
+  <p class="sub">Les invités récupèrent leur photo en scannant un QR code avec leur téléphone.${n ? ` Wi-Fi de la borne : <span class="badge ${n.wifi ? 'ok' : 'err'}">${n.wifi ? `connecté (${esc(n.ip)})` : 'absent'}</span>` : ''}</p>
+  <form id="formShare" class="card">
     <div class="grid-2">
       <div>
-        <h3>Codes</h3>
-        <label>Code PIN admin <input name="adminPin" value="${esc(cfg.admin.pin)}" placeholder="vide = pas de code"></label>
-        ${cfg.admin.pin ? '' : '<div class="alert">Aucun code admin : n\'importe qui peut ouvrir l\'admin. À remettre avant un événement.</div>'}
-        <label>Code opérateur (lève la limite de copies sur la borne) <input name="operatorPin" value="${esc(cfg.limits.operatorPin)}" required></label>
-        <small>Sur la borne : 5 appuis en haut à droite ouvrent l'admin.</small>
+        <h3>QR code des photos</h3>
+        <label class="inline"><input name="qrOnDone" type="checkbox" ${cfg.share.qrOnDone !== false ? 'checked' : ''}> QR code sur l'écran de fin</label>
+        <small>Décoché : pas d'écran de fin, la borne revient à l'accueil avec le texte « thanksNoQr » (Apparence) en bandeau.</small>
+        <label class="inline"><input name="requireWifi" type="checkbox" ${cfg.share.requireWifi !== false ? 'checked' : ''}> QR codes seulement si la borne est en Wi-Fi</label>
+        <small>Décoché : QR codes affichés même sans Wi-Fi (borne en Ethernet sur un réseau que les téléphones joignent).</small>
       </div>
       <div>
-        <h3>Partage (QR code)</h3>
+        <h3>Adresses</h3>
         <label>URL de base (vide = détection automatique : <code>${esc(S.shareBaseUrl)}</code>) <input name="shareBaseUrl" value="${esc(cfg.share.baseUrl)}" placeholder="http://photobooth.local:3000"></label>
         <small>Borne en hotspot Wi-Fi : mettez ici l'adresse que les invités atteignent.</small>
         <label>Adresse publique (facultative) <input name="publicUrl" value="${esc(cfg.share.publicUrl || '')}" placeholder="https://photobooth.domain.fr"></label>
         <small>Remplie : les QR codes de photo y mènent. Hors du Wi-Fi de la borne, la page distante (<code>npm run remote</code>) invite l'invité à s'y connecter, puis affiche sa photo. Voir TUTORIEL.md, étape 10.8.</small>
-        <label class="inline"><input name="qrOnDone" type="checkbox" ${cfg.share.qrOnDone !== false ? 'checked' : ''}> QR code sur l'écran de fin (après l'impression)</label>
-        <small>Décoché : pas d'écran de fin, la borne revient à l'accueil dès la fin de l'impression avec le texte « thanksNoQr » (Thème &amp; textes) en bandeau.</small>
       </div>
     </div>
     <button class="btn primary" type="submit">Enregistrer</button>
   </form>
-  ${wifiCard()}
-  ${galleryCard()}`;
+  ${wifiCard()}`;
+}
+
+function security() {
+  const cfg = S.config;
+  return `
+  <h2>Sécurité</h2>
+  <form id="formCodes" class="card">
+    <div class="grid-2">
+      <div>
+        <label>Code PIN admin <input name="adminPin" value="${esc(cfg.admin.pin)}" placeholder="vide = pas de code"></label>
+        ${cfg.admin.pin ? '' : '<div class="alert">Aucun code admin : n\'importe qui peut ouvrir l\'admin. À remettre avant un événement.</div>'}
+        <small>Sur la borne : 5 appuis en haut à droite de l'écran, ou sur le Stream Deck les touches du haut gauche, droite, gauche, droite, ouvrent l'admin.</small>
+      </div>
+      <div>
+        <label>Code opérateur <input name="operatorPin" value="${esc(cfg.limits.operatorPin)}" required></label>
+        <small>Sur la borne (écran ou Stream Deck) : lève la limite de copies et le quota, et autorise la réimpression depuis la galerie si elle est réglée ainsi.</small>
+      </div>
+    </div>
+    <button class="btn primary" type="submit">Enregistrer</button>
+  </form>`;
 }
 
 function wifiCard() {
@@ -480,7 +555,7 @@ function galleryCard() {
         <label class="inline"><input name="booth" type="checkbox" ${g.booth ? 'checked' : ''}> Sur la borne : bouton « ${esc(S.config.texts.gallery)} » à l'accueil</label>
         <label>Réimpression depuis la galerie de la borne <select name="reprint">${reprint.map(([v, l]) => `<option value="${v}" ${g.reprint === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         <label class="inline"><input name="qr" type="checkbox" ${g.qr !== false ? 'checked' : ''}> QR code sur chaque photo de la galerie de la borne</label>
-        <small>Copies par réimpression : ${S.config.limits.maxCopiesPerSession} au plus pour un invité, ${S.config.limits.operatorMaxCopies} avec le code opérateur (Limites d'impression).</small>
+        <small>Copies par réimpression : ${S.config.limits.maxCopiesPerSession} au plus pour un invité, ${S.config.limits.operatorMaxCopies} avec le code opérateur (<a href="#printing">Impression</a>). Sans imprimante détectée, la réimpression n'apparaît pas.</small>
       </div>
       <div>
         <label class="inline"><input name="web" type="checkbox" ${g.web ? 'checked' : ''}> Sur les téléphones : page galerie et lien depuis la page du QR code</label>
@@ -715,8 +790,14 @@ function renderProps() {
   const fonts = Object.entries(S.fonts).map(([k, name]) => `<option value="${k}" ${l.font === k ? 'selected' : ''}>${esc(name)}</option>`).join('');
   let specific = '';
   if (l.type === 'photo') {
+    const cut = l.cutout || 'none';
+    const cutOpts = { none: 'Aucun', ai: 'IA (sans fond particulier)', green: 'Fond vert', blue: 'Fond bleu' };
     specific = `<label>Photo affichée <select data-p="shot" data-num>${shots}</select></label>${n('radius', 'Coins arrondis (px)', 0, 2000)}
-      <small class="muted">Plusieurs calques peuvent afficher la même photo (bande dupliquée).</small>`;
+      <small class="muted">Plusieurs calques peuvent afficher la même photo (bande dupliquée).</small>
+      <label>Détourage <select data-p="cutout" id="pCutout">${Object.entries(cutOpts).map(([k, v]) => `<option value="${k}" ${cut === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+      ${cut === 'green' || cut === 'blue' ? `<label>Tolérance <input type="range" data-p="keyTolerance" min="0" max="100" step="1" value="${l.keyTolerance ?? 50}"></label>
+      <small class="muted">Plus haut : retire aussi les zones du fond plus sombres (ombres, plis). Trop haut : le sujet s'efface là où il ressemble au fond.</small>` : ''}
+      ${cut !== 'none' ? `<small class="muted">Le fond retiré laisse voir les calques placés <b>sous</b> cette photo dans la liste (image, couleur…).${cut === 'ai' ? ' L\'aperçu en direct est un peu moins précis sur les bords que la photo finale.' : ''} L'aperçu de l'éditeur montre la photo sans détourage.</small>` : ''}`;
   } else if (l.type === 'text') {
     specific = `
       <label>Texte <textarea data-p="text" rows="3">${esc(l.text)}</textarea></label>
@@ -772,6 +853,7 @@ function renderProps() {
     el.addEventListener('input', apply);
     el.addEventListener('change', apply);
   });
+  $('#pCutout')?.addEventListener('change', () => renderProps()); // affiche / masque la tolérance
   $('#pRotReset')?.addEventListener('click', () => { l.rotation = 0; clampLayer(l); markDirty(); renderProps(); renderEditor(); });
   $('#pFillNone')?.addEventListener('change', (e) => { l.fill = e.target.checked ? 'none' : '#000000'; markDirty(); renderProps(); renderEditor(); });
   $('#pStrokeNone')?.addEventListener('change', (e) => { l.stroke = e.target.checked ? 'none' : '#000000'; if (!e.target.checked && !l.strokeWidth) l.strokeWidth = 8; markDirty(); renderProps(); renderEditor(); });
@@ -1029,7 +1111,8 @@ function unbindEditor() {
   E.drag = null;
 }
 
-const SECTIONS = { dashboard, limits, theme: themeSection, templates: templatesSection, editor: editorSection, hardware, sessions, security };
+const SECTIONS = { dashboard, sessions, templates: templatesSection, editor: editorSection, flow, printing, sharing, theme: themeSection, hardware, security };
+const OLD_HASHES = { limits: 'printing' }; // anciens liens de l'admin
 
 // ---------- Rendu + événements ----------
 
@@ -1037,11 +1120,13 @@ function currentSection() {
   const h = location.hash.replace('#', '');
   if (h.startsWith('editor=')) return 'editor';
   if (h.startsWith('sessions=')) return 'sessions';
+  if (OLD_HASHES[h]) return OLD_HASHES[h];
   return SECTIONS[h] ? h : 'dashboard';
 }
 
 function render() {
   if (!S) return; // pas encore connecté
+  syncFavicon();
   const sec = currentSection();
   if (prevSection === 'editor' && sec !== 'editor') unbindEditor();
   prevSection = sec;
@@ -1086,26 +1171,10 @@ function bindSection(sec) {
       await api('/api/admin/counters', { method: 'POST', body: { reset: true } });
       toast('Compteur remis à zéro'); refresh();
     };
-    $('#btnResetSessions').onclick = resetSessions;
+    $('#btnResetSessions').onclick = () => resetSessions(); // sans argument : l'événement en cours (pas l'objet du clic)
   }
 
-  if (sec === 'limits') {
-    $('#formLimits').onsubmit = (e) => {
-      e.preventDefault();
-      const fd = new FormData(e.target);
-      saveConfig({ limits: {
-        maxCopiesPerSession: num(fd, 'maxCopiesPerSession'),
-        allowZeroCopies: fd.get('allowZeroCopies') === 'on',
-        maxRetakesPerSession: fd.get('retakesUnlimited') === 'on' ? -1 : num(fd, 'maxRetakesPerSession'),
-        reviewTimeoutSec: num(fd, 'reviewTimeoutSec'),
-        captureTimeoutSec: num(fd, 'captureTimeoutSec'),
-        countdownSec: num(fd, 'countdownSec'),
-        eventQuota: num(fd, 'eventQuota'),
-        lowPaperThreshold: num(fd, 'lowPaperThreshold'),
-        operatorMaxCopies: num(fd, 'operatorMaxCopies')
-      } });
-    };
-  }
+  bindSettingsForms();
 
   if (sec === 'theme') {
     const form = $('#formTheme');
@@ -1124,10 +1193,10 @@ function bindSection(sec) {
       o.style.borderColor = fd.get('color_secondary');
       o.style.color = fd.get('color_secondary');
       const problems = [];
-      if (contrast(fd.get('color_background'), fd.get('color_text')) < 4.5) problems.push('texte sur fond');
-      if (contrast(fd.get('color_primary'), fd.get('color_onPrimary')) < 3) problems.push('texte sur bouton');
-      if (contrast(fd.get('color_background'), fd.get('color_secondary')) < 3) problems.push('secondaire sur fond');
-      if (contrast(fd.get('color_background'), fd.get('color_primary')) < 3) problems.push('bouton principal sur fond');
+      if (contrast(fd.get('color_background'), fd.get('color_text')) < 4.5) problems.push('texte courant sur fond d\'écran');
+      if (contrast(fd.get('color_primary'), fd.get('color_onPrimary')) < 3) problems.push('texte des boutons sur accent');
+      if (contrast(fd.get('color_background'), fd.get('color_secondary')) < 3) problems.push('titres sur fond d\'écran');
+      if (contrast(fd.get('color_background'), fd.get('color_primary')) < 3) problems.push('accent sur fond d\'écran');
       const warn = $('#contrastWarn');
       warn.textContent = problems.length ? `Contraste faible : ${problems.join(', ')}` : '';
       warn.classList.toggle('hidden', !problems.length);
@@ -1138,7 +1207,7 @@ function bindSection(sec) {
       e.preventDefault();
       const fd = new FormData(form);
       saveConfig({
-        booth: { name: fd.get('boothName'), showName: fd.get('showName') === 'on', mirrorPreview: fd.get('mirrorPreview') === 'on', idleReturnSec: num(fd, 'idleReturnSec') },
+        booth: { name: fd.get('boothName'), showName: fd.get('showName') === 'on' },
         theme: { active: fd.get('active'), custom: {
           font: fd.get('font'),
           colors: { primary: fd.get('color_primary'), secondary: fd.get('color_secondary'), background: fd.get('color_background'), surface: fd.get('color_surface'), text: fd.get('color_text'), onPrimary: fd.get('color_onPrimary') }
@@ -1191,27 +1260,6 @@ function bindSection(sec) {
 
   if (sec === 'editor') bindEditor();
 
-  if (sec === 'hardware') {
-    $('#btnDetect').onclick = async () => {
-      try { await api('/api/admin/devices/refresh', { method: 'POST' }); toast('Détection relancée'); refresh(); } catch (e) { toast(e.message, true); }
-    };
-    $('#formHardware').onsubmit = (e) => {
-      e.preventDefault();
-      const fd = new FormData(e.target);
-      saveConfig({
-        camera: { driver: fd.get('cameraDriver'), fallback: fd.get('cameraFallback'), gphoto2: {
-          ...(fd.has('flash') ? { flash: fd.get('flash'), flashAutoThreshold: num(fd, 'flashAutoThreshold') } : {}),
-          setupCommand: fd.get('setupCommand').trim(), armFireCommand: fd.get('armFireCommand').trim(),
-          captureCommand: fd.get('captureCommand'), liveviewCommand: fd.get('liveviewCommand'),
-          liveview: fd.get('liveview') === 'on', settleMs: num(fd, 'settleMs'), liveIdleMs: num(fd, 'liveIdleSec') * 1000
-        } },
-        booth: { lensPosition: fd.get('lensPosition'), streamDeck: { enabled: fd.get('deckEnabled') === 'on', brightness: num(fd, 'deckBrightness'), position: fd.get('deckPosition') } },
-        printer: { driver: fd.get('printerDriver'), fallback: fd.get('printerFallback'), mockDelayMs: num(fd, 'mockDelayMs'),
-          cups: { name: fd.get('cupsName').trim(), options: fd.get('cupsOptions').split('\n').map((s) => s.trim()).filter(Boolean) } }
-      });
-    };
-  }
-
   if (sec === 'sessions') {
     document.querySelectorAll('[data-reprint]').forEach((b) => b.addEventListener('click', async () => {
       const copies = Number(prompt('Nombre de copies à réimprimer ?', '1'));
@@ -1263,23 +1311,48 @@ function bindSection(sec) {
     };
   }
 
-  if (sec === 'security') {
-    $('#formSecurity').onsubmit = (e) => {
-      e.preventDefault();
-      const fd = new FormData(e.target);
-      saveConfig({ admin: { pin: fd.get('adminPin') }, limits: { operatorPin: fd.get('operatorPin') }, share: { baseUrl: fd.get('shareBaseUrl').trim(), publicUrl: fd.get('publicUrl').trim(), qrOnDone: e.target.qrOnDone.checked } });
-    };
-    $('#formWifi').onsubmit = (e) => {
-      e.preventDefault();
-      const f = e.target;
-      saveConfig({ share: { wifi: { enabled: f.enabled.checked, ssid: f.ssid.value.trim(), password: f.password.value, security: f.security.value } } }, 'Wi-Fi enregistré');
-    };
-    $('#formGallery').onsubmit = (e) => {
-      e.preventDefault();
-      const f = e.target;
-      saveConfig({ gallery: { booth: f.booth.checked, web: f.web.checked, reprint: f.reprint.value, qr: f.qr.checked } }, 'Galerie enregistrée');
-    };
-  }
+}
+
+/** Formulaires de réglages : chacun enregistre ses propres champs, quelle que soit la section qui l'affiche. */
+function bindSettingsForms() {
+  const form = (id, fn) => { const f = $(id); if (f) f.onsubmit = (e) => { e.preventDefault(); fn(new FormData(f), f); }; };
+  document.querySelectorAll('.btn-detect').forEach((b) => b.addEventListener('click', async () => {
+    try { await api('/api/admin/devices/refresh', { method: 'POST' }); toast('Détection relancée'); refresh(); } catch (e) { toast(e.message, true); }
+  }));
+  form('#formFlow', (fd) => saveConfig({
+    limits: {
+      countdownSec: num(fd, 'countdownSec'),
+      maxRetakesPerSession: fd.get('retakesUnlimited') === 'on' ? -1 : num(fd, 'maxRetakesPerSession'),
+      reviewTimeoutSec: num(fd, 'reviewTimeoutSec'),
+      captureTimeoutSec: num(fd, 'captureTimeoutSec')
+    },
+    booth: { mirrorPreview: fd.get('mirrorPreview') === 'on', idleReturnSec: num(fd, 'idleReturnSec'), menuIdleSec: num(fd, 'menuIdleSec') }
+  }));
+  form('#formPrintLimits', (fd) => saveConfig({ limits: {
+    maxCopiesPerSession: num(fd, 'maxCopiesPerSession'),
+    allowZeroCopies: fd.get('allowZeroCopies') === 'on',
+    operatorMaxCopies: num(fd, 'operatorMaxCopies'),
+    eventQuota: num(fd, 'eventQuota'),
+    lowPaperThreshold: num(fd, 'lowPaperThreshold')
+  } }));
+  form('#formPrinter', (fd) => saveConfig({ printer: {
+    driver: fd.get('printerDriver'), fallback: fd.get('printerFallback'), mockDelayMs: num(fd, 'mockDelayMs'),
+    cups: { name: fd.get('cupsName').trim(), options: fd.get('cupsOptions').split('\n').map((x) => x.trim()).filter(Boolean) }
+  } }));
+  form('#formCamera', (fd) => saveConfig({
+    camera: { driver: fd.get('cameraDriver'), fallback: fd.get('cameraFallback'), gphoto2: {
+      ...(fd.has('flash') ? { flash: fd.get('flash'), flashAutoThreshold: num(fd, 'flashAutoThreshold') } : {}),
+      setupCommand: fd.get('setupCommand').trim(), armFireCommand: fd.get('armFireCommand').trim(),
+      captureCommand: fd.get('captureCommand'), liveviewCommand: fd.get('liveviewCommand'),
+      liveview: fd.get('liveview') === 'on', settleMs: num(fd, 'settleMs'), liveIdleMs: num(fd, 'liveIdleSec') * 1000
+    } },
+    booth: { lensPosition: fd.get('lensPosition') }
+  }));
+  form('#formDeck', (fd) => saveConfig({ booth: { streamDeck: { enabled: fd.get('deckEnabled') === 'on', brightness: num(fd, 'deckBrightness'), position: fd.get('deckPosition') } } }));
+  form('#formShare', (fd, f) => saveConfig({ share: { baseUrl: fd.get('shareBaseUrl').trim(), publicUrl: fd.get('publicUrl').trim(), qrOnDone: f.qrOnDone.checked, requireWifi: f.requireWifi.checked } }));
+  form('#formCodes', (fd) => saveConfig({ admin: { pin: fd.get('adminPin') }, limits: { operatorPin: fd.get('operatorPin') } }));
+  form('#formWifi', (fd, f) => saveConfig({ share: { wifi: { enabled: f.enabled.checked, ssid: f.ssid.value.trim(), password: f.password.value, security: f.security.value } } }, 'Wi-Fi enregistré'));
+  form('#formGallery', (fd, f) => saveConfig({ gallery: { booth: f.booth.checked, web: f.web.checked, reprint: f.reprint.value, qr: f.qr.checked } }, 'Galerie enregistrée'));
 }
 
 /** Contraste WCAG entre deux couleurs hex. */
@@ -1299,6 +1372,7 @@ function contrast(hexA, hexB) {
 function showLogin() {
   $('#login').classList.remove('hidden');
   $('#shell').classList.add('hidden');
+  sendDeckUi();
   $('#loginForm').onsubmit = async (e) => {
     e.preventDefault();
     try {
@@ -1318,6 +1392,8 @@ async function boot() {
   $('#login').classList.add('hidden');
   $('#shell').classList.remove('hidden');
   $('#btnShutdown').classList.toggle('hidden', !S.canShutdown);
+  $('#btnRestart').classList.toggle('hidden', !S.canRestart);
+  sendDeckUi();
   if (!S.formats || !S.theme || S.templates.some((t) => !t.layers)) {
     $('#main').innerHTML = `<h2>Serveur à redémarrer</h2>
       <div class="alert">Le serveur tourne sur une version plus ancienne que cette page : les templates à calques et le logo global ne sont pas disponibles.</div>
@@ -1333,21 +1409,87 @@ $('#btnLogout').onclick = async () => { await api('/api/admin/logout', { method:
 // Retour à la borne dans la même fenêtre : on se déconnecte, sinon la zone cachée rouvrirait l'admin sans code.
 $('#btnBooth').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }).catch(() => {}); location.href = '/'; };
 $('#btnShutdown').onclick = async () => {
-  if (!confirm('Éteindre la borne ?\n\nLe logiciel se ferme. Pour le relancer : icône « Photo Booth » sur le bureau.')) return;
+  if (!await askConfirm('Éteindre la borne ?\n\nLe logiciel se ferme. Pour le relancer : icône « Photo Booth » sur le bureau.', 'Éteindre')) return;
   try {
     await api('/api/admin/shutdown', { method: 'POST', body: {} });
   } catch (e) {
-    if (e.code !== 'PRINTING' || !confirm(`${e.message}\n\nÉteindre quand même ?`)) return toast(e.message, true);
+    if (e.code !== 'PRINTING' || !await askConfirm(`${e.message}\n\nÉteindre quand même ?`, 'Éteindre quand même')) return toast(e.message, true);
     await api('/api/admin/shutdown', { method: 'POST', body: { force: true } });
   }
   // Le lanceur ferme la fenêtre ; ce message ne reste visible que dans un navigateur ordinaire.
   document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>Borne éteinte</h1>
     <p class="sub">Pour la relancer : icône « Photo Booth » sur le bureau.</p></div></div>`;
 };
-// Rafraîchit compteurs et sessions quand la borne travaille.
+// Redémarrer : le logiciel se ferme proprement (caméra, Stream Deck) et se relance tout seul sur l'accueil.
+$('#btnRestart').onclick = async () => {
+  if (!await askConfirm('Redémarrer la borne ?\n\nLe logiciel se ferme puis se relance tout seul, en quelques secondes. Utile si la caméra ou le Stream Deck ne répond plus.', 'Redémarrer', 'retake')) return;
+  try {
+    await api('/api/admin/restart', { method: 'POST', body: {} });
+  } catch (e) {
+    if (e.code !== 'PRINTING' || !await askConfirm(`${e.message}\n\nRedémarrer quand même ?`, 'Redémarrer quand même', 'retake')) return toast(e.message, true);
+    await api('/api/admin/restart', { method: 'POST', body: { force: true } });
+  }
+  document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>Redémarrage…</h1>
+    <p class="sub">La borne revient dans quelques secondes.</p></div></div>`;
+};
+/** Confirmation dans la page : se valide à la souris, au clavier ou depuis le Stream Deck. */
+function askConfirm(text, okLabel, deckIcon = 'power') {
+  return new Promise((resolve) => {
+    const dlg = $('#confirmDialog');
+    $('#confirmText').textContent = text;
+    $('#cfOk').textContent = okLabel;
+    $('#cfOk').dataset.icon = deckIcon; // pictogramme de la touche « valider » sur le Stream Deck
+    const done = (v) => { dlg.close(); $('#cfOk').onclick = $('#cfCancel').onclick = dlg.oncancel = null; sendDeckUi(); resolve(v); };
+    $('#cfOk').onclick = () => done(true);
+    $('#cfCancel').onclick = () => done(false);
+    dlg.oncancel = (e) => { e.preventDefault(); done(false); }; // Échap
+    dlg.showModal();
+    sendDeckUi();
+  });
+}
+
+// ---------- Stream Deck ----------
+// Admin ouverte sur la borne elle-même (et pas depuis un téléphone) : le Stream Deck affiche ses actions
+// (retour à la borne, déconnexion, éteindre) et ses appuis arrivent ici, comme sur la borne.
+const ON_BOOTH = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+const DECK_DANGER = { bg: '#d62839', fg: '#ffffff', border: null };
+let deckSock = null;
+
+function sendDeckUi() {
+  if (!ON_BOOTH || deckSock?.readyState !== 1) return;
+  const dlg = $('#confirmDialog');
+  const shell = !$('#shell').classList.contains('hidden');
+  let items;
+  if (dlg.open) {
+    items = [{ id: 'cfOk', label: $('#cfOk').textContent, icon: $('#cfOk').dataset.icon || 'power', kind: 'primary', style: DECK_DANGER }, { id: 'cfCancel', label: 'Annuler', icon: 'x', kind: 'ghost' }];
+  } else {
+    items = [{ id: 'btnBooth', label: 'Retour à la borne', icon: 'back', kind: 'ghost' }];
+    if (shell) items.push({ id: 'btnLogout', label: 'Déconnexion', icon: 'logout', kind: 'ghost' });
+    // Redémarrer et éteindre sur la rangée du haut, retour et déconnexion en bas
+    if (shell && !$('#btnRestart').classList.contains('hidden')) items.push({ id: 'btnRestart', label: 'Redémarrer', icon: 'retake', kind: 'primary', style: { bg: '#2f6fdd', fg: '#ffffff', border: null } });
+    if (shell && !$('#btnShutdown').classList.contains('hidden')) items.push({ id: 'btnShutdown', label: 'Éteindre', icon: 'power', kind: 'primary', style: DECK_DANGER });
+  }
+  deckSock.send(JSON.stringify({ type: 'ui', screen: dlg.open ? 'admin-confirm' : 'admin', items, colors: S?.theme?.colors || {} }));
+}
+
+function onDeckPress(id) {
+  const el = document.getElementById(id);
+  if (el && !el.disabled && (el.offsetParent !== null || el.closest('dialog[open]'))) el.click();
+  else if (id === 'btnBooth') location.href = '/'; // page de connexion : retour direct à la borne
+}
+
+// Rafraîchit compteurs et sessions quand la borne travaille ; relaie le Stream Deck (admin ouverte sur la borne).
 (function ws() {
   const sock = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
-  sock.onmessage = () => { if (S && ['dashboard', 'sessions'].includes(currentSection())) refresh().catch(() => {}); };
+  deckSock = sock;
+  sock.onopen = () => sendDeckUi();
+  sock.onmessage = (ev) => {
+    let msg = null;
+    try { msg = JSON.parse(ev.data); } catch { /* ignoré */ }
+    if (msg?.type === 'deck') return onDeckPress(msg.id);
+    if (msg?.type === 'deckInfo') return;
+    if (S && ['dashboard', 'sessions'].includes(currentSection())) refresh().catch(() => {});
+  };
   sock.onclose = () => setTimeout(ws, 3000);
 })();
 boot();

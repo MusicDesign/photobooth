@@ -1,5 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
+import path from 'node:path';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import { Config } from './config.js';
@@ -13,15 +14,16 @@ import { apiRouter } from './routes/api.js';
 import { adminRouter } from './routes/admin.js';
 import { galleryHtml, eventGalleryHtml } from './gallery.js';
 import { HttpError } from './util.js';
-import { OUTPUT_DIR, PUBLIC_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, UPLOADS_DIR, SAMPLES_DIR } from './paths.js';
+import { ROOT, OUTPUT_DIR, PUBLIC_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, UPLOADS_DIR, SAMPLES_DIR } from './paths.js';
 
 /**
  * Assemble l'application. Les variables d'environnement BOOTH_CAMERA et
  * BOOTH_PRINTER forcent un pilote sans toucher au fichier de config (tests).
  * onShutdown : appelé quand l'admin éteint la borne, après fermeture du serveur
  * (le lanceur quitte alors le processus, l'app Electron ferme sa fenêtre).
+ * onRestart : pareil pour « Redémarrer » ; seul un lanceur capable de se relancer le fournit (app Electron).
  */
-export async function createApp({ port = Number(process.env.PORT) || 3000, onShutdown = null } = {}) {
+export async function createApp({ port = Number(process.env.PORT) || 3000, onShutdown = null, onRestart = null } = {}) {
   for (const d of [OUTPUT_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, UPLOADS_DIR]) fs.mkdirSync(d, { recursive: true });
 
   const config = new Config();
@@ -53,18 +55,24 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   // Bascule de matériel : la borne recharge son bootstrap (mode caméra, imprimante disponible).
   devices.on('camera', (cam) => { booth.setCamera(cam); broadcast({ type: 'config' }); });
   devices.on('printer', (p) => { booth.setPrinter(p); broadcast({ type: 'config' }); });
+  devices.on('network', () => broadcast({ type: 'config' })); // Wi-Fi apparu ou perdu : QR codes affichés ou non
 
   // Stream Deck : la borne décrit son écran ('ui'), un appui lui est renvoyé ('deck'), à elle seule.
   let boothSocket = null;
+  const toBooth = (msg) => { if (boothSocket?.readyState === 1) boothSocket.send(JSON.stringify(msg)); };
   const deck = new StreamDeckRemote({
     config,
-    onPress: (id) => { if (boothSocket?.readyState === 1) boothSocket.send(JSON.stringify({ type: 'deck', id })); }
+    onPress: (id) => toBooth({ type: 'deck', id }),
+    onInfo: (info) => toBooth({ type: 'deckInfo', ...info })
   });
   wss.on('connection', (ws) => {
     ws.on('message', (raw) => {
       let msg;
       try { msg = JSON.parse(raw); } catch { return; }
-      if (msg?.type === 'ui') { boothSocket = ws; deck.setUi(msg); }
+      if (msg?.type === 'ui') {
+        if (boothSocket !== ws) { boothSocket = ws; toBooth({ type: 'deckInfo', ...deck.galleryInfo() }); }
+        deck.setUi(msg);
+      }
     });
   });
   if (process.env.BOOTH_STREAMDECK !== 'off') await deck.start();
@@ -76,25 +84,32 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
 
   app.disable('x-powered-by');
   app.use(express.json({ limit: '2mb' }));
+  // Favicon = le logo défini dans Apparence (toutes les pages, y compris celles des téléphones)
+  app.get('/favicon.ico', (req, res) => res.redirect(302, themes.resolve(config.get()).logo || '/assets/logo-default.svg'));
   app.use(express.static(PUBLIC_DIR, { index: 'index.html' }));
   app.use('/output', express.static(OUTPUT_DIR, { maxAge: '1h' }));
   app.use('/templates', express.static(TEMPLATES_DIR, { maxAge: '1h' }));
   app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '1h' }));
   app.use('/samples', express.static(SAMPLES_DIR, { maxAge: '1h' }));
+  // Détourage IA de l'aperçu : MediaPipe (script + wasm) servi en local, la borne est hors ligne.
+  app.use('/vendor/mediapipe', express.static(path.join(ROOT, 'node_modules', '@mediapipe', 'tasks-vision'), { maxAge: '1d' }));
 
-  // Arrêt demandé depuis l'admin : la réponse part d'abord, la fermeture suit.
+  // Arrêt ou redémarrage demandé depuis l'admin : la réponse part d'abord, puis caméra, Stream Deck et
+  // serveur se ferment proprement avant que le lanceur quitte (et se relance).
   let stopping = false;
-  const shutdown = onShutdown && (() => {
+  const stopThen = (then, what) => then && (() => {
     if (stopping) return;
     stopping = true;
-    console.log('[booth] arrêt demandé depuis l\'admin');
+    console.log(`[booth] ${what} demandé depuis l'admin`);
     setTimeout(async () => {
-      try { await close(); } catch (e) { console.error(`[booth] arrêt : ${e.message}`); }
-      await onShutdown();
+      try { await close(); } catch (e) { console.error(`[booth] ${what} : ${e.message}`); }
+      await then();
     }, 300);
   });
+  const shutdown = stopThen(onShutdown, 'arrêt');
+  const restart = stopThen(onRestart, 'redémarrage');
 
-  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown }));
+  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart }));
   app.use('/api', apiRouter({ booth }));
 
   // Page d'une photo (tous les QR codes y mènent). Galerie téléphone ouverte : navigation entre les photos.

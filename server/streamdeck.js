@@ -13,9 +13,10 @@ import sharp from 'sharp';
  * Sous Linux, une règle udev donne l'accès sans sudo (voir TUTORIEL.md).
  */
 export class StreamDeckRemote {
-  constructor({ config, onPress }) {
+  constructor({ config, onPress, onInfo = () => {} }) {
     this.config = config;
     this.onPress = onPress;
+    this.onInfo = onInfo; // branchement / débranchement : la borne adapte sa galerie (voir galleryInfo)
     this.deck = null;
     this.model = null;
     this.error = null;
@@ -55,6 +56,7 @@ export class StreamDeckRemote {
     return {
       enabled: c.enabled, connected: !!this.deck, model: this.model, error: this.error, keys: this.buttons().length,
       screen: this.ui?.screen || null, items: (this.ui?.items || []).map((i) => i.icon || (i.image ? 'image' : i.label)),
+      layout: this.drawnLayout || null, // touche → action, ligne par ligne (diagnostic)
       drawnAt: this.drawnAt || null, drawError: this.drawError || null
     };
   }
@@ -86,6 +88,7 @@ export class StreamDeckRemote {
       await deck.clearPanel();
       await deck.setBrightness(this.cfg().brightness).catch(() => {});
       console.log(`[streamdeck] ${this.model} connecté (${this.buttons().length} touches)`);
+      this.onInfo(this.galleryInfo());
       this.draw();
     } catch (e) {
       // Sur Mac, typiquement : l'application Elgato tient l'appareil.
@@ -107,7 +110,21 @@ export class StreamDeckRemote {
     if (deck) {
       console.log('[streamdeck] déconnecté');
       await deck.close().catch(() => {});
+      this.onInfo(this.galleryInfo());
     }
+  }
+
+  /**
+   * Galerie pilotée par le Stream Deck : la borne affiche autant de miniatures qu'il y a de touches
+   * au-dessus de la rangée de navigation, sur autant de colonnes. null : pas de Stream Deck (ou trop petit).
+   */
+  galleryInfo() {
+    const keys = this.buttons();
+    if (!keys.length) return { connected: false, gallery: null };
+    const cols = Math.max(...keys.map((k) => k.column)) + 1;
+    const rows = Math.max(...keys.map((k) => k.row)) + 1;
+    const ok = rows > 1 && cols >= 3;
+    return { connected: true, gallery: ok ? { perPage: cols * (rows - 1), cols } : null };
   }
 
   /** Touches à écran, dans l'ordre de lecture (ligne par ligne). */
@@ -121,18 +138,48 @@ export class StreamDeckRemote {
   /** Nouvelle description de l'écran envoyée par la borne. */
   setUi(ui) {
     const changedScreen = this.ui?.screen !== ui?.screen;
+    const backToGallery = this.ui?.screen === 'photo' && ui?.screen === 'gallery'; // retour de la visionneuse : même page
     this.ui = ui;
-    if (changedScreen) this.page = 0;
+    if (changedScreen && !backToGallery) this.page = 0;
     this.draw();
   }
 
   handleDown(control) {
     if (control.type !== 'button') return;
     const id = this.keyMap.get(control.index) || this.ui?.anyKey; // anyKey : écran où toute touche agit (fin)
-    if (!id) return;
-    if (id === '__next') { this.page += 1; return this.draw(); }
-    if (id === '__prev') { this.page = Math.max(0, this.page - 1); return this.draw(); }
-    this.onPress(id);
+    const run = () => {
+      if (!id) return;
+      if (id === '__next' || id === '__prev') {
+        this.page = Math.max(0, this.page + (id === '__next' ? 1 : -1));
+        this.onPress(id); // la borne compte l'appui comme une interaction (retour à l'accueil repoussé)
+        return this.draw();
+      }
+      this.onPress(id);
+    };
+    // Aucun délai : chaque appui agit tout de suite. Code secret complet : la borne abandonne la session
+    // lancée par les premiers appuis (encore sans photo) et ouvre l'admin.
+    if (this.secretPress(control.index) === 'done') return this.onPress('__admin');
+    run();
+  }
+
+  /**
+   * Code secret du Stream Deck : haut gauche, haut droite, haut gauche, haut droite (G D G D), chaque appui
+   * à moins de SECRET_STEP_MS du précédent, ouvre l'admin (comme 5 appuis en haut à droite de l'écran).
+   * Rend 'done' (code complet), 'progress' (appui qui fait avancer le code) ou 'none'.
+   */
+  secretPress(index) {
+    const top = this.buttons().filter((k) => k.row === 0);
+    if (top.length < 2) return 'none';
+    const side = index === top[0].index ? 'G' : index === top[top.length - 1].index ? 'D' : null;
+    const now = Date.now();
+    if (now - (this.secretAt || 0) > SECRET_STEP_MS) this.secret = [];
+    this.secretAt = now;
+    this.secret ||= [];
+    if (!side) { this.secret = []; return 'none'; }
+    if (SECRET_CODE[this.secret.length] === side) this.secret.push(side);
+    else this.secret = side === SECRET_CODE[0] ? [side] : [];
+    if (this.secret.length === SECRET_CODE.length) { this.secret = []; return 'done'; }
+    return this.secret.length ? 'progress' : 'none';
   }
 
   /**
@@ -147,6 +194,8 @@ export class StreamDeckRemote {
     const cols = Math.max(...keys.map((k) => k.column)) + 1;
     const rows = Math.max(...keys.map((k) => k.row)) + 1;
     const at = (r, c) => keys.find((k) => k.row === r && k.column === c);
+    const nav = NAV_ROWS[this.ui?.screen];
+    if (nav && rows > 1 && cols >= 3) return this.navLayout(items, keys, nav, { cols, rows, at });
     const mainRow = Math.floor((rows - 1) / 2);
     const belowRow = Math.min(rows - 1, mainRow + 1);
     const bottom = rows - 1;
@@ -167,7 +216,8 @@ export class StreamDeckRemote {
         const start = Math.floor((cols - group.length) / 2);
         group.forEach((it, i) => put(it, r, start + i));
       };
-      const corner = { btnNoPrint: [bottom, 0], btnPrint: [bottom, cols - 1] };
+      // Coins : retour au choix du cadre en bas à gauche (comme les autres retours), QR / imprimer.
+      const corner = { btnCaptureBack: [bottom, 0], btnNoPrint: [bottom, 0], btnPrint: [bottom, cols - 1] };
       const cornered = items.filter((it) => corner[it.id]);
       const rest = items.filter((it) => !corner[it.id]);
       const choices = rest.filter((it) => it.kind === 'choice');
@@ -203,6 +253,63 @@ export class StreamDeckRemote {
     slots.set(keys[keys.length - 2].index, { id: '__prev', label: '‹', kind: 'ghost', disabled: this.page === 0 });
     slots.set(keys[keys.length - 1].index, { id: '__next', label: '›', kind: 'ghost', disabled: this.page >= pages - 1 });
     return slots;
+  }
+
+  /**
+   * Galerie et visionneuse : rangée du bas fixe, comme à l'écran : retour (← accueil, ← toutes les photos)
+   * en bas à gauche, flèches ‹ › côte à côte en bas à droite. Galerie : les flèches tournent les pages de miniatures (rangées du dessus).
+   * Visionneuse : elles passent d'une photo à l'autre, la réimpression occupe les rangées du dessus.
+   */
+  navLayout(items, keys, nav, { cols, rows, at }) {
+    const bottom = rows - 1;
+    const above = keys.filter((k) => k.row < bottom);
+    const byId = new Map(items.map((it) => [it.id, it]));
+    const home = byId.get(nav.home);
+    const others = items.filter((it) => ![nav.prev, nav.home, nav.next].includes(it.id));
+    const slots = new Map();
+    let prev, next;
+    if (nav.paged && !byId.has(nav.prev)) { // la borne n'a pas (encore) paginé sa galerie : pages côté Stream Deck
+      const pages = Math.max(1, Math.ceil(others.length / above.length));
+      this.page = Math.min(this.page, pages - 1);
+      const page = others.slice(this.page * above.length, (this.page + 1) * above.length);
+      if (page.length <= cols) { // une seule rangée : centrée juste au-dessus de la navigation, comme avant
+        const start = Math.floor((cols - page.length) / 2);
+        page.forEach((it, i) => slots.set(at(bottom - 1, start + i).index, it));
+      } else page.forEach((it, i) => slots.set(above[i].index, it));
+      prev = { id: '__prev', disabled: this.page === 0 };
+      next = { id: '__next', disabled: this.page >= pages - 1 };
+    } else {
+      prev = byId.get(nav.prev) || { id: nav.prev, disabled: true };
+      next = byId.get(nav.next) || { id: nav.next, disabled: true };
+      if (nav.paged) others.slice(0, above.length).forEach((it, i) => slots.set(above[i].index, it)); // page affichée par la borne
+      else this.placeAbove(others, slots, { cols, bottom, at });
+    }
+    // Mêmes flèches partout : mêmes pictogrammes, couleurs du bouton retour.
+    const arrow = (it, icon) => ({ ...it, label: icon === 'chevronLeft' ? '‹' : '›', kind: 'ghost', icon, style: home?.style || it.style });
+    if (home) slots.set(at(bottom, 0).index, home);
+    slots.set(at(bottom, cols - 2).index, arrow(prev, 'chevronLeft'));
+    slots.set(at(bottom, cols - 1).index, arrow(next, 'chevronRight'));
+    return slots;
+  }
+
+  /** Visionneuse : − nombre + et « Réimprimer » centrés au-dessus de la rangée de navigation. */
+  placeAbove(items, slots, { cols, bottom, at }) {
+    if (!items.length || bottom < 1) return;
+    const row = (group, r) => {
+      const start = Math.floor((cols - group.length) / 2);
+      group.forEach((it, i) => { const k = at(r, start + i); if (k) slots.set(k.index, it); });
+    };
+    const stepper = items.filter((it) => ['btnPhotoMinus', 'copies', 'btnPhotoPlus'].includes(it.id));
+    const rest = items.filter((it) => !stepper.includes(it));
+    if (items.length <= cols) return row(items, bottom - 1);
+    if (bottom >= 2 && stepper.length <= cols && rest.length <= cols) {
+      row(stepper, bottom - 2);
+      row(rest, bottom - 1);
+      return;
+    }
+    // Une seule rangée libre (Stream Deck Mini) : − Réimprimer +, le nombre reste affiché sur l'écran.
+    const [minus, plus] = [stepper.find((it) => it.id === 'btnPhotoMinus'), stepper.find((it) => it.id === 'btnPhotoPlus')];
+    row([minus, ...rest, plus].filter(Boolean).slice(0, cols), bottom - 1);
   }
 
   // ---------- Animation « impression en cours » ----------
@@ -264,24 +371,29 @@ export class StreamDeckRemote {
 
   // ---------- Animation d'accueil « touchez l'écran » ----------
   // Un cercle plein grossit et rétrécit sur la touche centrale, des ondes en partent et traversent tout le clavier.
-  // N'importe quelle touche lance la session. Les images sont calculées une fois (couleurs + géométrie),
-  // puis la boucle n'envoie que les touches qui changent : supportable par un PC modeste.
+  // N'importe quelle touche lance la session, sauf la touche galerie (en bas à gauche) quand la galerie est
+  // activée. Les images sont calculées une fois (couleurs + géométrie), puis la boucle n'envoie que les
+  // touches qui changent : supportable par un PC modeste.
 
-  async startIdle(item) {
+  async startIdle(item, gallery) {
     const keys = this.buttons();
     if (!keys.length) return;
     const hex = (v, d) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : d);
     const accent = hex(item.style?.bg, hex(this.ui?.colors?.primary, '#e63946'));
-    const sig = `${this.deck.PRODUCT_NAME}|${accent}|${item.id}`;
-    // Toute touche = « commencer »
+    // Bas à gauche, comme le bouton « Galerie » de l'accueil à l'écran
+    const bottom = Math.max(...keys.map((k) => k.row));
+    const galleryKey = gallery && keys.length > 1 ? keys.find((k) => k.row === bottom && k.column === 0) : null;
+    const sig = `${this.deck.PRODUCT_NAME}|${accent}|${item.id}|${galleryKey ? JSON.stringify(gallery) : ''}`;
     this.keyMap.clear();
     for (const k of keys) this.keyMap.set(k.index, item.id);
+    if (galleryKey) this.keyMap.set(galleryKey.index, gallery.id);
     if (this.idle?.sig === sig) return;
     this.stopIdle();
     const idle = { sig, frame: 0, busy: false, last: new Map(), frames: null };
     this.idle = idle;
     try {
       idle.frames = await renderIdleFrames(keys, accent);
+      if (galleryKey) await overlayIcon(idle.frames, galleryKey, gallery); // les ondes passent derrière l'icône
     } catch (e) {
       this.drawError = e.message;
       console.warn(`[streamdeck] animation d'accueil : ${e.message}`);
@@ -322,8 +434,8 @@ export class StreamDeckRemote {
   async draw() {
     const deck = this.deck;
     if (!deck) return;
-    const start = this.ui?.screen === 'idle' && (this.ui.items || []).length === 1 ? this.ui.items[0] : null;
-    if (start) { this.stopAnim(); this.drawSeq++; return this.startIdle(start); }
+    const start = this.ui?.screen === 'idle' ? (this.ui.items || []).find((it) => it.id === 'start') : null;
+    if (start) { this.stopAnim(); this.drawSeq++; return this.startIdle(start, this.ui.items.find((it) => it.id === 'btnGallery')); }
     this.stopIdle();
     if (this.ui?.screen === 'printing') { this.startAnim(); return; }
     this.stopAnim();
@@ -332,6 +444,7 @@ export class StreamDeckRemote {
     if (!keys.length) return;
     const items = this.ui?.items || [];
     const slots = this.layout(items, keys);
+    this.drawnLayout = keys.map((k) => { const it = slots.get(k.index); return it ? `${it.id}${it.icon ? `:${it.icon}` : ''}` : null; });
     const colors = this.ui?.colors || {};
     this.keyMap.clear();
     try {
@@ -352,6 +465,16 @@ export class StreamDeckRemote {
     }
   }
 }
+
+const SECRET_CODE = ['G', 'D', 'G', 'D']; // touches du haut : gauche, droite, gauche, droite → admin
+const SECRET_STEP_MS = 1500; // délai maximum entre deux appuis du code
+
+// Rangée de navigation fixe des écrans de galerie (voir navLayout). paged : les flèches tournent les pages.
+const NAV_ROWS = {
+  template: { prev: '__prev', home: 'btnTemplateBack', next: '__next', paged: true }, // pages côté Stream Deck
+  gallery: { prev: 'btnGalleryPrev', home: 'btnGalleryBack', next: 'btnGalleryNext', paged: true },
+  photo: { prev: 'btnPhotoPrev', home: 'btnPhotoBack', next: 'btnPhotoNext' }
+};
 
 const escXml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
 
@@ -375,6 +498,12 @@ const ICONS = {
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
   next: '<path d="M5 12h14M12 5l7 7-7 7"/>',
+  logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+  power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>',
+  key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/>',
+  gallery: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
+  chevronLeft: '<path d="M15 5l-7 7 7 7"/>',   // mêmes chevrons que les flèches de la visionneuse à l'écran
+  chevronRight: '<path d="M9 5l7 7-7 7"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
   retake: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
   printer: '<path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/>',
@@ -413,6 +542,10 @@ async function renderKey(it, w, h, colors) {
     bg = '#000000'; fg = '#3a3a3a'; border = 'none';
   }
 
+  // Choix sans miniature (nom d'un cadre) : blanc sur noir, liseré du thème, lisible sur le petit écran LCD.
+  const nameKey = it.kind === 'choice' && !it.image && !it.disabled;
+  if (nameKey) { bg = '#000000'; fg = '#ffffff'; border = primary; }
+
   const stroke0 = border !== 'none' ? `stroke="${border}" stroke-width="${Math.max(2, w * 0.05)}"` : '';
   const frame = `<rect width="${w}" height="${h}" fill="${pageBg}"/><rect x="${w * 0.04}" y="${h * 0.04}" width="${w * 0.92}" height="${h * 0.92}" rx="${w * 0.16}" fill="${bg}" ${stroke0}/>`;
 
@@ -435,11 +568,14 @@ async function renderKey(it, w, h, colors) {
   }
 
   const short = String(it.label).length <= 2;
-  const lines = short ? [String(it.label)] : wrap(it.label, 9);
+  const lines = short ? [String(it.label)] : wrap(it.label, nameKey ? 8 : 9);
   // Taille ajustée à la ligne la plus longue : un mot comme « impression » tient toujours dans la touche.
   const longest = Math.max(...lines.map((l) => l.length));
-  const fit = (w * 0.84) / (longest * 0.62);
-  const size = short ? Math.round(h * 0.55) : Math.round(Math.min(h * (lines.length > 2 ? 0.17 : 0.21), fit));
+  const fit = nameKey ? (w * 0.8) / (longest * 0.56) : (w * 0.84) / (longest * 0.62); // nom de cadre : chasse réelle d'Helvetica gras
+  // Nom de cadre : aussi grand que la touche le permet (largeur et hauteur), plafonné à 40 % de la hauteur.
+  const size = short ? Math.round(h * 0.55)
+    : nameKey ? Math.round(Math.min(fit, (h * 0.74) / (lines.length * 1.12), h * 0.4))
+    : Math.round(Math.min(h * (lines.length > 2 ? 0.17 : 0.21), fit));
   const lh = size * 1.12;
   const y0 = h / 2 - ((lines.length - 1) * lh) / 2;
   const tspans = lines.map((l, i) => `<text x="${w / 2}" y="${y0 + i * lh}" dominant-baseline="central" text-anchor="middle">${escXml(l)}</text>`).join('');
@@ -448,6 +584,26 @@ async function renderKey(it, w, h, colors) {
     <g fill="${fg}" font-family="Helvetica, Arial, sans-serif" font-weight="800" font-size="${size}">${tspans}</g>
   </svg>`;
   return sharp(Buffer.from(svg)).removeAlpha().raw().toBuffer();
+}
+
+/**
+ * Pose un pictogramme par-dessus l'animation d'accueil sur une touche, image par image : les ondes
+ * passent derrière. Les images identiques restent partagées (la boucle n'envoie que ce qui change).
+ */
+async function overlayIcon(frames, key, it) {
+  const { width: w, height: h } = key.pixelSize;
+  const fg = '#ffffff'; // sur le fond noir de l'animation, quelle que soit la couleur du bouton à l'écran
+  const isz = w * 0.52;
+  const icon = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">
+    <g transform="translate(${(w - isz) / 2} ${(h - isz) / 2}) scale(${isz / 24})" fill="none" stroke="${fg}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">${ICONS[it.icon] || ''}</g></svg>`);
+  const done = new Map(); // image de fond → image avec l'icône
+  for (const f of frames) {
+    const bg = f.get(key.index);
+    if (!done.has(bg)) {
+      done.set(bg, await sharp(bg, { raw: { width: w, height: h, channels: 3 } }).composite([{ input: icon }]).removeAlpha().raw().toBuffer());
+    }
+    f.set(key.index, done.get(bg));
+  }
 }
 
 /** Imprimante vue de face, feuille qui sort par le bas ; t ∈ [0,1[ = avancement de la feuille. */
