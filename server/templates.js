@@ -3,6 +3,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import { TEMPLATES_DIR } from './paths.js';
 import { HttpError, readJson } from './util.js';
+import { CUTOUT_MODES, DEFAULT_TOLERANCE } from '../public/cutout.js';
 
 /**
  * Un template = un dossier data/templates/<id>/ avec template.json et un
@@ -69,7 +70,11 @@ export function normalizeLayer(raw, i) {
   const radius = round(clamp(num(raw.radius, 0), 0, 5000));
   switch (raw.type) {
     case 'photo':
-      return { ...base, shot: clamp(round(num(raw.shot, 0)), 0, 19), radius };
+      return {
+        ...base, shot: clamp(round(num(raw.shot, 0)), 0, 19), radius,
+        cutout: CUTOUT_MODES.includes(raw.cutout) ? raw.cutout : 'none', // détourage, voir public/cutout.js
+        keyTolerance: clamp(round(num(raw.keyTolerance, DEFAULT_TOLERANCE)), 0, 100)
+      };
     case 'image':
       if (!SRC.test(raw.src || '')) throw new HttpError(400, 'LAYER_SRC', `Calque ${i + 1} : fichier image manquant`);
       return { ...base, src: raw.src, radius };

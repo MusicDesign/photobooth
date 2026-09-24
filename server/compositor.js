@@ -1,6 +1,8 @@
 import path from 'node:path';
 import sharp from 'sharp';
 import { FONTS } from './templates.js';
+import { chromaKey, applyMatte } from '../public/cutout.js';
+import { personMatte } from './cutout-ai.js';
 
 /**
  * Rendu du template pour l'impression : chaque calque est dessiné dans l'ordre,
@@ -75,14 +77,30 @@ function rectSvg(l) {
   return `<rect x="${l.x}" y="${l.y}" width="${l.width}" height="${l.height}" rx="${r}" ry="${r}" fill="${l.fill || 'none'}"${stroke} opacity="${l.opacity}"${rotateAttr(l)}/>`;
 }
 
-async function renderLayer(l, { template, shotFiles }) {
+/** Photo détourée (fond vert / bleu ou IA) : PNG transparent là où le fond est retiré. */
+async function cutout(img, l) {
+  const { data, info } = await img.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  if (l.cutout === 'ai') {
+    const rgb = Buffer.alloc(info.width * info.height * 3);
+    for (let i = 0, j = 0; i < data.length; i += 4, j += 3) { rgb[j] = data[i]; rgb[j + 1] = data[i + 1]; rgb[j + 2] = data[i + 2]; }
+    applyMatte(data, await personMatte(rgb, info.width, info.height), 255);
+  } else {
+    chromaKey(data, l.cutout, l.keyTolerance);
+  }
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
+}
+
+async function renderLayer(l, { template, shotFiles, mirror }) {
   const W = template.width;
   const H = template.height;
   switch (l.type) {
     case 'photo': {
       const file = shotFiles[l.shot];
       if (!file) throw new Error(`Photo ${l.shot + 1} manquante`);
-      let buf = await sharp(file).rotate().resize(l.width, l.height, { fit: 'cover', position: 'centre' }).png().toBuffer();
+      let img = sharp(file).rotate();
+      if (mirror) img = img.flop(); // photo en miroir, comme l'aperçu : chacun reste là où il s'est vu par rapport au cadre
+      img = img.resize(l.width, l.height, { fit: 'cover', position: 'centre' });
+      let buf = l.cutout && l.cutout !== 'none' ? await cutout(img, l) : await img.png().toBuffer();
       buf = await roundCorners(buf, l.width, l.height, l.radius);
       buf = await withOpacity(buf, l.opacity);
       return placeLayer(buf, l, W, H);
@@ -102,11 +120,11 @@ async function renderLayer(l, { template, shotFiles }) {
   }
 }
 
-export async function compose(template, shotFiles, outFile) {
+export async function compose(template, shotFiles, outFile, { mirror = false } = {}) {
   const layers = [];
   for (const l of template.layers) {
     if (l.visible === false) continue;
-    const placed = await renderLayer(l, { template, shotFiles });
+    const placed = await renderLayer(l, { template, shotFiles, mirror });
     if (placed) layers.push(placed);
   }
   await sharp({ create: { width: template.width, height: template.height, channels: 3, background: template.background || '#ffffff' } })
