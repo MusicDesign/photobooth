@@ -27,6 +27,14 @@ export function apiRouter({ booth }) {
     res.json({ ok: true });
   });
 
+  /** « Je la garde » : la session sera conservée. */
+  r.post('/session/:id/keep', (req, res) => res.json(booth.keepSession(req.params.id)));
+
+  /** La borne revient à l'accueil : la session est supprimée si l'invité ne l'a pas validée. */
+  r.post('/session/:id/abandon', async (req, res) => {
+    res.json({ deleted: await booth.abandonSession(req.params.id) });
+  });
+
   r.post('/session/:id/shot/:index', upload.single('photo'), async (req, res) => {
     const index = Number(req.params.index);
     res.json(await booth.addShot(req.params.id, index, req.file?.buffer || null));

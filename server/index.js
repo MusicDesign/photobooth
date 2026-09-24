@@ -1,4 +1,7 @@
+import { installFileLog } from './log.js';
 import { createApp } from './app.js';
+
+installFileLog();
 import { lanIp } from './util.js';
 
 const { server, port, config, close } = await createApp();

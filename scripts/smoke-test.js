@@ -221,7 +221,9 @@ async function runSteps(app, camera) {
     after = (await j('/api/admin/state', { headers: ADMIN })).data;
     assert.equal(after.counters.sessions, 0);
     assert.equal(after.sessions.length, 0);
-    assert.equal(fs.readdirSync(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions')).length, 0);
+    // Seules les sessions de l'événement sont effacées (pas les dossiers laissés par la passe précédente)
+    const left = fs.readdirSync(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions'));
+    assert.ok(!before.sessions.some((x) => left.includes(x.id)), 'les dossiers des sessions de l\'événement doivent être effacés');
     assert.ok(after.prints.length > 0, 'l\'historique des tirages est conservé');
     assert.equal((await j(`/g/${s.id}`)).status, 404);
     // La borne repart normalement après une réinitialisation.
@@ -230,6 +232,85 @@ async function runSteps(app, camera) {
     await post(`/api/session/${s.id}/compose`, {});
     await post(`/api/session/${s.id}/print`, { copies: 0 });
     assert.equal((await j('/api/bootstrap')).data.counters.sessions, 1);
+  });
+
+  await step('sessions : seules les sessions validées (« Je la garde ») sont conservées', async () => {
+    const make = async () => {
+      const x = (await post('/api/session', { templateId: 'strip-3' })).data;
+      for (let i = 0; i < 3; i++) await shot(x.id, i);
+      await post(`/api/session/${x.id}/compose`, {});
+      return x.id;
+    };
+    const abandoned = await make();
+    assert.equal((await post(`/api/session/${abandoned}/abandon`, {})).data.deleted, true, 'relecture abandonnée : supprimée');
+    assert.equal((await j(`/api/session/${abandoned}`)).status, 404);
+    assert.ok(!fs.existsSync(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', abandoned)), 'photos effacées');
+    const kept = await make();
+    assert.equal((await post(`/api/session/${kept}/keep`, {})).status, 200);
+    assert.equal((await post(`/api/session/${kept}/abandon`, {})).data.deleted, false, 'validée : conservée');
+    const printed = await make();
+    await post(`/api/session/${printed}/print`, { copies: 0 });
+    assert.equal((await post(`/api/session/${printed}/abandon`, {})).data.deleted, false, 'terminée : conservée');
+    // Filet de sécurité : une session non validée ancienne est purgée, une validée jamais
+    const old = await make();
+    app.store.getSession(old).createdAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    app.store.getSession(kept).createdAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    app.booth.purgeUnvalidatedSessions();
+    assert.equal((await j(`/api/session/${old}`)).status, 404);
+    assert.equal((await j(`/api/session/${kept}`)).status, 200);
+  });
+
+  await step('événements : création, rattachement, compteurs par événement, déplacement, export ZIP, suppression', async () => {
+    const st = (await j('/api/admin/state', { headers: ADMIN })).data;
+    const first = st.activeEventId;
+    assert.equal(st.events.find((e) => e.id === first).name, 'Tests', 'les sessions existantes sont rangées dans « Tests »');
+    const ev = (await post('/api/admin/events', { name: 'Mariage Léa & Tom', date: '2026-10-03', activate: true }, ADMIN)).data;
+    assert.equal(ev.active, true);
+    let b = (await j('/api/bootstrap')).data.counters;
+    assert.equal(b.eventId, ev.id);
+    assert.equal(b.printed, 0, 'compteur de tirages propre au nouvel événement');
+    assert.equal(b.sessions, 0);
+    // Une session imprimée va dans l'événement en cours et compte pour lui seul
+    await post('/api/admin/counters', { paperRemaining: null }, ADMIN);
+    const s2 = (await post('/api/session', { templateId: 'strip-3' })).data;
+    for (let i = 0; i < 3; i++) await shot(s2.id, i);
+    await post(`/api/session/${s2.id}/compose`, {});
+    await post(`/api/session/${s2.id}/print`, { copies: 2 });
+    await waitStatus(s2.id, 'done');
+    b = (await j('/api/bootstrap')).data.counters;
+    assert.equal(b.printed, 2);
+    assert.equal(b.sessions, 1);
+    const evs = (await j(`/api/admin/events/${ev.id}/sessions`, { headers: ADMIN })).data;
+    assert.deepEqual(evs.sessions.map((x) => x.id), [s2.id]);
+    // Export : originaux, montages, les deux
+    const zipNames = async (content) => {
+      const res = await fetch(`${base}/api/admin/events/${ev.id}/export?content=${content}`, { headers: ADMIN });
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get('content-disposition'), /Mariage/);
+      const buf = Buffer.from(await res.arrayBuffer());
+      const names = [];
+      for (let i = buf.indexOf('PK\x01\x02'); i >= 0; i = buf.indexOf('PK\x01\x02', i + 4)) names.push(buf.toString('utf8', i + 46, i + 46 + buf.readUInt16LE(i + 28)));
+      return names;
+    };
+    const o = await zipNames('originals');
+    assert.equal(o.length, 3);
+    assert.ok(o.every((n) => n.includes(`/originaux/${s2.id}/photo-`)), o.join());
+    const f = await zipNames('finals');
+    assert.deepEqual(f.map((n) => n.split('/').slice(1).join('/')), [`montages/${s2.id}.jpg`]);
+    assert.equal((await zipNames('both')).length, 4);
+    // Déplacement vers « Tests » : la session et ses tirages suivent
+    await post(`/api/admin/sessions/${s2.id}/move`, { eventId: first }, ADMIN);
+    b = (await j('/api/bootstrap')).data.counters;
+    assert.equal(b.printed, 0);
+    assert.equal(b.sessions, 0);
+    assert.equal((await j(`/api/admin/events/${ev.id}/export?content=both`, { headers: ADMIN })).status, 404, 'événement vide : rien à exporter');
+    // Suppression : refusée pour l'événement en cours, acceptée après changement
+    assert.equal((await j(`/api/admin/events/${ev.id}`, { method: 'DELETE', headers: ADMIN })).status, 409);
+    await post(`/api/admin/events/${first}/activate`, {}, ADMIN);
+    assert.equal((await j(`/api/admin/events/${ev.id}`, { method: 'DELETE', headers: ADMIN })).status, 200);
+    const after = (await j('/api/admin/state', { headers: ADMIN })).data;
+    assert.ok(!after.events.some((e) => e.id === ev.id));
+    assert.ok(after.sessions.some((x) => x.id === s2.id), 'la session déplacée reste dans « Tests »');
   });
 
   await step('auto-détection : imprimante absente → QR seulement, repli mock, caméra de repli, tout à chaud', async () => {

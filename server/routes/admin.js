@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import multer from 'multer';
+import archiver from 'archiver';
 import { UPLOADS_DIR, SAMPLES_DIR } from '../paths.js';
 import { HttpError, parseCookies } from '../util.js';
 import { CAMERA_DRIVERS, CAMERA_FALLBACKS } from '../camera/index.js';
@@ -18,6 +19,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024 } });
 
   const isAuthed = (req) => {
+    if (!String(config.get().admin.pin ?? '')) return true; // code vide : admin ouvert (phase de test)
     const cookie = parseCookies(req.headers.cookie)['booth_admin'];
     if (cookie && tokens.has(cookie)) return true;
     const pin = req.headers['x-admin-pin'];
@@ -76,7 +78,9 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       printer: await booth.printerStatus(),
       devices: devices.status(),
       streamDeck: deck.status(),
-      sessions: store.listSessions(50).map((s) => booth.view(s)),
+      events: store.listEvents().map((ev) => booth.eventView(ev)),
+      activeEventId: store.data.activeEventId,
+      sessions: store.sessionsOfEvent(store.data.activeEventId).map((s) => booth.view(s)),
       prints: store.listPrints(50),
       shareBaseUrl: booth.shareBaseUrl()
     });
@@ -156,8 +160,9 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
 
   r.post('/counters', (req, res) => {
     const patch = {};
-    if (req.body?.reset) patch.printed = 0;
-    if (Number.isInteger(req.body?.printed)) patch.printed = req.body.printed;
+    // Compteur de tirages : celui de l'événement en cours (le total historique n'est pas touché)
+    if (req.body?.reset) store.updateEvent(store.data.activeEventId, { printed: 0 });
+    if (Number.isInteger(req.body?.printed)) store.updateEvent(store.data.activeEventId, { printed: Math.max(0, req.body.printed) });
     if (req.body?.paperRemaining === null) patch.paperRemaining = null;
     else if (Number.isInteger(req.body?.paperRemaining)) patch.paperRemaining = req.body.paperRemaining;
     store.updateCounters(patch);
@@ -178,8 +183,56 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   });
 
   r.post('/sessions/reset', (req, res) => {
-    const removed = booth.resetSessions();
+    const removed = booth.resetSessions(req.body?.eventId || undefined);
     res.json({ ok: true, removed, counters: booth.publicCounters() });
+  });
+
+  r.post('/sessions/:id/move', (req, res) => {
+    res.json(booth.moveSession(req.params.id, String(req.body?.eventId || '')));
+  });
+
+  // ---------- Événements (dossiers de sessions) ----------
+
+  r.get('/events/:id/sessions', (req, res) => {
+    const ev = booth.event(req.params.id);
+    res.json({ event: booth.eventView(ev), sessions: store.sessionsOfEvent(ev.id).map((s) => booth.view(s)) });
+  });
+
+  r.post('/events', (req, res) => {
+    const ev = booth.createEvent({ name: req.body?.name, date: req.body?.date, activate: !!req.body?.activate });
+    res.json(booth.eventView(ev));
+  });
+
+  r.put('/events/:id', (req, res) => {
+    res.json(booth.eventView(booth.updateEvent(req.params.id, { name: req.body?.name, date: req.body?.date })));
+  });
+
+  r.post('/events/:id/activate', (req, res) => {
+    booth.activateEvent(req.params.id);
+    res.json({ ok: true, counters: booth.publicCounters() });
+  });
+
+  r.delete('/events/:id', (req, res) => {
+    res.json({ ok: true, removed: booth.deleteEvent(req.params.id) });
+  });
+
+  /** Archive ZIP des photos d'un événement : ?content=originals | finals | both. Envoyée au fil de l'eau. */
+  r.get('/events/:id/export', (req, res) => {
+    const content = String(req.query.content || 'both');
+    const { event, files } = booth.exportFiles(req.params.id, content);
+    if (!files.length) throw new HttpError(404, 'EXPORT_EMPTY', 'Aucune photo à exporter pour cet événement');
+    const label = { originals: 'originaux', finals: 'montages', both: 'complet' }[content];
+    const base = `${event.date} ${event.name}`.replace(/[\\/:*?"<>|]+/g, '-').trim();
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="export.zip"; filename*=UTF-8''${encodeURIComponent(`${base} - ${label}.zip`)}`);
+    // Les JPEG sont déjà compressés : stockés tels quels, l'archive part tout de suite et le Pi / mini PC ne peine pas
+    const zip = archiver('zip', { store: true });
+    zip.on('warning', (e) => console.warn(`[export] ${e.message}`));
+    zip.on('error', (e) => { console.warn(`[export] ${e.message}`); res.destroy(e); });
+    res.on('close', () => { if (!res.writableFinished) zip.abort(); }); // téléchargement annulé
+    zip.pipe(res);
+    for (const f of files) zip.file(f.file, { name: `${base}/${f.name}` });
+    zip.finalize();
   });
 
   r.all('/{*rest}', () => {

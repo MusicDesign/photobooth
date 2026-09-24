@@ -47,6 +47,7 @@ export class CupsPrinter extends BasePrinter {
 
   watch(jobId) {
     const started = Date.now();
+    let stalled = false;
     const tick = async () => {
       try {
         const { stdout } = await execFileP('lpstat', ['-W', 'not-completed', '-o']);
@@ -55,16 +56,18 @@ export class CupsPrinter extends BasePrinter {
           this.emit('job', { jobId, status: 'done' });
           return;
         }
-        this.emit('job', { jobId, status: 'printing' });
-        if (Date.now() - started > 5 * 60 * 1000) {
+        if (!stalled) this.emit('job', { jobId, status: 'printing' });
+        if (!stalled && Date.now() - started > 5 * 60 * 1000) {
+          // Le tirage reste dans la file CUPS et sortira une fois le papier remis : on continue de le
+          // surveiller (plus lentement) pour signaler 'done' s'il finit par sortir.
+          stalled = true;
           this.emit('job', { jobId, status: 'error', message: 'Impression bloquée depuis 5 min (papier ? bourrage ?)' });
-          return;
         }
       } catch (e) {
         this.emit('job', { jobId, status: 'error', message: e.message });
         return;
       }
-      this.watchers.set(jobId, setTimeout(tick, 2000));
+      this.watchers.set(jobId, setTimeout(tick, stalled ? 10000 : 2000));
     };
     this.watchers.set(jobId, setTimeout(tick, 1500));
   }

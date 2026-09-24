@@ -76,7 +76,7 @@ export class Gphoto2Camera extends BaseCamera {
       liveIdleMs: 8000, // délai avant de couper le live quand plus aucun écran ne l'affiche
       // Exécutée une fois quand le boîtier est détecté (réglages à pousser). Vide par défaut : le 2000D
       // accepte la commande autopoweroff sans en tenir compte, l'arrêt auto se désactive dans son menu.
-      setupCommand: '',
+      setupCommand: 'gphoto2 --set-config-index drivemode=0', // mode « Unique », voir config.js
       ...opts
     };
     this.mjpeg = new MjpegBroadcaster();
@@ -212,9 +212,10 @@ export class Gphoto2Camera extends BaseCamera {
       p.stderr.on('data', (d) => { err += d.toString(); });
       p.on('exit', (code) => {
         clearTimeout(t);
-        const last = err.trim().split('\n').filter((l) => l && !/^UNKNOWN/.test(l)).pop() || '';
+        const lines = err.trim().split('\n').map((l) => l.trim()).filter((l) => l && !/^UNKNOWN|^\*\*\*|^Pour obtenir|^Ces messages|^l'intention|^diffusion|^en anglais|^env LANG|^For debugging|^These debug|^intend to send|^mailing list|^please run|^Please make sure/i.test(l));
+        const last = lines.slice(-3).join(' | ');
         if (code === 0) resolve(out);
-        else reject(new Error(killed && !last ? 'commande interrompue' : `gphoto2 a échoué (code ${code}) : ${last}`));
+        else reject(new Error(killed && !last ? 'commande interrompue' : `gphoto2 a échoué (code ${code}${killed ? ', arrêté' : ''}) : ${last}`));
       });
     });
     return { promise, kill };
@@ -240,11 +241,14 @@ export class Gphoto2Camera extends BaseCamera {
     // Sans ça, tuer le shell laisserait gphoto2 orphelin, obturateur ouvert et appareil réservé.
     const proc = spawn('sh', ['-c', this.opts.liveviewCommand], { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     this.live = proc;
+    const liveStart = Date.now();
+    console.log('[gphoto2] live view : démarrage');
     let stderr = '';
     proc.stdout.on('data', (chunk) => parser.feed(chunk));
     proc.stderr.on('data', (d) => { stderr = (stderr + d.toString()).slice(-2000); });
     proc.on('exit', (code) => {
       if (this.live === proc) this.live = null;
+      console.log(`[gphoto2] live view : arrêté après ${Date.now() - liveStart} ms (code ${code}${this.gotFrame ? '' : ', aucune image'})`);
       const hadFrames = this.gotFrame;
       if (hadFrames) {
         this.gotFrame = false;
@@ -309,6 +313,12 @@ export class Gphoto2Camera extends BaseCamera {
     }
   }
 
+  /** Échec d'une prise de vue : journalisé en entier et affiché dans le tableau de bord. */
+  noteCaptureError(e) {
+    this.lastCaptureError = { message: e.message, at: new Date().toISOString() };
+    console.warn(`[gphoto2] ÉCHEC de la prise de vue : ${e.message}`);
+  }
+
   /** Relâche le déclencheur à distance si une commande a été interrompue. Jamais bloquant. */
   async recover() {
     const cmd = (this.opts.recoverCommand || '').trim();
@@ -363,7 +373,9 @@ export class Gphoto2Camera extends BaseCamera {
     const t0 = Date.now();
     this.busy = true; // bloque la relance du live et la bascule de pilote
     this.arming = (async () => {
+      const tStop = Date.now();
       await this.stopLive(false); // l'ouverture de la liaison gphoto2 sert de pause de stabilisation
+      const stopMs = Date.now() - tStop;
       const wait = Math.max(150, Math.round(fireInMs - (Date.now() - t0) - (this.opts.armOpenMs || 0)));
       await this.raiseFlash();
       const cmd = tpl.replace('{flash}', '').replace('{wait}', String(wait)).replace('{file}', quoteArg(file));
@@ -375,9 +387,16 @@ export class Gphoto2Camera extends BaseCamera {
       });
       pending.promise.catch(() => {}); // consommée par capture()
       this.pending = pending;
-      console.log(`[gphoto2] déclenchement programmé dans ${wait + (this.opts.armOpenMs || 0)} ms, mise au point en cours`);
-      job.promise
-        .catch(() => this.recover()) // ne jamais laisser le déclencheur « enfoncé »
+      console.log(`[gphoto2] déclenchement programmé dans ${wait + (this.opts.armOpenMs || 0)} ms, mise au point en cours (arrêt du live : ${stopMs} ms)`);
+      const tFire = Date.now();
+      pending.promise
+        // Échec : ne jamais laisser le déclencheur « enfoncé »
+        .then(() => {
+          console.log(`[gphoto2] photo reçue ${Date.now() - tFire} ms après le lancement de la commande`);
+        }, (e) => {
+          this.noteCaptureError(e);
+          return this.recover();
+        })
         .finally(() => {
           this.busy = false;
           setTimeout(() => this.startLive(), this.opts.settleMs);
@@ -423,7 +442,10 @@ export class Gphoto2Camera extends BaseCamera {
         await this.sh(cmd, 20000);
         if (!fs.existsSync(destFile)) throw new Error('gphoto2 a terminé sans produire de fichier');
       } catch (e) {
+        this.noteCaptureError(e);
         await this.recover(); // ne jamais laisser le déclencheur « enfoncé »
+        this.busy = false; // sinon le live ne repartirait plus jamais
+        setTimeout(() => this.startLive(), this.opts.settleMs);
         throw e;
       }
       this.busy = false;
@@ -455,6 +477,7 @@ export class Gphoto2Camera extends BaseCamera {
       flashFiredAt: this.flashFiredAt || null,
       flash: this.opts.flash || 'off',
       sceneLuma: this.sceneLuma,
+      lastCaptureError: this.lastCaptureError || null,
       lastFlash: this.lastFlash,
       lastFlashError: this.lastFlashError || null,
       lastError: this.failing ? this.lastError : null

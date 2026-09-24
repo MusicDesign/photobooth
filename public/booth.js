@@ -113,10 +113,42 @@ function applyBoot() {
   state.primaryColor = theme.colors.primary;
 
   const t = (id, key) => { const el = $(id); if (el) el.textContent = texts[key] || ''; };
-  t('#txtWelcome', 'welcome'); t('#txtChooseTemplate', 'chooseTemplate'); t('#txtGetReady', 'getReady');
+  showWelcome(); renderPaperBadge(); t('#txtChooseTemplate', 'chooseTemplate'); t('#txtGetReady', 'getReady');
   t('#btnStart', 'start'); t('#txtReview', 'review'); t('#btnRetake', 'retake'); t('#btnKeep', 'keep');
   t('#txtCopies', 'copies'); t('#btnPrint', 'print'); t('#btnNoPrint', 'noPrint'); t('#txtPrinting', 'printing');
   t('#txtThanks', 'thanks'); t('#btnFinish', 'finish');
+}
+
+/**
+ * Écran tactile ? Ce que le navigateur annonce au chargement, corrigé par le premier vrai toucher
+ * (certains écrans tactiles se déclarent comme une souris). Sert à ne pas inviter à toucher un écran
+ * qui ne réagit pas.
+ */
+state.touch = navigator.maxTouchPoints > 0 || matchMedia('(any-pointer: coarse)').matches;
+window.addEventListener('pointerdown', (e) => {
+  if (e.pointerType !== 'touch' || state.touch) return;
+  state.touch = true;
+  showWelcome();
+}, true);
+
+/** Pastille discrète pour l'opérateur, en bas à droite, quand le papier est bas (seuil de l'admin) ou épuisé. */
+function renderPaperBadge() {
+  const c = state.boot?.counters;
+  const el = $('#paperBadge');
+  el.classList.toggle('hidden', !c?.lowPaper);
+  el.classList.toggle('empty', !!c?.paperEmpty);
+  if (c?.lowPaper) el.textContent = c.paperEmpty ? 'Plus de papier' : `Papier : ${c.paperRemaining}`;
+}
+
+function showWelcome() {
+  const texts = state.boot?.texts || {};
+  $('#txtWelcome').textContent = (state.touch ? texts.welcome : texts.welcomeNoTouch || texts.welcome) || '';
+  // Sans tactile : une flèche vers le Stream Deck remplace le cercle qui invite à toucher
+  const pos = state.boot?.booth?.streamDeck?.position;
+  const hint = $('#buttonHint');
+  hint.dataset.pos = ['top', 'bottom', 'left', 'right'].includes(pos) ? pos : 'bottom';
+  hint.classList.toggle('hidden', state.touch);
+  $('#screen-idle .pulse').classList.toggle('hidden', !state.touch);
 }
 
 async function reloadBoot() {
@@ -161,6 +193,11 @@ function showScreen(name) {
 
 function goIdle() {
   clearAllTimers();
+  state.doneReturnAt = null;
+  // Session pas validée (« Je la garde ») : le serveur la supprime avec ses photos (il vérifie lui-même).
+  const s = state.session;
+  if (s && ['shooting', 'review'].includes(s.status) && !state.kept) api(`/api/session/${s.id}/abandon`, { method: 'POST' }).catch(() => {});
+  state.kept = false;
   state.session = null;
   state.template = null;
   state.shotImages = {};
@@ -358,6 +395,7 @@ function onIdleTap() {
 // ---------- Prise de vue ----------
 
 async function startSession(templateId) {
+  state.kept = false;
   try {
     const session = await api('/api/session', { method: 'POST', body: { templateId } });
     state.session = session;
@@ -411,13 +449,15 @@ async function runCountdown(index) {
   if (lead > 0) {
     const sessionId = state.session.id;
     setTimer('arm', () => {
-      state.liveHeld = true; // le live va se couper : on garde la dernière image à l'écran, obturateur ouvert
+      state.liveHeld = true; // le live va se couper : l'aperçu n'a plus d'intérêt, place au décompte plein écran
+      enterLookMode();
       state.armedSession = sessionId;
       const fireInMs = Math.max(0, Math.round(fireAt - performance.now()));
       api(`/api/session/${sessionId}/arm`, { method: 'POST', body: { index, fireInMs } }).catch(() => {});
     }, Math.max(0, total * 1000 - lead));
   }
   for (let n = total; n > 0; n--) {
+    if (!lead && (n === LOOK_UP_SEC || (n === total && total < LOOK_UP_SEC))) enterLookMode(); // sans pré-armement, le live continue
     cd.textContent = n;
     cd.classList.remove('pop');
     void cd.offsetWidth;
@@ -439,6 +479,27 @@ function hideCountdown() {
   const cd = $('#countdown');
   cd.classList.add('hidden');
   cd.classList.remove('msg', 'pop');
+  $('#lookUp').classList.add('hidden');
+  $('#screen-capture').classList.remove('looking');
+}
+
+/** Sans pré-armement (webcam…) : secondes avant le « 0 » où l'on passe au décompte plein écran. */
+const LOOK_UP_SEC = 2;
+
+/**
+ * Décompte plein écran + « Regardez l'objectif » avec une flèche vers le boîtier, jusqu'à l'arrivée de
+ * la photo. Avec gphoto2, dès la coupure du live par le pré-armement : plus d'image figée à l'écran.
+ */
+function enterLookMode() {
+  if (state.screen !== 'capture') return;
+
+  const el = $('#lookUp');
+  const pos = ['top', 'bottom', 'left', 'right'].includes(state.boot.booth.lensPosition) ? state.boot.booth.lensPosition : 'top';
+  el.dataset.pos = pos;
+  $('#screen-capture').dataset.lens = pos; // ordre bandeau / chiffre
+  $('#screen-capture').classList.add('looking');
+  $('#txtLookUp').textContent = state.boot.texts.lookUp || 'Regardez l\'objectif';
+  el.classList.remove('hidden');
 }
 
 function flash() {
@@ -556,18 +617,23 @@ async function retakeShot(index) {
 function keepPhoto() {
   clearTimer('reviewTimeout');
   const s = state.session;
+  if (!state.kept) {
+    state.kept = true; // validée : conservée même si l'invité s'arrête au choix des copies
+    api(`/api/session/${s.id}/keep`, { method: 'POST' }).catch(() => {});
+  }
   const { texts, limits, counters, printer } = state.boot;
   state.maxCopies = s.maxCopies;
   if (!s.unlocked && counters.quotaRemaining !== null) state.maxCopies = Math.min(state.maxCopies, counters.quotaRemaining);
+  if (counters.paperRemaining !== null) state.maxCopies = Math.min(state.maxCopies, counters.paperRemaining); // papier : même déverrouillé
   $('#finalThumb').src = s.final.thumbUrl;
 
-  const quotaReached = state.maxCopies <= 0;
+  const quotaReached = state.maxCopies <= 0; // quota atteint ou plus de papier
   const printerOff = printer?.available === false; // imprimante absente (auto-détection) : QR code seulement
   const noPrint = quotaReached || printerOff;
   $('#stepper').classList.toggle('hidden', noPrint);
   $('#btnPrint').classList.toggle('hidden', noPrint);
   if (noPrint) {
-    $('#copiesHint').textContent = printerOff ? texts.printerUnavailable : texts.quotaReached;
+    $('#copiesHint').textContent = printerOff ? texts.printerUnavailable : counters.paperEmpty ? texts.paperEmpty || texts.quotaReached : texts.quotaReached;
     $('#btnNoPrint').textContent = texts.finish;
     $('#btnNoPrint').classList.remove('hidden');
   } else {
@@ -595,7 +661,7 @@ async function doPrint(copies) {
     else pollPrint();
   } catch (e) {
     toast(e.message, 5000);
-    if (e.code === 'QUOTA_REACHED' || e.code === 'PRINTER_UNAVAILABLE') {
+    if (e.code === 'QUOTA_REACHED' || e.code === 'PRINTER_UNAVAILABLE' || e.code === 'PAPER_EMPTY') {
       const b = await api('/api/bootstrap');
       state.boot.counters = b.counters;
       state.boot.printer = b.printer;
@@ -628,7 +694,9 @@ async function showDone() {
     $('#shareUrl').textContent = q.url;
   } catch { /* QR facultatif */ }
   showScreen('done');
-  setTimer('idleReturn', goIdle, (state.boot.booth.idleReturnSec || 20) * 1000);
+  const ms = (state.boot.booth.idleReturnSec || 20) * 1000;
+  state.doneReturnAt = Date.now() + ms; // décompte affiché sur le Stream Deck
+  setTimer('idleReturn', goIdle, ms);
 }
 
 // ---------- Codes PIN (pavé tactile) ----------
@@ -674,6 +742,7 @@ async function operatorUnlock() {
 }
 
 async function adminAccess() {
+  if (state.boot.adminOpen) { location.href = '/admin.html'; return; } // code admin vide (tests)
   const pin = await askPin('Code admin');
   if (pin === null) return;
   try {
@@ -776,6 +845,13 @@ function deckItems() {
       items.push({ id: 'copies', label: el.textContent, kind: 'display', display: true, style: { bg: st.page, fg: st.fg, border: null } });
       continue;
     }
+    if (el.id === 'btnFinish' && state.doneReturnAt) {
+      // Écran de fin : secondes avant le retour automatique à l'accueil, à la place du bouton « Terminer »
+      const left = Math.max(0, Math.ceil((state.doneReturnAt - Date.now()) / 1000));
+      const page = deckStyle(document.body).page;
+      items.push({ id: 'doneCountdown', label: String(left), kind: 'display', display: true, style: { bg: page, fg: solid(getComputedStyle(document.documentElement).getPropertyValue('--primary').trim(), page), border: null } });
+      continue;
+    }
     if (!el.dataset.deck) el.dataset.deck = el.id || `deck-${Date.now().toString(36)}-${n++}`;
     const glyph = { minus: '−', plus: '+' }[el.dataset.icon]; // boutons dont l'icône est dessinée en CSS
     const label = glyph || (el.querySelector('.template-name, span')?.textContent || el.textContent || el.getAttribute('aria-label') || '').trim();
@@ -792,6 +868,7 @@ function startDeckSync() {
     const ws = state.ws;
     if (!ws || ws.readyState !== 1 || !state.boot) return;
     const ui = { type: 'ui', screen: $('#pinDialog').open ? 'pin' : state.screen, items: deckItems(), colors: state.boot.theme.colors, page: deckStyle(document.body).page };
+    if (ui.screen === 'done') ui.anyKey = 'finish'; // écran de fin : toute touche ramène à l'accueil
     const sig = JSON.stringify(ui);
     if (sig === last && !state.deckResend) return;
     last = sig;
@@ -800,8 +877,59 @@ function startDeckSync() {
   }, 250);
 }
 
+// ---------- Clavier (ou télécommande qui se présente comme un clavier) ----------
+// Espace = action principale de l'écran, Entrée = valider (idem, ou OK du code), Échap = retour / annuler,
+// ← ↓ = « − », ↑ → = « + ». Sur un écran de choix (cadres, photo à refaire), les flèches déplacent la
+// sélection et Espace / Entrée la valident. Chiffres et ⌫ tapent dans le code.
+
+const KEY_MINUS = ['ArrowLeft', 'ArrowDown'];
+const KEY_PLUS = ['ArrowRight', 'ArrowUp'];
+
+function onKeyDown(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const dlg = $('#pinDialog');
+  const act = (el) => { if (el && visible(el) && !el.disabled) { el.click(); return true; } return false; };
+  let done = false;
+
+  if (dlg.open) {
+    if (/^[0-9]$/.test(e.key)) done = act(dlg.querySelector(`[data-k="${e.key}"]`));
+    else if (e.key === 'Backspace') done = act(dlg.querySelector('[data-k="del"]'));
+    else if (e.key === 'Enter' || e.key === ' ') done = act(dlg.querySelector('[data-k="ok"]'));
+    else if (e.key === 'Escape') done = act($('#pinCancel'));
+  } else if (!e.repeat || [...KEY_MINUS, ...KEY_PLUS].includes(e.key)) {
+    const root = $('.screen.active');
+    if (!root) return;
+    if (root.id === 'screen-done' && !['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key)) {
+      goIdle(); // écran de fin : toute touche ramène à l'accueil, sans attendre le décompte
+      e.preventDefault();
+      return;
+    }
+    const choices = [...root.querySelectorAll('.template-card, .retake-thumb')].filter(visible);
+    if (e.key === ' ' || e.key === 'Enter') {
+      if (root.id === 'screen-idle') { onIdleTap(); done = true; }
+      else if (choices.includes(document.activeElement)) done = act(document.activeElement);
+      else done = act([...root.querySelectorAll('.btn-primary')].find(visible));
+    } else if (e.key === 'Escape') {
+      done = act([...root.querySelectorAll('#btnCancel, #btnTemplateBack')].find(visible));
+    } else if (KEY_MINUS.includes(e.key) || KEY_PLUS.includes(e.key)) {
+      const plus = KEY_PLUS.includes(e.key);
+      if (choices.length) {
+        // Sélection : première flèche = premier choix, puis on se déplace (en boucle)
+        const i = choices.indexOf(document.activeElement);
+        const next = i < 0 ? 0 : (i + (plus ? 1 : -1) + choices.length) % choices.length;
+        choices[next].focus();
+        done = true;
+      } else {
+        done = act(root.querySelector(plus ? '#btnPlus' : '#btnMinus'));
+      }
+    }
+  }
+  if (done) e.preventDefault(); // sinon Espace / Entrée recliqueraient le bouton qui a le focus
+}
+
 function onDeckPress(id) {
   if (id === 'start') { if (state.screen === 'idle') onIdleTap(); return; }
+  if (id === 'finish') { if (state.screen === 'done' && !$('#pinDialog').open) goIdle(); return; }
   const el = document.querySelector(`[data-deck="${CSS.escape(id)}"]`);
   if (el && visible(el) && !el.disabled) el.click();
 }
@@ -823,6 +951,7 @@ function connectWs() {
       else state.pendingConfigReload = true;
     } else if (msg.type === 'counters') {
       if (state.boot) state.boot.counters = msg.counters;
+      renderPaperBadge();
     } else if (msg.type === 'live') {
       state.liveStreaming = !!msg.streaming; // ouvre ou referme l'obturateur dessiné sur l'aperçu
     } else if (msg.type === 'sessions' && state.session) {
@@ -843,6 +972,9 @@ function connectWs() {
 
 function bind() {
   $('#screen-idle').addEventListener('click', onIdleTap);
+  document.addEventListener('keydown', onKeyDown, true);
+  // Échap natif sur la fenêtre du code : la fermerait sans prévenir askPin(). On passe par « Annuler ».
+  $('#pinDialog').addEventListener('cancel', (e) => { e.preventDefault(); $('#pinCancel').click(); });
   $('#btnTemplateBack').addEventListener('click', goIdle);
   $('#btnStart').addEventListener('click', () => runCountdown(state.currentShot));
   $('#btnCancel').addEventListener('click', goIdle);

@@ -100,6 +100,7 @@ export class StreamDeckRemote {
 
   async close() {
     this.stopAnim();
+    this.stopIdle();
     const deck = this.deck;
     this.deck = null;
     this.keyMap.clear();
@@ -127,7 +128,7 @@ export class StreamDeckRemote {
 
   handleDown(control) {
     if (control.type !== 'button') return;
-    const id = this.keyMap.get(control.index);
+    const id = this.keyMap.get(control.index) || this.ui?.anyKey; // anyKey : écran où toute touche agit (fin)
     if (!id) return;
     if (id === '__next') { this.page += 1; return this.draw(); }
     if (id === '__prev') { this.page = Math.max(0, this.page - 1); return this.draw(); }
@@ -261,9 +262,69 @@ export class StreamDeckRemote {
     }
   }
 
+  // ---------- Animation d'accueil « touchez l'écran » ----------
+  // Un cercle plein grossit et rétrécit sur la touche centrale, des ondes en partent et traversent tout le clavier.
+  // N'importe quelle touche lance la session. Les images sont calculées une fois (couleurs + géométrie),
+  // puis la boucle n'envoie que les touches qui changent : supportable par le Pi.
+
+  async startIdle(item) {
+    const keys = this.buttons();
+    if (!keys.length) return;
+    const hex = (v, d) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : d);
+    const accent = hex(item.style?.bg, hex(this.ui?.colors?.primary, '#e63946'));
+    const sig = `${this.deck.PRODUCT_NAME}|${accent}|${item.id}`;
+    // Toute touche = « commencer »
+    this.keyMap.clear();
+    for (const k of keys) this.keyMap.set(k.index, item.id);
+    if (this.idle?.sig === sig) return;
+    this.stopIdle();
+    const idle = { sig, frame: 0, busy: false, last: new Map(), frames: null };
+    this.idle = idle;
+    try {
+      idle.frames = await renderIdleFrames(keys, accent);
+    } catch (e) {
+      this.drawError = e.message;
+      console.warn(`[streamdeck] animation d'accueil : ${e.message}`);
+      return;
+    }
+    if (this.idle !== idle) return; // écran changé pendant le calcul
+    idle.timer = setInterval(() => this.idleFrame(idle), IDLE_FRAME_MS);
+    this.idleFrame(idle);
+  }
+
+  stopIdle() {
+    if (!this.idle) return;
+    clearInterval(this.idle.timer);
+    this.idle = null;
+  }
+
+  async idleFrame(idle) {
+    const deck = this.deck;
+    if (!deck || this.idle !== idle || idle.busy) return;
+    idle.busy = true;
+    try {
+      const frame = idle.frames[idle.frame % idle.frames.length];
+      for (const [index, buf] of frame) {
+        if (this.idle !== idle || this.deck !== deck) return;
+        if (idle.last.get(index) === buf) continue; // image identique à la précédente : rien à envoyer
+        await deck.fillKeyBuffer(index, buf, { format: 'rgb' });
+        idle.last.set(index, buf);
+      }
+      idle.frame += 1;
+      this.drawnAt = new Date().toISOString();
+    } catch (e) {
+      this.drawError = e.message;
+    } finally {
+      idle.busy = false;
+    }
+  }
+
   async draw() {
     const deck = this.deck;
     if (!deck) return;
+    const start = this.ui?.screen === 'idle' && (this.ui.items || []).length === 1 ? this.ui.items[0] : null;
+    if (start) { this.stopAnim(); this.drawSeq++; return this.startIdle(start); }
+    this.stopIdle();
     if (this.ui?.screen === 'printing') { this.startAnim(); return; }
     this.stopAnim();
     const seq = ++this.drawSeq;
@@ -404,6 +465,66 @@ async function renderPrinter(w, h, t, accent) {
   return sharp(Buffer.from(svg)).removeAlpha().raw().toBuffer();
 }
 
+const IDLE_FRAMES = 20;   // boucle de 20 images…
+const IDLE_FRAME_MS = 80; // … à 80 ms : une onde toutes les 0,8 s (deux ondes décalées d'une demi-boucle)
+
+/**
+ * Images de l'animation d'accueil. Le clavier est dessiné comme une seule grande image (touches + espaces
+ * entre elles, pour que les ondes soient continues d'une touche à l'autre), puis découpé touche par touche.
+ * Retourne un tableau d'images : Map(index de touche → RVB brut). Deux touches identiques d'une image à
+ * l'autre partagent le même Buffer (comparaison par référence dans idleFrame).
+ */
+async function renderIdleFrames(keys, accent) {
+  const { width: w, height: h } = keys[0].pixelSize;
+  const gap = Math.round(w * 0.3);
+  const cols = Math.max(...keys.map((k) => k.column)) + 1;
+  const rows = Math.max(...keys.map((k) => k.row)) + 1;
+  const W = cols * w + (cols - 1) * gap;
+  const H = rows * h + (rows - 1) * gap;
+  const mainRow = Math.floor((rows - 1) / 2);
+  const cc = Math.floor((cols - 1) / 2);
+  const cx = cc * (w + gap) + w / 2;
+  const cy = mainRow * (h + gap) + h / 2;
+  const rMin = w * 0.5; // les ondes naissent au bord du cercle central à son plus grand
+  const rMax = Math.hypot(Math.max(cx, W - cx), Math.max(cy, H - cy)) + w * 0.2;
+
+  const frames = [];
+  let prev = new Map();
+  for (let f = 0; f < IDLE_FRAMES; f++) {
+    const t = f / IDLE_FRAMES;
+    const rings = [0, 0.5].map((off) => {
+      const p = (t + off) % 1;
+      const r = rMin + p * (rMax - rMin);
+      const op = Math.min(1, p / 0.12) * (1 - p) ** 0.9; // apparition en fondu, puis s'éteint en s'éloignant
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${accent}" stroke-width="${w * 0.2 * (1 - p * 0.4)}" stroke-opacity="${op.toFixed(3)}"/>`;
+    }).join('');
+    // Cercle central : rayon de 0,2 à 0,4 × la touche et retour, sur une boucle
+    const r = w * (0.2 + 0.2 * (0.5 - 0.5 * Math.cos(2 * Math.PI * t)));
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
+      <rect width="${W}" height="${H}" fill="#000"/>${rings}
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="${accent}"/>
+    </svg>`;
+    const raw = await sharp(Buffer.from(svg)).removeAlpha().raw().toBuffer();
+    const frame = new Map();
+    for (const k of keys) {
+      const x0 = k.column * (w + gap);
+      const y0 = k.row * (h + gap);
+      const buf = Buffer.alloc(w * h * 3);
+      for (let y = 0; y < h; y++) raw.copy(buf, y * w * 3, ((y0 + y) * W + x0) * 3, ((y0 + y) * W + x0 + w) * 3);
+      const before = prev.get(k.index);
+      frame.set(k.index, before && before.equals(buf) ? before : buf);
+    }
+    frames.push(frame);
+    prev = frame;
+  }
+  // Raccord de fin de boucle : réutilise les Buffers de la première image quand ils sont identiques
+  for (const [index, buf] of frames[frames.length - 1]) {
+    const first = frames[0].get(index);
+    if (first.equals(buf)) frames[frames.length - 1].set(index, first);
+  }
+  return frames;
+}
+
 async function renderDot(w, h, on, accent) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">
     <rect width="${w}" height="${h}" fill="#000"/>
@@ -411,4 +532,4 @@ async function renderDot(w, h, on, accent) {
   return sharp(Buffer.from(svg)).removeAlpha().raw().toBuffer();
 }
 
-export { renderKey };
+export { renderKey, renderIdleFrames };

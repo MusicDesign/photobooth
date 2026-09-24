@@ -13,8 +13,11 @@ export const DEFAULTS = {
     language: 'fr',
     idleReturnSec: 20,
     mirrorPreview: true,
+    lensPosition: 'top',   // où est l'objectif par rapport à l'écran : top | bottom | left | right (sens de la flèche « Regardez l'objectif »)
     showName: true,        // affiche le nom à côté du logo
-    streamDeck: { enabled: true, brightness: 70 }, // télécommande Elgato branchée en USB (sans écran tactile)
+    // Télécommande Elgato branchée en USB (sans écran tactile). position : où il est posé par rapport à l'écran,
+    // pour la flèche de l'accueil quand l'écran n'est pas tactile (top | bottom | left | right).
+    streamDeck: { enabled: true, brightness: 70, position: 'bottom' },
     logo: '',              // /uploads/logo-xxx.png, vide = logo par défaut
     backgroundImage: ''
   },
@@ -40,7 +43,10 @@ export const DEFAULTS = {
       liveview: true,
       settleMs: 800,
       liveIdleMs: 8000,    // coupure du live (obturateur fermé) quand aucun écran n'affiche l'aperçu
-      setupCommand: ''     // poussé au boîtier à sa détection (vide = rien ; le 2000D ignore autopoweroff, voir son menu)
+      // Poussé au boîtier à sa détection. Mode « Unique » (drivemode=0) : en rafale, le déclencheur maintenu
+      // jusqu'au téléchargement prend plusieurs vues, les vues en trop saturent la mémoire interne et le boîtier
+      // finit par refuser de déclencher (0x2019 « périphérique occupé »). Le 2000D ignore autopoweroff (voir son menu).
+      setupCommand: 'gphoto2 --set-config-index drivemode=0'
     }
   },
   printer: {
@@ -90,9 +96,11 @@ export const DEFAULTS = {
   },
   texts: {
     welcome: "Touchez l'écran pour commencer",
+    welcomeNoTouch: 'Appuyez sur le bouton pour commencer', // accueil quand l'écran n'est pas tactile (Stream Deck…)
     chooseTemplate: 'Choisissez votre cadre',
     getReady: 'Placez-vous devant l\'objectif',
     start: "C'est parti !",
+    lookUp: "Regardez l'objectif", // bandeau avec flèche vers l'objectif (booth.lensPosition), juste avant le « 0 »
     holdPose: 'Gardez la pose !',   // affiché entre le « 0 » et l'arrivée de la photo
     review: 'On la garde ?',
     retake: 'Refaire',
@@ -103,6 +111,7 @@ export const DEFAULTS = {
     printing: 'Impression en cours…',
     thanks: 'Merci ! Scannez le QR code pour récupérer votre photo.',
     quotaReached: 'Les impressions sont terminées pour ce soir, mais votre photo vous attend en ligne !',
+    paperEmpty: 'Plus de papier pour le moment, mais votre photo vous attend en ligne !', // stock à 0 (admin)
     printerUnavailable: "L'imprimante n'est pas disponible, mais votre photo vous attend en ligne !",
     finish: 'Terminer'
   },

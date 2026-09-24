@@ -79,6 +79,7 @@ function dashboard() {
   const stat = (v, l, cls = '') => `<div class="stat ${cls}"><div class="v">${v}</div><div class="l">${l}</div></div>`;
   return `
   <h2>Tableau de bord</h2>
+  <p class="sub">Événement en cours : <b>${esc(c.eventName)}</b> · <a href="#sessions">changer ou en créer un</a></p>
   <div class="grid">
     ${stat(c.printed, 'tirages imprimés')}
     ${stat(c.quotaRemaining === null ? '∞' : c.quotaRemaining, 'quota restant', c.quotaReached ? 'err' : '')}
@@ -88,7 +89,7 @@ function dashboard() {
   <div class="grid-2" style="margin-top:22px">
     <div class="card">
       <h3>Matériel</h3>
-      <p>Caméra <code>${esc(S.camera.driver)}</code> <span class="badge ${S.camera.ok ? 'ok' : 'err'}">${S.camera.ok ? 'OK' : 'problème'}</span>${S.camera.standby ? ' <small>live view en veille, obturateur fermé</small>' : ''}${S.camera.driver === 'gphoto2' ? `<br><small>Flash : ${flashState()}</small>` : ''}${S.devices.camera.requested === 'auto' ? `<br><small>auto · ${esc(S.devices.camera.reason)}</small>` : ''}${S.camera.lastError ? `<br><small>${esc(S.camera.lastError)}</small>` : ''}</p>
+      <p>Caméra <code>${esc(S.camera.driver)}</code> <span class="badge ${S.camera.ok ? 'ok' : 'err'}">${S.camera.ok ? 'OK' : 'problème'}</span>${S.camera.standby ? ' <small>live view en veille, obturateur fermé</small>' : ''}${S.camera.driver === 'gphoto2' ? `<br><small>Flash : ${flashState()}</small>` : ''}${S.devices.camera.requested === 'auto' ? `<br><small>auto · ${esc(S.devices.camera.reason)}</small>` : ''}${S.camera.lastError ? `<br><small>${esc(S.camera.lastError)}</small>` : ''}${S.camera.lastCaptureError ? `<br><small><b>Dernier échec de photo</b> (${new Date(S.camera.lastCaptureError.at).toLocaleTimeString('fr-FR')}) : ${esc(S.camera.lastCaptureError.message)}</small>` : ''}</p>
       <p>Imprimante <code>${esc(S.printer.driver)}</code> <span class="badge ${S.printer.ok ? 'ok' : 'err'}">${S.printer.ok ? 'OK' : 'problème'}</span>${S.devices.printer.requested === 'auto' ? `<br><small>auto · ${esc(S.devices.printer.reason)}</small>` : ''}<br><small>${esc(S.printer.message)}</small></p>
       <p>Stream Deck ${deckState()}</p>
       <p>Partage : <code>${esc(S.shareBaseUrl)}</code></p>
@@ -264,6 +265,7 @@ function hardware() {
         <small><b>auto</b> : boîtier gphoto2 s'il est branché, sinon le repli ci-dessous. <b>browser</b> : webcam du navigateur (Mac, ou webcam USB sur le Pi). <b>mock</b> : photos d'exemple. <b>gphoto2</b> : Canon EOS en USB.</small><br><br>
         <label>Repli quand aucun boîtier n'est détecté ${sel('cameraFallback', S.drivers.cameraFallbacks, cfg.camera.fallback || 'browser')}</label>
         <label>En ce moment ${det(S.devices.camera)}</label>
+        <label>Position de l'objectif par rapport à l'écran <select name="lensPosition">${[['top', 'Au-dessus'], ['bottom', 'En dessous'], ['left', 'À gauche'], ['right', 'À droite']].map(([v, l]) => `<option value="${v}" ${(cfg.booth.lensPosition || 'top') === v ? 'selected' : ''}>${l}</option>`).join('')}</select><small>Oriente la flèche « Regardez l'objectif » affichée juste avant la photo (gauche / droite vues par l'invité)</small></label>
         <hr>
         ${S.camera.flashControl === false ? `
         <label>Flash intégré ${flashState()}</label>
@@ -297,6 +299,7 @@ function hardware() {
     <div class="card" style="margin-top:22px">
       <h3>Stream Deck</h3>
       <label class="inline"><input name="deckEnabled" type="checkbox" ${(cfg.booth.streamDeck?.enabled ?? true) ? 'checked' : ''}> Utiliser un Stream Deck Elgato branché en USB comme télécommande</label>
+      <label>Position du Stream Deck par rapport à l'écran <select name="deckPosition">${[['bottom', 'En dessous'], ['top', 'Au-dessus'], ['left', 'À gauche'], ['right', 'À droite']].map(([v, l]) => `<option value="${v}" ${(cfg.booth.streamDeck?.position || 'bottom') === v ? 'selected' : ''}>${l}</option>`).join('')}</select><small>Écran non tactile : l'accueil affiche une flèche vers le Stream Deck (gauche / droite vues par l'invité)</small></label>
       <label>Luminosité des touches (%) <input name="deckBrightness" type="number" min="10" max="100" value="${cfg.booth.streamDeck?.brightness ?? 70}" style="width:120px"></label>
       <label>En ce moment ${deckState()}</label>
       <small>Les touches reprennent les boutons de l'écran affiché, aux couleurs du thème, y compris le pavé du code opérateur. Sur Mac, quitter l'application Stream Deck d'Elgato, qui réserve l'appareil.</small>
@@ -308,33 +311,99 @@ function hardware() {
   </form>`;
 }
 
+// Événement affiché dans la section Sessions : #sessions=<id> (par défaut l'événement en cours)
+function selectedEventId() {
+  const m = location.hash.match(/^#sessions=(.+)$/);
+  const id = m ? decodeURIComponent(m[1]) : S.activeEventId;
+  return S.events.some((e) => e.id === id) ? id : S.activeEventId;
+}
+
+// Sessions d'un autre événement que celui en cours : chargées à la demande
+let eventSessions = null; // { id, sessions }
+async function loadEventSessions(id) {
+  try {
+    const r = await api(`/api/admin/events/${encodeURIComponent(id)}/sessions`);
+    eventSessions = { id, sessions: r.sessions };
+  } catch (e) { toast(e.message, true); eventSessions = { id, sessions: [] }; }
+  if (currentSection() === 'sessions' && selectedEventId() === id) render();
+}
+
+const plural = (n, one, many = `${one}s`) => `${n} ${n > 1 ? many : one}`;
+const frDate = (d) => new Date(`${d}T12:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+
 function sessions() {
-  const rows = S.sessions.map((s) => `
+  const selId = selectedEventId();
+  const ev = S.events.find((e) => e.id === selId);
+  let list = null;
+  if (selId === S.activeEventId) list = S.sessions;
+  else if (eventSessions?.id === selId) list = eventSessions.sessions;
+  else loadEventSessions(selId);
+
+  const folders = S.events.map((e) => `
+    <a class="folder ${e.id === selId ? 'selected' : ''}" href="#sessions=${encodeURIComponent(e.id)}">
+      <span class="folder-name">${esc(e.name)}${e.active ? ' <span class="badge ok">en cours</span>' : ''}</span>
+      <small>${esc(frDate(e.date))}</small>
+      <small>${plural(e.sessions, 'session')} · ${plural(e.photos, 'photo')} · ${plural(e.printed || 0, 'tirage')}</small>
+    </a>`).join('');
+
+  const moveOptions = (s) => S.events.map((e) => `<option value="${esc(e.id)}" ${e.id === s.eventId ? 'selected' : ''}>${esc(e.name)}</option>`).join('');
+  const rows = (list || []).map((s) => `
     <tr>
       <td>${s.final ? `<img class="thumb" src="${esc(s.final.thumbUrl)}" alt="">` : '<div class="thumb"></div>'}</td>
       <td><code>${esc(s.id)}</code><br><small>${new Date(s.createdAt).toLocaleString('fr-FR')}</small></td>
       <td>${esc(s.templateName)}</td>
       <td><span class="badge ${s.status === 'done' ? 'ok' : s.status === 'error' ? 'err' : ''}">${esc(s.status)}</span>${s.error ? `<br><small>${esc(s.error)}</small>` : ''}</td>
       <td>${s.copies}</td>
+      <td>${S.events.length > 1 ? `<select class="small" data-move="${esc(s.id)}" title="Déplacer vers un autre événement">${moveOptions(s)}</select>` : ''}</td>
       <td class="actions">${s.final ? `<button class="btn small secondary" data-reprint="${esc(s.id)}">Réimprimer</button> <a class="btn small" href="/g/${esc(s.id)}" target="_blank">Galerie</a> ` : ''}<button class="btn small danger" data-del-session="${esc(s.id)}" ${s.status === 'printing' ? 'disabled title="Impression en cours"' : ''}>Supprimer</button></td>
     </tr>`).join('');
-  const total = S.counters.sessions;
+
+  const exp = (content, label, n) => n
+    ? `<a class="btn small secondary" href="/api/admin/events/${encodeURIComponent(ev.id)}/export?content=${content}" download>${label}</a>`
+    : `<button class="btn small secondary" disabled>${label}</button>`;
   return `
   <h2>Sessions</h2>
-  <p class="sub">Les 50 dernières sessions sur ${total}, identifiées par leur id. La réimpression ignore la limite par session mais compte dans le quota.</p>
-  <div class="row" style="margin-bottom:14px"><button class="btn danger" id="btnResetSessions" ${total ? '' : 'disabled'}>Réinitialiser les sessions (${total})</button></div>
-  <div class="card"><table>
-    <thead><tr><th></th><th>Session</th><th>Template</th><th>Statut</th><th>Copies</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="6">Aucune session pour le moment.</td></tr>'}</tbody>
-  </table></div>`;
+  <p class="sub">Un dossier par événement. Les nouvelles sessions vont dans l'événement <b>en cours</b>, qui porte aussi le quota et le compteur de tirages du tableau de bord.</p>
+  <div class="folders">
+    ${folders}
+    <button class="folder new" id="btnNewEvent"><span class="folder-name">+ Nouvel événement</span><small>nom, date, et il devient l'événement en cours</small></button>
+  </div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between;align-items:flex-start">
+      <div>
+        <h3 style="margin:0">${esc(ev.name)} ${ev.active ? '<span class="badge ok">en cours</span>' : ''}</h3>
+        <small>${esc(frDate(ev.date))} · ${plural(ev.sessions, 'session')} · ${plural(ev.photos, 'photo originale', 'photos originales')} · ${plural(ev.finals, 'montage')} · ${plural(ev.printed || 0, 'tirage')}</small>
+      </div>
+      <div class="row">
+        ${ev.active ? '' : `<button class="btn small" id="btnActivateEvent">Définir comme événement en cours</button>`}
+        <button class="btn small" id="btnEditEvent">Renommer / changer la date</button>
+      </div>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <b>Exporter (ZIP)</b>
+      ${exp('originals', `Photos originales (${ev.photos})`, ev.photos)}
+      ${exp('finals', `Montages avec template (${ev.finals})`, ev.finals)}
+      ${exp('both', 'Les deux', ev.photos + ev.finals)}
+    </div>
+    <table style="margin-top:14px">
+      <thead><tr><th></th><th>Session</th><th>Template</th><th>Statut</th><th>Copies</th><th>Événement</th><th></th></tr></thead>
+      <tbody>${list === null ? '<tr><td colspan="7">Chargement…</td></tr>' : rows || '<tr><td colspan="7">Aucune session dans cet événement.</td></tr>'}</tbody>
+    </table>
+    <div class="row" style="margin-top:18px">
+      <button class="btn danger" id="btnResetSessions" ${ev.sessions ? '' : 'disabled'}>Vider l'événement (${plural(ev.sessions, 'session')})</button>
+      ${ev.active ? '<small>L\'événement en cours ne peut pas être supprimé : activez-en un autre d\'abord.</small>' : `<button class="btn danger" id="btnDeleteEvent">Supprimer l'événement</button>`}
+    </div>
+  </div>`;
 }
 
-/** Réinitialisation complète des sessions (tableau de bord et section Sessions). */
-async function resetSessions() {
-  const n = S.counters.sessions;
-  if (!confirm(`Supprimer les ${n} session${n > 1 ? 's' : ''} et leurs photos, et remettre le compteur à zéro ?\nCette action est irréversible.`)) return;
+/** Vide un événement (en cours par défaut) : sessions, photos et compteur de tirages. */
+async function resetSessions(eventId = S.activeEventId) {
+  const ev = S.events.find((e) => e.id === eventId);
+  const n = ev.sessions;
+  if (!confirm(`Supprimer les ${n} session${n > 1 ? 's' : ''} de « ${ev.name} » et leurs photos, et remettre son compteur de tirages à zéro ?\nCette action est irréversible.`)) return;
   try {
-    const r = await api('/api/admin/sessions/reset', { method: 'POST' });
+    const r = await api('/api/admin/sessions/reset', { method: 'POST', body: { eventId } });
+    eventSessions = null;
     toast(`${r.removed} session${r.removed > 1 ? 's' : ''} supprimée${r.removed > 1 ? 's' : ''}`);
     refresh();
   } catch (e) { toast(e.message, true); }
@@ -348,7 +417,8 @@ function security() {
     <div class="grid-2">
       <div>
         <h3>Codes</h3>
-        <label>Code PIN admin <input name="adminPin" value="${esc(cfg.admin.pin)}" required></label>
+        <label>Code PIN admin <input name="adminPin" value="${esc(cfg.admin.pin)}" placeholder="vide = pas de code"></label>
+        ${cfg.admin.pin ? '' : '<div class="alert">Aucun code admin : n\'importe qui peut ouvrir l\'admin. À remettre avant un événement.</div>'}
         <label>Code opérateur (lève la limite de copies sur la borne) <input name="operatorPin" value="${esc(cfg.limits.operatorPin)}" required></label>
         <small>Sur la borne : 5 appuis en haut à droite ouvrent l'admin.</small>
       </div>
@@ -907,6 +977,7 @@ const SECTIONS = { dashboard, limits, theme: themeSection, templates: templatesS
 function currentSection() {
   const h = location.hash.replace('#', '');
   if (h.startsWith('editor=')) return 'editor';
+  if (h.startsWith('sessions=')) return 'sessions';
   return SECTIONS[h] ? h : 'dashboard';
 }
 
@@ -1075,7 +1146,7 @@ function bindSection(sec) {
           captureCommand: fd.get('captureCommand'), liveviewCommand: fd.get('liveviewCommand'),
           liveview: fd.get('liveview') === 'on', settleMs: num(fd, 'settleMs'), liveIdleMs: num(fd, 'liveIdleSec') * 1000
         } },
-        booth: { streamDeck: { enabled: fd.get('deckEnabled') === 'on', brightness: num(fd, 'deckBrightness') } },
+        booth: { lensPosition: fd.get('lensPosition'), streamDeck: { enabled: fd.get('deckEnabled') === 'on', brightness: num(fd, 'deckBrightness'), position: fd.get('deckPosition') } },
         printer: { driver: fd.get('printerDriver'), fallback: fd.get('printerFallback'), mockDelayMs: num(fd, 'mockDelayMs'),
           cups: { name: fd.get('cupsName').trim(), options: fd.get('cupsOptions').split('\n').map((s) => s.trim()).filter(Boolean) } }
       });
@@ -1086,14 +1157,51 @@ function bindSection(sec) {
     document.querySelectorAll('[data-reprint]').forEach((b) => b.addEventListener('click', async () => {
       const copies = Number(prompt('Nombre de copies à réimprimer ?', '1'));
       if (!copies) return;
-      try { await api(`/api/admin/reprint/${b.dataset.reprint}`, { method: 'POST', body: { copies } }); toast('Réimpression lancée'); refresh(); } catch (e) { toast(e.message, true); }
+      try { await api(`/api/admin/reprint/${b.dataset.reprint}`, { method: 'POST', body: { copies } }); toast('Réimpression lancée'); eventSessions = null; refresh(); } catch (e) { toast(e.message, true); }
     }));
     document.querySelectorAll('[data-del-session]').forEach((b) => b.addEventListener('click', async () => {
       const id = b.dataset.delSession;
       if (!confirm(`Supprimer la session ${id} et ses photos ?`)) return;
-      try { await api(`/api/admin/sessions/${id}`, { method: 'DELETE' }); toast('Session supprimée'); refresh(); } catch (e) { toast(e.message, true); }
+      try { await api(`/api/admin/sessions/${id}`, { method: 'DELETE' }); toast('Session supprimée'); eventSessions = null; refresh(); } catch (e) { toast(e.message, true); }
     }));
-    $('#btnResetSessions').onclick = resetSessions;
+    const evId = selectedEventId();
+    const ev = S.events.find((e) => e.id === evId);
+    const reload = () => { eventSessions = null; refresh(); };
+    $('#btnResetSessions').onclick = () => resetSessions(evId);
+    document.querySelectorAll('[data-move]').forEach((sel) => sel.addEventListener('change', async () => {
+      try { await api(`/api/admin/sessions/${sel.dataset.move}/move`, { method: 'POST', body: { eventId: sel.value } }); toast('Session déplacée'); reload(); } catch (e) { toast(e.message, true); }
+    }));
+    $('#btnNewEvent').onclick = async () => {
+      const name = prompt('Nom de l\'événement ?', '');
+      if (!name?.trim()) return;
+      const date = prompt('Date (AAAA-MM-JJ) ?', new Date().toISOString().slice(0, 10));
+      if (!date) return;
+      try {
+        const created = await api('/api/admin/events', { method: 'POST', body: { name, date, activate: true } });
+        toast(`« ${created.name} » est l'événement en cours`);
+        location.hash = `#sessions=${encodeURIComponent(created.id)}`;
+        reload();
+      } catch (e) { toast(e.message, true); }
+    };
+    if ($('#btnActivateEvent')) $('#btnActivateEvent').onclick = async () => {
+      try { await api(`/api/admin/events/${encodeURIComponent(evId)}/activate`, { method: 'POST' }); toast(`« ${ev.name} » est l'événement en cours`); reload(); } catch (e) { toast(e.message, true); }
+    };
+    $('#btnEditEvent').onclick = async () => {
+      const name = prompt('Nom de l\'événement ?', ev.name);
+      if (name === null) return;
+      const date = prompt('Date (AAAA-MM-JJ) ?', ev.date);
+      if (date === null) return;
+      try { await api(`/api/admin/events/${encodeURIComponent(evId)}`, { method: 'PUT', body: { name, date } }); toast('Événement mis à jour'); reload(); } catch (e) { toast(e.message, true); }
+    };
+    if ($('#btnDeleteEvent')) $('#btnDeleteEvent').onclick = async () => {
+      if (!confirm(`Supprimer l'événement « ${ev.name} », ses ${ev.sessions} session(s) et toutes leurs photos ?\nPensez à exporter d'abord. Cette action est irréversible.`)) return;
+      try {
+        await api(`/api/admin/events/${encodeURIComponent(evId)}`, { method: 'DELETE' });
+        toast('Événement supprimé');
+        location.hash = '#sessions';
+        reload();
+      } catch (e) { toast(e.message, true); }
+    };
   }
 
   if (sec === 'security') {

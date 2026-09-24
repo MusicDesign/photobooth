@@ -18,6 +18,10 @@
       <h1 id="txtWelcome" class="headline"></h1>
       <div class="pulse"></div>
     </div>
+    <!-- Écran non tactile : flèche vers le Stream Deck, sur le bord de l'écran où il est posé -->
+    <div id="buttonHint" class="button-hint hidden" aria-hidden="true">
+      <svg class="look-up-arrow" viewBox="0 0 24 24"><path d="M12 3l-8 8h5v10h6V11h5z"/></svg>
+    </div>
   </section>
 
   <!-- Choix du template -->
@@ -33,6 +37,10 @@
       <div class="preview-wrap">
         <canvas id="preview"></canvas>
         <div id="countdown" class="countdown hidden"></div>
+        <div id="lookUp" class="look-up hidden" aria-live="polite">
+          <svg class="look-up-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l-8 8h5v10h6V11h5z"/></svg>
+          <span id="txtLookUp"></span>
+        </div>
         <div id="flash" class="flash"></div>
       </div>
       <div class="side">
@@ -99,6 +107,7 @@
   </section>
 
   <div id="toast" class="toast hidden"></div>
+  <div id="paperBadge" class="paper-badge hidden" aria-hidden="true"></div>
   <div id="adminHotspot" class="admin-hotspot" aria-hidden="true"></div>
 </div>
 

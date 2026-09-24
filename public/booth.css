@@ -51,6 +51,14 @@ body[data-font="serif"] { font-family: Georgia, "Times New Roman", serif; }
 .title { font-size: clamp(26px, 3.4vw, 46px); font-weight: 800; color: var(--secondary); margin: 0; text-align: center; }
 .hint { font-size: clamp(16px, 1.6vw, 22px); opacity: 0.75; margin: 0; text-align: center; max-width: 34ch; }
 
+/* Accueil sans tactile : flèche vers le Stream Deck, collée au bord où il est posé (data-pos) */
+.button-hint { --rot: 180deg; position: absolute; left: 50%; bottom: 3vh; transform: translateX(-50%); color: var(--secondary); pointer-events: none; } /* couleur du titre d'accueil */
+.button-hint .look-up-arrow { width: clamp(64px, 9vmin, 120px); height: clamp(64px, 9vmin, 120px); animation-name: hint-bounce; }
+@keyframes hint-bounce { from { transform: rotate(var(--rot)) translateY(10px); } to { transform: rotate(var(--rot)) translateY(-14px); } }
+.button-hint[data-pos="top"] { --rot: 0deg; bottom: auto; top: 3vh; }
+.button-hint[data-pos="left"], .button-hint[data-pos="right"] { bottom: auto; top: 50%; transform: translateY(-50%); }
+.button-hint[data-pos="left"] { --rot: -90deg; left: 3vw; }
+.button-hint[data-pos="right"] { --rot: 90deg; left: auto; right: 3vw; }
 .pulse { width: 84px; height: 84px; border-radius: 50%; border: 6px solid var(--primary); animation: pulse 1.6s ease-out infinite; }
 @keyframes pulse { 0% { transform: scale(0.6); opacity: 1; } 100% { transform: scale(1.5); opacity: 0; } }
 
@@ -84,6 +92,8 @@ body[data-font="serif"] { font-family: Georgia, "Times New Roman", serif; }
 .template-grid { display: flex; flex-wrap: wrap; gap: 32px; justify-content: center; align-items: flex-end; max-width: 1400px; }
 .template-card { appearance: none; border: 0; background: var(--surface); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 14px; transition: transform 0.12s ease; }
 .template-card:active { transform: scale(0.97); }
+/* Choix au clavier (flèches) : contour visible sur la carte sélectionnée */
+.template-card:focus-visible, .retake-thumb:focus-visible { outline: 5px solid var(--primary); outline-offset: 6px; }
 .template-card canvas { border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); background: repeating-conic-gradient(#e9e9e9 0 25%, #fff 0 50%) 0 0 / 20px 20px; }
 .template-name { font-weight: 800; font-size: 22px; color: var(--on-surface); }
 
@@ -98,6 +108,50 @@ body[data-font="serif"] { font-family: Georgia, "Times New Roman", serif; }
 .countdown.pop { animation: pop 0.9s ease-out; }
 /* Message « Gardez la pose ! » au même endroit que les chiffres, entre le « 0 » et l'arrivée de la photo */
 .countdown.msg { font-size: clamp(28px, 5vw, 64px); line-height: 1.15; padding: 0 28px; text-align: center; letter-spacing: 0.5px; }
+/* Décompte plein écran : l'aperçu (figé ou non) s'efface, l'invité doit regarder l'objectif, pas l'écran */
+/* Bandeau et chiffre rangés côte à côte (flex), jamais superposés : l'ordre suit la position de l'objectif */
+#screen-capture.looking .preview-wrap {
+  position: absolute; inset: 0; z-index: 10; height: auto; max-height: none; background: var(--secondary);
+  flex-direction: column-reverse; gap: 3vmin; padding: 28px 28px 104px; /* en bas : place du bouton Annuler */
+}
+/* Dans le DOM le chiffre précède le bandeau : « reverse » met le bandeau côté objectif en haut et à gauche */
+#screen-capture.looking[data-lens="bottom"] .preview-wrap { flex-direction: column; }
+#screen-capture.looking[data-lens="left"] .preview-wrap { flex-direction: row-reverse; }
+#screen-capture.looking[data-lens="right"] .preview-wrap { flex-direction: row; }
+#screen-capture.looking #preview { position: absolute; visibility: hidden; }
+#screen-capture.looking .look-up {
+  position: static; transform: none; flex: none; max-width: none; padding: 0; background: none; color: var(--on-secondary);
+  font-size: clamp(26px, 4vw, 56px);
+}
+/* Chiffre dimensionné sur la place restante : hauteur d'écran moins marges et bandeau (≈ 2,9 × sa police) */
+#screen-capture.looking .countdown {
+  position: relative; inset: auto; flex: 1 1 0; min-width: 0; min-height: 0; align-self: stretch; line-height: 1;
+  color: var(--on-secondary); text-shadow: none; font-size: max(80px, min(calc(100vh - 132px - 3vmin - 11.6vw), calc(100vh - 294px), 45vw));
+}
+#screen-capture.looking[data-lens="left"] .countdown, #screen-capture.looking[data-lens="right"] .countdown { font-size: max(80px, min(calc(100vh - 140px), 32vw)); }
+#screen-capture.looking .countdown.msg { font-size: clamp(36px, 7vw, 110px); line-height: 1.15; }
+#screen-capture.looking .countdown.pop { animation-name: pop-soft; } /* sans agrandissement : il déborderait sur le bandeau */
+@keyframes pop-soft { 0% { transform: scale(0.85); opacity: 0.2; } 30% { transform: scale(1); opacity: 1; } 100% { transform: scale(0.95); opacity: 0.9; } }
+#screen-capture.looking .flash { border-radius: 0; }
+#screen-capture.looking #btnCancel { position: absolute; left: 28px; bottom: 28px; z-index: 11; color: var(--on-secondary); background: rgba(255,255,255,0.12); }
+/* Bandeau « Regardez l'objectif », collé au bord de l'aperçu côté boîtier (data-pos = booth.lensPosition) */
+.look-up {
+  --dx: 0px; --dy: -12px; --rot: 0deg;
+  position: absolute; top: 18px; left: 50%; transform: translate(-50%, 0); display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 10px 28px 14px; border-radius: 18px; background: rgba(0,0,0,0.55); color: #fff; pointer-events: none;
+  font-size: clamp(22px, 3.4vw, 44px); font-weight: 800; text-align: center; white-space: nowrap; max-width: calc(100% - 32px);
+  animation: look-in 0.3s ease-out;
+}
+.look-up[data-pos="bottom"] { top: auto; bottom: 18px; flex-direction: column-reverse; padding: 14px 28px 10px; --dy: 12px; --rot: 180deg; }
+/* Gauche / droite : dans le coin haut, pour ne pas masquer le chiffre du décompte au centre */
+.look-up[data-pos="left"], .look-up[data-pos="right"] { flex-direction: row; gap: 14px; padding: 14px 24px; transform: none; --dy: 0px; }
+.look-up[data-pos="left"] { left: 18px; --dx: -12px; --rot: -90deg; }
+.look-up[data-pos="right"] { left: auto; right: 18px; flex-direction: row-reverse; --dx: 12px; --rot: 90deg; }
+.look-up-arrow { flex: none; width: 1.6em; height: 1.6em; fill: currentColor; animation: look-bounce 0.7s ease-in-out infinite alternate; }
+@keyframes look-in { from { opacity: 0; translate: var(--dx) var(--dy); } to { opacity: 1; translate: 0 0; } }
+/* La flèche est dessinée vers le haut : on la tourne vers le boîtier, puis elle rebondit dans cette direction */
+@keyframes look-bounce { from { transform: rotate(var(--rot)) translateY(6px); } to { transform: rotate(var(--rot)) translateY(-6px); } }
+@media (prefers-reduced-motion: reduce) { .look-up { animation: none; } .look-up-arrow { animation: none; transform: rotate(var(--rot)); } }
 @keyframes pop { 0% { transform: scale(1.35); opacity: 0.2; } 30% { transform: scale(1); opacity: 1; } 100% { transform: scale(0.9); opacity: 0.9; } }
 .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; border-radius: 18px; }
 .flash.on { animation: flash 0.45s ease-out; }
@@ -125,6 +179,9 @@ body[data-font="serif"] { font-family: Georgia, "Times New Roman", serif; }
 
 /* Toast + zone admin cachée */
 .toast { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); background: var(--secondary); color: var(--on-secondary); padding: 16px 26px; border-radius: 999px; font-weight: 700; font-size: 18px; z-index: 50; box-shadow: var(--shadow); max-width: 80vw; text-align: center; }
+/* Pastille opérateur « papier bas » : petite, discrète, dans un coin ; rouge quand il n'y en a plus */
+.paper-badge { position: fixed; right: 14px; bottom: 12px; z-index: 55; font-size: 13px; font-weight: 700; padding: 5px 10px; border-radius: 999px; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); opacity: 0.55; pointer-events: none; }
+.paper-badge.empty { background: #d62828; color: #fff; opacity: 0.9; }
 .admin-hotspot { position: fixed; top: 0; right: 0; width: 120px; height: 120px; z-index: 60; }
 
 /* Pavé numérique */
