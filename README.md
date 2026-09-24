@@ -29,6 +29,7 @@ navigateur) : ouvrez la borne en local, pas via l'adresse IP.
 npm run smoke                 # test de bout en bout, sans matériel (51 étapes, données temporaires)
 npm run app                   # la borne en app de bureau plein écran (Electron), Ctrl+Maj+Q pour quitter
 npm run remote                # page distante de l'adresse publique → output/remote (TUTORIEL.md, étape 10.8)
+scripts/make-mac-app.sh       # régénère « Photo Booth.app » (raccourci Mac : double-clic = npm run app)
 node scripts/screenshots.js   # capture tous les écrans avec Chrome headless → output/screenshots/
 BOOTH_CAMERA=mock npm start   # caméra simulée côté serveur (flux MJPEG), utile sans webcam
 ```
