@@ -10,3 +10,4 @@ data/config.json
 # Templates propres à un événement (le template « default » reste versionné)
 data/templates/*
 !data/templates/default/
+dist/

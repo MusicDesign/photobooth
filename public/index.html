@@ -22,6 +22,44 @@
     <div id="buttonHint" class="button-hint hidden" aria-hidden="true">
       <svg class="look-up-arrow" viewBox="0 0 24 24"><path d="M12 3l-8 8h5v10h6V11h5z"/></svg>
     </div>
+    <!-- Galerie de l'événement (réglage admin) -->
+    <button id="btnGallery" class="btn btn-secondary idle-gallery hidden"></button>
+  </section>
+
+  <!-- Galerie : les photos de l'événement en cours -->
+  <section class="screen" id="screen-gallery">
+    <h2 id="txtGalleryTitle" class="title"></h2>
+    <div id="galleryGrid" class="gallery-grid"></div>
+    <p id="txtGalleryEmpty" class="hint hidden"></p>
+    <button id="btnGalleryBack" class="btn btn-ghost back">← Accueil</button>
+  </section>
+
+  <!-- Galerie : une photo, précédente / suivante, réimpression -->
+  <section class="screen" id="screen-photo">
+    <div class="review-layout">
+      <div class="photo-stage">
+        <button id="btnPhotoPrev" class="btn btn-ghost btn-nav" aria-label="Photo précédente"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <div id="photoWrap" class="final-wrap"><img id="photoImg" class="final-img" alt="" draggable="false"></div>
+        <button id="btnPhotoNext" class="btn btn-ghost btn-nav" aria-label="Photo suivante"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+      </div>
+      <div class="side">
+        <div id="photoCount" class="shot-label"></div>
+        <figure class="photo-qr">
+          <img id="photoQr" alt="QR code de la photo">
+          <figcaption id="txtGalleryQr"></figcaption>
+        </figure>
+        <div id="photoPrint" class="side">
+          <div class="stepper">
+            <button id="btnPhotoMinus" class="btn btn-round" data-icon="minus" aria-label="Moins"></button>
+            <div id="photoCopies" class="copies-value">1</div>
+            <button id="btnPhotoPlus" class="btn btn-round" data-icon="plus" aria-label="Plus"></button>
+          </div>
+          <button id="btnReprint" class="btn btn-primary btn-xl"></button>
+          <p id="reprintHint" class="hint"></p>
+        </div>
+      </div>
+    </div>
+    <button id="btnPhotoBack" class="btn btn-ghost back">← Toutes les photos</button>
   </section>
 
   <!-- Choix du template -->
@@ -105,6 +143,12 @@
       </div>
     </div>
   </section>
+
+  <!-- QR code Wi-Fi permanent (réglage admin) : rejoindre le réseau de la borne -->
+  <figure id="wifiQr" class="wifi-qr hidden" aria-label="QR code du Wi-Fi de la borne">
+    <img id="wifiQrImg" alt="">
+    <figcaption><span id="txtWifiQr"></span><b id="wifiSsid"></b></figcaption>
+  </figure>
 
   <div id="toast" class="toast hidden"></div>
   <div id="paperBadge" class="paper-badge hidden" aria-hidden="true"></div>

@@ -109,3 +109,7 @@ hr { border: 0; border-top: 1px solid rgba(0,0,0,0.08); margin: 14px 0; }
 select.small { padding: 4px 6px; font-size: 13px; max-width: 160px; }
 
 a.btn { text-decoration: none; display: inline-flex; align-items: center; }
+
+/* Navigation borne ↔ admin dans la même fenêtre (kiosque) */
+.nav-foot .btn { width: 100%; }
+.back-link { display: block; margin-top: 14px; text-align: center; color: var(--muted); }

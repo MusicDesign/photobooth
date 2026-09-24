@@ -10,7 +10,7 @@ import sharp from 'sharp';
  *
  * Branchement à chaud : recherche toutes les 3 s tant qu'aucun Stream Deck n'est ouvert.
  * Sur Mac, l'application Stream Deck d'Elgato doit être quittée (elle réserve l'appareil).
- * Sur le Pi, une règle udev donne l'accès sans sudo (voir TUTORIEL.md).
+ * Sous Linux, une règle udev donne l'accès sans sudo (voir TUTORIEL.md).
  */
 export class StreamDeckRemote {
   constructor({ config, onPress }) {
@@ -265,7 +265,7 @@ export class StreamDeckRemote {
   // ---------- Animation d'accueil « touchez l'écran » ----------
   // Un cercle plein grossit et rétrécit sur la touche centrale, des ondes en partent et traversent tout le clavier.
   // N'importe quelle touche lance la session. Les images sont calculées une fois (couleurs + géométrie),
-  // puis la boucle n'envoie que les touches qui changent : supportable par le Pi.
+  // puis la boucle n'envoie que les touches qui changent : supportable par un PC modeste.
 
   async startIdle(item) {
     const keys = this.buttons();
@@ -374,6 +374,7 @@ const ICONS = {
   camera: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3.5"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
+  next: '<path d="M5 12h14M12 5l7 7-7 7"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
   retake: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
   printer: '<path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/>',

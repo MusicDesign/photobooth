@@ -5,7 +5,7 @@ import { BasePrinter } from './base.js';
 const execFileP = promisify(execFile);
 
 /**
- * Impression via CUPS (commande lp). Fonctionne sur Raspberry Pi avec le pilote
+ * Impression via CUPS (commande lp). Fonctionne sous Linux avec le pilote
  * Gutenprint (DNP, HiTi, Canon Selphy…) et sur macOS.
  *
  * ÉTAPE 3 : À VALIDER avec l'imprimante réelle (nom de file, option media, marges).

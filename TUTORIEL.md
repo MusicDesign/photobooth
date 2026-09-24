@@ -1,7 +1,7 @@
 # Tutoriel : configurer la borne de A à Z
 
-Ce guide part d'un Mac pour les tests, puis passe sur le Raspberry Pi pour
-l'installation définitive. Chaque étape se termine par une vérification : ne
+Ce guide part d'un Mac pour les tests, puis passe sur le PC Linux de la borne
+pour l'installation définitive. Chaque étape se termine par une vérification : ne
 passe à la suivante que si elle est bonne.
 
 Sommaire
@@ -15,7 +15,7 @@ Sommaire
 7. [Configurer l'imprimante](#7-configurer-limprimante)
 8. [Personnaliser : thème, textes, templates](#8-personnaliser--thème-textes-templates)
 9. [Régler les limites d'impression](#9-régler-les-limites-dimpression)
-10. [Installer sur le Raspberry Pi](#10-installer-sur-le-raspberry-pi)
+10. [Installer sur le PC de la borne (Linux)](#10-installer-sur-le-pc-de-la-borne-linux)
 11. [Checklist du jour J](#11-checklist-du-jour-j)
 12. [Dépannage](#12-dépannage)
 
@@ -27,8 +27,8 @@ Trois briques, toujours les mêmes :
 
 | Brique | Rôle | Où ça tourne |
 |---|---|---|
-| Serveur Node.js | Sessions, compositing, quotas, pilotes caméra et imprimante | Mac pour les tests, Raspberry Pi en production |
-| Écran de la borne | Page web plein écran, tactile | Chromium sur le Pi (ou un iPad récent en Accès guidé, voir 10.7) |
+| Serveur Node.js | Sessions, compositing, quotas, pilotes caméra et imprimante | Mac pour les tests, PC Linux en production |
+| Écran de la borne | Page web plein écran, tactile | Chromium en kiosque ou app Electron sur le PC de la borne (ou un iPad récent en Accès guidé, voir 10.10) |
 | Admin | Page web `/admin.html`, protégée par un PIN | N'importe quel navigateur sur le même réseau |
 
 La caméra et l'imprimante se branchent **sur la machine qui fait tourner le
@@ -58,7 +58,8 @@ Deux commandes selon l'usage :
 
 ```bash
 npm run dev     # développement : redémarre seul quand un fichier serveur change
-npm start       # production : pas de surveillance, c'est celle du Pi
+npm start       # production : pas de surveillance, c'est celle de la borne
+npm run app     # app de bureau plein écran (Electron), Ctrl+Maj+Q pour quitter
 ```
 
 Le port par défaut est 3000 (`PORT=8080 npm start` pour en changer). Deux
@@ -85,7 +86,10 @@ des navigateurs).
 ## 3. Premier tour dans l'admin
 
 Ouvre http://localhost:3000/admin.html, PIN par défaut `1234`. Depuis la borne,
-5 appuis en haut à droite de l'écran ouvrent aussi l'admin.
+5 appuis en haut à droite de l'écran ouvrent aussi l'admin, dans la même
+fenêtre. En bas du menu : **← Retour à la borne** (revient à l'accueil et
+déconnecte l'admin), **Déconnexion**, et **Éteindre la borne** quand elle a été
+lancée par l'icône ou au démarrage (étape 10.5).
 
 Sept sections dans le menu de gauche :
 
@@ -97,7 +101,7 @@ Sept sections dans le menu de gauche :
 | Templates | Création, éditeur de calques, activation, template par défaut |
 | Caméra & imprimante | Pilotes (dont le mode auto), commandes gphoto2, file CUPS et options lp |
 | Sessions | Historique par id, réimpression, galerie, suppression, réinitialisation |
-| Codes & partage | PIN admin, code opérateur, URL de base du QR code |
+| Codes & partage | PIN admin, code opérateur, URL de base du QR code, galerie |
 
 **Première chose à faire : changer les codes** dans Codes & partage.
 
@@ -106,6 +110,31 @@ Sept sections dans le menu de gauche :
   copies pour un passage. À donner à la personne qui tient la borne.
 
 **Vérification.** Déconnecte-toi, reconnecte-toi avec le nouveau PIN.
+
+### La galerie de l'événement
+
+Codes & partage → Galerie de l'événement. Trois réglages, tous désactivés au départ :
+
+| Réglage | Effet |
+|---|---|
+| Sur la borne | Bouton « Galerie » en bas à gauche de l'accueil : grille des photos, puis photo par photo (flèches ‹ ›, balayage, ← → au clavier). Retour à l'accueil après 60 s sans geste |
+| Réimpression | **Désactivée** (consultation seulement), **code opérateur** (l'équipe valide, le quota est levé comme sur la borne) ou **libre** (quota, papier et copies max par passage appliqués) |
+| QR code sur chaque photo | Dans la visionneuse de la borne, le QR code de la photo affichée, pour la récupérer sur un téléphone |
+| Sur les téléphones | Page `http://<adresse-de-la-borne>:3000/galerie`, et lien « Les photos de la soirée » sur la page du QR code. Consultation et téléchargement, jamais de réimpression |
+
+Le QR code de l'**écran de fin** (après l'impression) se coupe à part, dans
+la carte Partage (QR code). Il n'y a alors plus d'écran de fin : dès la fin de
+l'impression, la borne revient à l'accueil et affiche quelques secondes le texte
+`thanksNoQr` (Thème & textes).
+
+La galerie montre les photos **validées** (« Je la garde » ou impression) de
+l'événement en cours, les plus récentes d'abord. Changer d'événement dans
+Sessions change la galerie. Attention : sur les téléphones, toute personne
+connectée au Wi-Fi de la borne voit toutes les photos de la soirée.
+
+**Vérification.** Galerie activée sur la borne, touche le bouton, ouvre une
+photo, réimprime-la avec le code opérateur : le tirage sort et le compteur
+avance.
 
 ---
 
@@ -148,7 +177,7 @@ rouges ni temps de recharge, et l'aperçu live reste fidèle à la photo.
 
 ```bash
 brew install gphoto2          # Mac
-sudo apt install gphoto2      # Raspberry Pi
+sudo dnf install gphoto2      # borne Linux (Fedora ; Ubuntu : sudo apt install gphoto2)
 ```
 
 ### 5.2 Test en ligne de commande
@@ -232,11 +261,11 @@ avant d'engager du papier.
 
 ### 7.2 Déclarer l'imprimante dans CUPS
 
-Sur Mac, ajoute-la dans Réglages Système → Imprimantes. Sur le Pi :
+Sur Mac, ajoute-la dans Réglages Système → Imprimantes. Sur la borne Linux :
 
 ```bash
-sudo apt install cups printer-driver-gutenprint
-sudo usermod -aG lpadmin $USER      # puis déconnexion / reconnexion
+sudo dnf install cups gutenprint-cups && sudo systemctl enable --now cups
+# Ubuntu : sudo apt install cups printer-driver-gutenprint && sudo usermod -aG lpadmin $USER
 ```
 
 Puis http://localhost:631 → Administration → Ajouter une imprimante, avec le
@@ -270,7 +299,7 @@ complet avec 1 copie.
 En auto, si l'imprimante est éteinte ou débranchée, la borne bascule sur le
 repli : **none** (l'invité repart avec le QR code, message configurable dans
 Thème & textes) ou **mock** (fichiers dans `output/prints`, pratique sur le
-Mac). Sur le Pi, garde **none** : jamais de faux tirage qui consomme le quota.
+Mac). Sur la borne, garde **none** : jamais de faux tirage qui consomme le quota.
 
 **Vérification.** Le tirage sort, la session passe en `done` dans Sessions, le
 compteur « tirages imprimés » avance. Si les marges sont mauvaises, ajuste le
@@ -334,39 +363,50 @@ où tu charges l'imprimante ; il décroît à chaque tirage.
 
 ---
 
-## 10. Installer sur le Raspberry Pi
+## 10. Installer sur le PC de la borne (Linux)
 
-Testé sur Raspberry Pi OS Bookworm **64 bits** (indispensable pour sharp).
+Cible : un PC tactile (tablette type Surface, mini-PC + écran tactile) sous
+**Fedora Workstation** (bureau GNOME), processeur x86 64 bits. Ubuntu convient
+aussi : les commandes équivalentes sont indiquées.
 
-### 10.1 Système et dépendances
+### 10.1 Système
+
+Installe Fedora depuis une clé USB, avec un compte utilisateur dédié à la
+borne (ex. `borne`). Sur une **Microsoft Surface**, ajoute le noyau
+[linux-surface](https://github.com/linux-surface/linux-surface) (instructions
+« Installation » du projet, section Fedora) : sans lui, l'écran tactile ne
+répond pas. Redémarre et vérifie que le tactile marche avant d'aller plus loin.
+
+### 10.2 Dépendances
 
 ```bash
-sudo apt update && sudo apt full-upgrade -y
-sudo apt install -y gphoto2 cups printer-driver-gutenprint git
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
+sudo dnf install -y nodejs git gphoto2 cups gutenprint-cups chromium liberation-fonts
+# Ubuntu : sudo apt install -y nodejs npm git gphoto2 cups printer-driver-gutenprint chromium-browser fonts-liberation
 node -v      # v20 ou plus
 ```
 
-### 10.2 Le projet
+Chromium n'est utile qu'avec le lanceur par défaut (10.5) ; l'app Electron
+embarque le sien.
 
-Copie le dossier du projet (sans `node_modules`, `output` ni `data/db.json`)
-dans `/home/pi/photo_booth`, puis :
+### 10.3 Le projet
 
 ```bash
-cd /home/pi/photo_booth
+cd ~
+git clone https://github.com/MusicDesign/photobooth.git
+cd photobooth
 npm install
-npm start          # premier test, Ctrl+C ensuite
+npm start          # premier test sur http://localhost:3000, Ctrl+C ensuite
 ```
 
-Le fichier `data/config.json` peut être copié depuis le Mac pour garder le
-thème, les templates (dossier `data/templates`) et les limites. Le fichier
-`data/db.json` est la base de sessions : repars de zéro sur le Pi.
+Le fichier `data/config.json` et le dossier `data/templates` peuvent être
+copiés depuis le Mac pour garder le thème, les templates et les limites. Le
+fichier `data/db.json` est la base de sessions : repars de zéro sur la borne.
+Mise à jour plus tard : `git pull && npm install`, puis relancer la borne.
 
-### 10.3 Libérer l'appareil photo
+### 10.4 Libérer l'appareil photo
 
-Le bureau du Pi monte l'appareil comme une clé USB dès qu'on le branche, ce
-qui bloque gphoto2. À désactiver une fois :
+GNOME monte l'appareil comme une clé USB dès qu'on le branche, ce qui bloque
+gphoto2. À désactiver une fois :
 
 ```bash
 systemctl --user mask gvfs-gphoto2-volume-monitor
@@ -375,67 +415,154 @@ systemctl --user stop gvfs-gphoto2-volume-monitor
 
 Puis refais le test de l'étape 5.2 (sans la ligne `killall`).
 
-### 10.4 Le serveur au démarrage (systemd)
+### 10.5 Plein écran au démarrage, icône sur le bureau
 
 ```bash
-sudo tee /etc/systemd/system/photo-booth.service > /dev/null <<'UNIT'
-[Unit]
-Description=Photo Booth
-After=network.target
-
-[Service]
-User=pi
-WorkingDirectory=/home/pi/photo_booth
-ExecStart=/usr/bin/node server/index.js
-Restart=always
-RestartSec=3
-Environment=NODE_ENV=production
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-sudo systemctl daemon-reload
-sudo systemctl enable --now photo-booth
-sudo systemctl status photo-booth       # "active (running)"
+scripts/kiosk/install-linux.sh --no-sleep
 ```
 
-Ensuite : `sudo systemctl restart photo-booth` pour redémarrer,
-`journalctl -u photo-booth -f` pour lire les logs.
+Le script, pour l'utilisateur courant et sans sudo :
 
-### 10.5 Chromium en kiosque
+- pose l'icône **Photo Booth** sur le bureau et dans les applications ;
+- lance la borne à l'ouverture de session (`~/.config/autostart`) ;
+- avec `--no-sleep` : écran jamais éteint, pas de verrouillage (borne dédiée).
 
-1. `sudo raspi-config` → System Options → Boot / Auto Login → **Desktop
-   Autologin**, et Display Options → Screen Blanking → **No**.
-2. Lancement automatique de Chromium en plein écran. Sur Bookworm récent
-   (bureau labwc) :
+Deux lanceurs, au choix, avec le même comportement :
+
+| Lanceur | Installation | Principe |
+|---|---|---|
+| Chromium en kiosque (défaut) | `install-linux.sh` | `scripts/kiosk/photobooth.sh` démarre le serveur Node puis Chromium plein écran, avec un profil à part |
+| App Electron | `install-linux.sh --electron` | Serveur et fenêtre plein écran dans une seule app (`npm run app`) |
+| App Electron empaquetée | `npm run app:build` puis `install-linux.sh --exec dist/Photo\ Booth-*.AppImage` | Un fichier unique ; ses données vont dans `~/.config/Photo Booth/` et non dans le dépôt |
+
+L'AppImage se construit **sur la borne elle-même** : les modules natifs
+(sharp, Stream Deck) sont propres au système.
+
+Comportement :
+
+- **Éteindre** : admin → bas du menu → **Éteindre la borne**. Le serveur
+  s'arrête proprement (caméra, Stream Deck) et la fenêtre se ferme. Refusé
+  pendant une impression, sauf confirmation.
+- **Relancer** : icône Photo Booth du bureau. Un deuxième appui pendant que la
+  borne tourne ne lance rien de plus.
+- **Borne ↔ admin** : 5 appuis en haut à droite ouvrent l'admin dans la même
+  fenêtre ; **← Retour à la borne** revient à l'accueil et déconnecte l'admin
+  (le prochain invité ne peut pas y entrer sans le code).
+- **Plantage du serveur** : relancé en 3 s par le lanceur Chromium, la page se
+  reconnecte seule.
+- **Clavier branché** : Alt+F4 ferme la borne (serveur compris) ; dans l'app
+  Electron, Ctrl+Maj+Q aussi.
+
+Pour que la borne démarre **seule à l'allumage**, active la connexion
+automatique : Paramètres → Système → Utilisateurs → **Connexion
+automatique**. Sans elle, l'écran de connexion attend un mot de passe.
+
+L'icône du bureau : GNOME n'affiche pas d'icônes sur le bureau par défaut.
+Installe l'extension **Desktop Icons NG (DING)** avec le Gestionnaire
+d'extensions, ou épingle Photo Booth au dock (Activités → clic droit →
+Épingler). Retirer le tout : `install-linux.sh --uninstall`.
+
+**Vérification.** Redémarre le PC : la borne s'affiche seule, plein écran.
+Admin → Éteindre la borne : retour au bureau. Icône Photo Booth : la borne
+revient. Journaux : `data/logs/launcher.log` (lanceur) et `data/logs/booth.log`
+(serveur).
+
+### 10.6 Pare-feu
+
+Fedora bloque par défaut les connexions entrantes : sans cette règle, le QR
+code et l'admin depuis un téléphone ne répondent pas.
 
 ```bash
-mkdir -p ~/.config/labwc
-cat >> ~/.config/labwc/autostart <<'AUTO'
-chromium-browser --kiosk --noerrdialogs --disable-infobars --disable-session-crashed-bubble --check-for-update-interval=31536000 http://localhost:3000 &
-AUTO
+sudo firewall-cmd --permanent --add-port=3000/tcp
+sudo firewall-cmd --reload
+# Ubuntu : rien à faire si ufw est inactif, sinon sudo ufw allow 3000/tcp
 ```
 
-Si ton Pi utilise encore Wayfire, la même commande va dans la section
-`[autostart]` de `~/.config/wayfire.ini` (`chromium = chromium-browser --kiosk …`).
+### 10.7 Hotspot Wi-Fi pour le QR code
 
-3. Redémarre : la borne s'affiche seule, plein écran, tactile. L'admin reste
-   accessible depuis un autre appareil du réseau sur `http://<ip-du-pi>:3000/admin.html`.
-
-### 10.6 Hotspot Wi-Fi pour le QR code
-
-Hors ligne, les invités récupèrent leur photo en se connectant au Wi-Fi du Pi :
+Hors ligne, les invités récupèrent leur photo en se connectant au Wi-Fi de la
+borne. Repère le nom de la carte Wi-Fi (`nmcli device`, colonne DEVICE,
+type wifi, ex. `wlp1s0`) :
 
 ```bash
-sudo nmcli device wifi hotspot ifname wlan0 ssid PhotoBooth password 'motdepasse-8-caracteres-min'
+sudo nmcli device wifi hotspot ifname wlp1s0 ssid PhotoBooth password 'motdepasse-8-caracteres-min'
 sudo nmcli connection modify Hotspot connection.autoconnect yes
 ```
 
-Le Pi prend l'adresse `10.42.0.1`. Dans l'admin → Codes & partage → URL de
-base : `http://10.42.0.1:3000`. Le QR code de l'écran final pointe alors vers
+La borne prend l'adresse `10.42.0.1`. Dans l'admin → Codes & partage → URL de
+base : `http://10.42.0.1:3000`.
+
+**QR code Wi-Fi permanent.** Admin → Codes & partage → Wi-Fi de la borne :
+coche « Afficher le QR code Wi-Fi » et reprends le nom (`PhotoBooth`) et le mot
+de passe du hotspot. Un petit QR code s'affiche alors en bas à droite de tous
+les écrans de la borne : l'appareil photo d'un iPhone ou d'un Android propose
+« Rejoindre le réseau » en un scan, sans rien taper. Choisis « Réseau ouvert »
+si le hotspot n'a pas de mot de passe. Le QR code de l'écran final pointe alors vers
 la galerie de la session. Écris le nom du Wi-Fi et le mot de passe sur la borne.
 
-### 10.7 Stream Deck (utilisation sans écran tactile)
+### 10.8 Adresse publique (QR code valable partout)
+
+Sans elle, le QR code d'une photo pointe vers `http://10.42.0.1:3000/g/<id>` :
+il ne marche que si le téléphone est **déjà** sur le Wi-Fi de la borne. Avec
+une adresse publique, par exemple `https://photobooth.domain.fr`, le même lien
+marche dans les deux cas :
+
+| Le téléphone est… | `photobooth.domain.fr` mène à… | L'invité voit… |
+|---|---|---|
+| sur le Wi-Fi de la borne | la borne (son DNS répond `10.42.0.1`) | sa photo, directement |
+| sur ses données mobiles | la page distante, hébergée chez toi | « Votre photo vous attend sur la borne » + le nom du Wi-Fi, puis sa photo toute seule dès qu'il a rejoint le Wi-Fi (vérification toutes les 3 s) |
+
+Mise en place, une fois :
+
+1. **Admin** → Codes & partage → Adresse publique : `https://photobooth.domain.fr`.
+   Active aussi le QR code Wi-Fi (étape 10.7) : la page distante affiche le nom
+   du réseau (jamais le mot de passe, elle est publique).
+2. **Page distante** : `npm run remote` produit `output/remote/`. Dépose son
+   contenu à la racine de `photobooth.domain.fr` (Netlify, Cloudflare Pages,
+   GitHub Pages, ou un hébergement Apache comme OVH : les règles de réécriture
+   sont fournies). À refaire après un changement de nom, de thème ou de logo.
+3. **DNS public** : un enregistrement pour `photobooth.domain.fr` vers
+   l'hébergeur, avec une durée de cache courte (TTL 60 s).
+4. **Sur la borne, le domaine pointe vers elle** (DNS du hotspot) :
+
+```bash
+echo 'address=/photobooth.domain.fr/10.42.0.1' | sudo tee /etc/NetworkManager/dnsmasq-shared.d/photobooth.conf
+sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
+```
+
+5. **HTTPS sur la borne** : sans certificat valide pour le domaine, le
+   navigateur afficherait une alerte. Certificat gratuit Let's Encrypt, obtenu
+   par validation DNS (la borne n'a pas besoin d'être joignable depuis
+   internet), quand elle a une connexion :
+
+```bash
+sudo dnf install -y certbot
+sudo certbot certonly --manual --preferred-challenges dns -d photobooth.domain.fr
+# ajoute l'enregistrement TXT demandé chez ton registrar ; valable 90 jours, à renouveler
+```
+
+   Puis donne le certificat au serveur et fais arriver le port 443 dessus :
+
+```bash
+# variables du lanceur (ex. dans ~/.config/environment.d/photobooth.conf, puis reconnexion)
+BOOTH_TLS_CERT=/etc/letsencrypt/live/photobooth.domain.fr/fullchain.pem
+BOOTH_TLS_KEY=/etc/letsencrypt/live/photobooth.domain.fr/privkey.pem
+# la clé doit être lisible par l'utilisateur de la borne :
+sudo setfacl -R -m u:$USER:rX /etc/letsencrypt/live /etc/letsencrypt/archive
+sudo firewall-cmd --permanent --add-forward-port=port=443:proto=tcp:toport=3443
+sudo firewall-cmd --reload
+```
+
+**Vérification.** Téléphone sur ses données mobiles : scanne le QR code d'une
+photo, la page d'attente s'affiche. Scanne le QR code Wi-Fi de la borne : en
+quelques secondes, la photo apparaît. Si le téléphone reste bloqué sur la page
+d'attente, il a gardé l'ancienne adresse en cache : attendre une minute, ou
+couper et remettre le Wi-Fi.
+
+Limite : un téléphone réglé sur un « DNS privé » forcé (réglage rare sur
+Android) ignore le DNS de la borne et reste sur la page d'attente.
+
+### 10.9 Stream Deck (utilisation sans écran tactile)
 
 Un Stream Deck Elgato branché en USB sert de télécommande : ses touches
 reprennent en permanence les actions de l'écran affiché, en pictogrammes aux
@@ -447,27 +574,30 @@ Tous les modèles sont reconnus (Mini 6 touches, MK.2 15, XL 32, Neo, Plus), à
 chaud, sans redémarrage. Réglages : admin → Caméra & imprimante → Stream Deck.
 
 - **Mac** : quitter l'application Stream Deck d'Elgato, qui réserve l'appareil.
-- **Pi** : donner l'accès USB sans sudo, une fois :
+- **Linux** : donner l'accès USB à l'utilisateur connecté, une fois :
 
 ```bash
-sudo tee /etc/udev/rules.d/50-streamdeck.rules > /dev/null <<'RULES'
-SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", MODE="0660", GROUP="plugdev"
-KERNEL=="hidraw*", ATTRS{idVendor}=="0fd9", MODE="0660", GROUP="plugdev"
+sudo tee /etc/udev/rules.d/70-streamdeck.rules > /dev/null <<'RULES'
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
 RULES
-sudo usermod -aG plugdev $USER
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
 Puis débrancher et rebrancher le Stream Deck. Le tableau de bord indique
 « Stream Deck … connecté » avec le nombre de touches.
 
-### 10.8 Écran
+### 10.10 Écran et branchements
 
-Écran tactile officiel 7 pouces branché au Pi : rien à configurer, l'interface
-a un mode portrait et paysage. Un iPad peut aussi servir d'écran s'il fait
-tourner iPadOS 16.2 ou plus : ouvre `http://<ip-du-pi>:3000` dans Safari,
-active Accès guidé (Réglages → Accessibilité) pour le verrouiller, et désactive
-le verrouillage automatique. Un iPad trop ancien (iOS 9 et avant) ne convient pas.
+L'écran tactile du PC sert directement ; l'interface a un mode portrait et
+paysage. Une tablette avec un seul port USB (Surface) demande un **hub USB
+alimenté** pour le boîtier, l'imprimante et le Stream Deck, et reste branchée
+sur secteur pendant l'événement.
+
+Un iPad peut aussi servir d'écran s'il fait tourner iPadOS 16.2 ou plus :
+ouvre `http://<ip-de-la-borne>:3000` dans Safari, active Accès guidé
+(Réglages → Accessibilité) pour le verrouiller, et désactive le verrouillage
+automatique. Un iPad trop ancien (iOS 9 et avant) ne convient pas.
 
 ---
 
@@ -475,7 +605,7 @@ le verrouillage automatique. Un iPad trop ancien (iOS 9 et avant) ne convient pa
 
 **La veille**
 
-- [ ] Test complet sur le Pi : passage, photo, impression, QR code lu depuis un téléphone.
+- [ ] Test complet sur la borne : allumage jusqu'au plein écran, passage, photo, impression, QR code lu depuis un téléphone, Éteindre puis relancer par l'icône.
 - [ ] Papier et ruban chargés, nombre de feuilles saisi dans Consommables.
 - [ ] Quota de l'événement = feuilles disponibles.
 - [ ] Sessions → **Réinitialiser les sessions**, Tableau de bord → **Remettre à zéro** le compteur de tirages.
@@ -500,7 +630,7 @@ le verrouillage automatique. Un iPad trop ancien (iOS 9 et avant) ne convient pa
 
 | Symptôme | Cause probable | Solution |
 |---|---|---|
-| « Could not claim the USB device » | macOS (`ptpcamerad`) ou le bureau du Pi (`gvfs`) tient l'appareil | Mac : `killall ptpcamerad`. Pi : étape 10.3 |
+| « Could not claim the USB device » | macOS (`ptpcamerad`) ou le bureau Linux (`gvfs`) tient l'appareil | Mac : `killall ptpcamerad`. Linux : étape 10.4 |
 | Aucun aperçu live, badge caméra en erreur | Live view coupé (boîtier endormi, câble, mode vidéo) | Arrêt auto désactivé, molette sur M, rebrancher ; le pilote relance le live toutes les 2 s tant qu'un écran l'attend |
 | Badge caméra en erreur « Erreur d'acquisition vidéo », photos refusées, boîtier pourtant détecté | Déclencheur resté « enfoncé » côté USB après une commande interrompue | La borne relâche le déclencheur toute seule et relance ; à la main : `gphoto2 --set-config-index eosremoterelease=6 --set-config-index eosremoterelease=5`. En dernier recours, éteindre et rallumer le boîtier |
 | Badge caméra OK mais « live view en veille » | Normal : aucun écran n'affiche l'aperçu, l'obturateur est fermé | Rien à faire, le live repart au premier appui sur la borne |
@@ -514,9 +644,14 @@ le verrouillage automatique. Un iPad trop ancien (iOS 9 et avant) ne convient pa
 | La borne utilise la webcam alors que le Canon est branché | Mode auto : boîtier pas encore détecté (éteint, endormi, câble) | Tableau de bord → raison affichée sous « Caméra » ; le boîtier est repris dès qu'il répond, 10 s au plus |
 | La borne repasse en webcam une minute après l'allumage du Canon | Arrêt automatique du boîtier encore actif | Menu du boîtier → Arrêt auto : Désactiver (le 2000D ignore la commande USB) |
 | Le serveur s'arrête au démarrage avec « gphoto2 introuvable » | Ancien comportement | Ne se produit plus : la borne démarre sur le repli et l'admin affiche l'erreur sous « Caméra » |
-| Admin inaccessible depuis un autre appareil | Pare-feu ou mauvais réseau | Même Wi-Fi que le Pi, adresse affichée au démarrage du serveur |
+| Admin ou QR code inaccessibles depuis un téléphone | Pare-feu ou mauvais réseau | Port 3000 ouvert (étape 10.6), même Wi-Fi que la borne, adresse affichée au démarrage du serveur |
+| L'icône du bureau n'apparaît pas | GNOME sans icônes de bureau | Extension Desktop Icons NG, ou lancer Photo Booth depuis Activités (étape 10.5) |
+| L'icône du bureau ouvre un éditeur de texte | Lanceur non autorisé | Clic droit sur l'icône → Autoriser l'exécution |
+| Rien ne s'ouvre au clic sur l'icône | Node ou Chromium introuvable, port 3000 pris | Lire `data/logs/launcher.log` |
+| Le port 3000 est déjà utilisé | Une autre application écoute dessus | `PORT=3001` dans le lanceur, ou arrêter l'autre application |
 | Une session reste en `shooting` ou `review` | Invité parti en cours de route | Normal ; elle se supprime dans Sessions, et la validation automatique limite le phénomène |
 
-Journal du serveur : la sortie du terminal sur Mac, `journalctl -u photo-booth -f`
-sur le Pi. Les erreurs gphoto2 remontent aussi dans le tableau de bord, sous le
+Journal du serveur : la sortie du terminal sur Mac, `data/logs/booth.log` partout
+(`data/logs/launcher.log` pour le lanceur Linux ; `~/.config/Photo Booth/data/logs/`
+pour l'AppImage). Les erreurs gphoto2 remontent aussi dans le tableau de bord, sous le
 badge caméra.

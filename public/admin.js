@@ -13,7 +13,7 @@ async function api(path, { method = 'GET', body, form } = {}) {
   const res = await fetch(path, opts);
   let data = null;
   try { data = await res.json(); } catch { /* vide */ }
-  if (!res.ok) { const e = new Error(data?.message || `Erreur ${res.status}`); e.status = res.status; throw e; }
+  if (!res.ok) { const e = new Error(data?.message || `Erreur ${res.status}`); e.status = res.status; e.code = data?.error; throw e; }
   return data;
 }
 
@@ -262,7 +262,7 @@ function hardware() {
       <div class="card">
         <h3>Caméra</h3>
         <label>Pilote ${sel('cameraDriver', S.drivers.camera, cfg.camera.driver)}</label>
-        <small><b>auto</b> : boîtier gphoto2 s'il est branché, sinon le repli ci-dessous. <b>browser</b> : webcam du navigateur (Mac, ou webcam USB sur le Pi). <b>mock</b> : photos d'exemple. <b>gphoto2</b> : Canon EOS en USB.</small><br><br>
+        <small><b>auto</b> : boîtier gphoto2 s'il est branché, sinon le repli ci-dessous. <b>browser</b> : webcam du navigateur (Mac, ou webcam USB sur la borne). <b>mock</b> : photos d'exemple. <b>gphoto2</b> : Canon EOS en USB.</small><br><br>
         <label>Repli quand aucun boîtier n'est détecté ${sel('cameraFallback', S.drivers.cameraFallbacks, cfg.camera.fallback || 'browser')}</label>
         <label>En ce moment ${det(S.devices.camera)}</label>
         <label>Position de l'objectif par rapport à l'écran <select name="lensPosition">${[['top', 'Au-dessus'], ['bottom', 'En dessous'], ['left', 'À gauche'], ['right', 'À droite']].map(([v, l]) => `<option value="${v}" ${(cfg.booth.lensPosition || 'top') === v ? 'selected' : ''}>${l}</option>`).join('')}</select><small>Oriente la flèche « Regardez l'objectif » affichée juste avant la photo (gauche / droite vues par l'invité)</small></label>
@@ -287,7 +287,7 @@ function hardware() {
       <div class="card">
         <h3>Imprimante</h3>
         <label>Pilote ${sel('printerDriver', S.drivers.printer, cfg.printer.driver)}</label>
-        <small><b>auto</b> : la file CUPS ci-dessous si l'imprimante répond, sinon le repli. <b>cups</b> : commande <code>lp</code> (Raspberry Pi + Gutenprint, ou macOS). <b>mock</b> : écrit le fichier dans <code>output/prints</code>. <b>none</b> : impression désactivée, l'invité repart avec le QR code.</small><br><br>
+        <small><b>auto</b> : la file CUPS ci-dessous si l'imprimante répond, sinon le repli. <b>cups</b> : commande <code>lp</code> (Linux + Gutenprint, ou macOS). <b>mock</b> : écrit le fichier dans <code>output/prints</code>. <b>none</b> : impression désactivée, l'invité repart avec le QR code.</small><br><br>
         <label>Repli quand l'imprimante est absente ${sel('printerFallback', S.drivers.printerFallbacks, cfg.printer.fallback || 'none')}</label>
         <label>En ce moment ${det(S.devices.printer)}</label>
         <hr>
@@ -425,7 +425,66 @@ function security() {
       <div>
         <h3>Partage (QR code)</h3>
         <label>URL de base (vide = détection automatique : <code>${esc(S.shareBaseUrl)}</code>) <input name="shareBaseUrl" value="${esc(cfg.share.baseUrl)}" placeholder="http://photobooth.local:3000"></label>
-        <small>Sur le Pi en hotspot Wi-Fi, mettez ici l'adresse que les invités atteignent.</small>
+        <small>Borne en hotspot Wi-Fi : mettez ici l'adresse que les invités atteignent.</small>
+        <label>Adresse publique (facultative) <input name="publicUrl" value="${esc(cfg.share.publicUrl || '')}" placeholder="https://photobooth.domain.fr"></label>
+        <small>Remplie : les QR codes de photo y mènent. Hors du Wi-Fi de la borne, la page distante (<code>npm run remote</code>) invite l'invité à s'y connecter, puis affiche sa photo. Voir TUTORIEL.md, étape 10.8.</small>
+        <label class="inline"><input name="qrOnDone" type="checkbox" ${cfg.share.qrOnDone !== false ? 'checked' : ''}> QR code sur l'écran de fin (après l'impression)</label>
+        <small>Décoché : pas d'écran de fin, la borne revient à l'accueil dès la fin de l'impression avec le texte « thanksNoQr » (Thème &amp; textes) en bandeau.</small>
+      </div>
+    </div>
+    <button class="btn primary" type="submit">Enregistrer</button>
+  </form>
+  ${wifiCard()}
+  ${galleryCard()}`;
+}
+
+function wifiCard() {
+  const w = S.config.share.wifi || {};
+  const open = w.security === 'nopass';
+  return `
+  <form id="formWifi" class="card">
+    <h3>Wi-Fi de la borne (QR code permanent)</h3>
+    <p class="sub">Un QR code en bas à droite de la borne, sur tous les écrans : le téléphone rejoint le hotspot en un scan (appareil photo d'iPhone et d'Android). Reprenez le nom et le mot de passe du hotspot créé sur la borne.</p>
+    <div class="grid-2">
+      <div>
+        <label class="inline"><input name="enabled" type="checkbox" ${w.enabled ? 'checked' : ''}> Afficher le QR code Wi-Fi</label>
+        <label>Nom du réseau (SSID) <input name="ssid" value="${esc(w.ssid)}" placeholder="PhotoBooth" autocomplete="off"></label>
+      </div>
+      <div>
+        <label>Sécurité <select name="security" onchange="this.form.password.disabled = this.value === 'nopass'">
+          <option value="WPA" ${open ? '' : 'selected'}>WPA / WPA2 (mot de passe)</option>
+          <option value="nopass" ${open ? 'selected' : ''}>Réseau ouvert (sans mot de passe)</option>
+        </select></label>
+        <label>Mot de passe <input name="password" value="${esc(w.password)}" autocomplete="off" ${open ? 'disabled' : ''}></label>
+      </div>
+    </div>
+    ${w.enabled && (!w.ssid || (!open && !w.password)) ? '<div class="alert">Nom du réseau ou mot de passe manquant : le QR code n\'est pas affiché.</div>' : ''}
+    <button class="btn primary" type="submit">Enregistrer</button>
+  </form>`;
+}
+
+function galleryCard() {
+  const g = S.config.gallery;
+  const webUrl = `${S.shareBaseUrl}/galerie`;
+  const reprint = [
+    ['off', 'Désactivée : consultation seulement'],
+    ['operator', 'Avec le code opérateur (lève aussi le quota)'],
+    ['guest', 'Libre pour les invités (quota, papier et copies max appliqués)']
+  ];
+  return `
+  <form id="formGallery" class="card">
+    <h3>Galerie de l'événement</h3>
+    <p class="sub">Les photos validées de l'événement en cours (<b>${esc(S.counters.eventName)}</b>), les plus récentes d'abord.</p>
+    <div class="grid-2">
+      <div>
+        <label class="inline"><input name="booth" type="checkbox" ${g.booth ? 'checked' : ''}> Sur la borne : bouton « ${esc(S.config.texts.gallery)} » à l'accueil</label>
+        <label>Réimpression depuis la galerie de la borne <select name="reprint">${reprint.map(([v, l]) => `<option value="${v}" ${g.reprint === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="inline"><input name="qr" type="checkbox" ${g.qr !== false ? 'checked' : ''}> QR code sur chaque photo de la galerie de la borne</label>
+        <small>Copies par réimpression : ${S.config.limits.maxCopiesPerSession} au plus pour un invité, ${S.config.limits.operatorMaxCopies} avec le code opérateur (Limites d'impression).</small>
+      </div>
+      <div>
+        <label class="inline"><input name="web" type="checkbox" ${g.web ? 'checked' : ''}> Sur les téléphones : page galerie et lien depuis la page du QR code</label>
+        <small>${g.web ? 'Ouverte sur' : 'Adresse une fois activée :'} <code>${esc(webUrl)}</code>. Toute personne sur le même réseau voit alors toutes les photos de l'événement. Pas de réimpression depuis un téléphone.</small>
       </div>
     </div>
     <button class="btn primary" type="submit">Enregistrer</button>
@@ -1208,7 +1267,17 @@ function bindSection(sec) {
     $('#formSecurity').onsubmit = (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
-      saveConfig({ admin: { pin: fd.get('adminPin') }, limits: { operatorPin: fd.get('operatorPin') }, share: { baseUrl: fd.get('shareBaseUrl').trim() } });
+      saveConfig({ admin: { pin: fd.get('adminPin') }, limits: { operatorPin: fd.get('operatorPin') }, share: { baseUrl: fd.get('shareBaseUrl').trim(), publicUrl: fd.get('publicUrl').trim(), qrOnDone: e.target.qrOnDone.checked } });
+    };
+    $('#formWifi').onsubmit = (e) => {
+      e.preventDefault();
+      const f = e.target;
+      saveConfig({ share: { wifi: { enabled: f.enabled.checked, ssid: f.ssid.value.trim(), password: f.password.value, security: f.security.value } } }, 'Wi-Fi enregistré');
+    };
+    $('#formGallery').onsubmit = (e) => {
+      e.preventDefault();
+      const f = e.target;
+      saveConfig({ gallery: { booth: f.booth.checked, web: f.web.checked, reprint: f.reprint.value, qr: f.qr.checked } }, 'Galerie enregistrée');
     };
   }
 }
@@ -1248,6 +1317,7 @@ async function boot() {
   }
   $('#login').classList.add('hidden');
   $('#shell').classList.remove('hidden');
+  $('#btnShutdown').classList.toggle('hidden', !S.canShutdown);
   if (!S.formats || !S.theme || S.templates.some((t) => !t.layers)) {
     $('#main').innerHTML = `<h2>Serveur à redémarrer</h2>
       <div class="alert">Le serveur tourne sur une version plus ancienne que cette page : les templates à calques et le logo global ne sont pas disponibles.</div>
@@ -1260,6 +1330,20 @@ async function boot() {
 window.addEventListener('hashchange', render);
 window.addEventListener('beforeunload', (e) => { if (currentSection() === 'editor' && E.dirty) { e.preventDefault(); e.returnValue = ''; } });
 $('#btnLogout').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }); location.reload(); };
+// Retour à la borne dans la même fenêtre : on se déconnecte, sinon la zone cachée rouvrirait l'admin sans code.
+$('#btnBooth').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }).catch(() => {}); location.href = '/'; };
+$('#btnShutdown').onclick = async () => {
+  if (!confirm('Éteindre la borne ?\n\nLe logiciel se ferme. Pour le relancer : icône « Photo Booth » sur le bureau.')) return;
+  try {
+    await api('/api/admin/shutdown', { method: 'POST', body: {} });
+  } catch (e) {
+    if (e.code !== 'PRINTING' || !confirm(`${e.message}\n\nÉteindre quand même ?`)) return toast(e.message, true);
+    await api('/api/admin/shutdown', { method: 'POST', body: { force: true } });
+  }
+  // Le lanceur ferme la fenêtre ; ce message ne reste visible que dans un navigateur ordinaire.
+  document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>Borne éteinte</h1>
+    <p class="sub">Pour la relancer : icône « Photo Booth » sur le bureau.</p></div></div>`;
+};
 // Rafraîchit compteurs et sessions quand la borne travaille.
 (function ws() {
   const sock = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);

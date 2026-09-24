@@ -13,6 +13,7 @@
     <label>Code PIN <input id="loginPin" type="password" inputmode="numeric" autocomplete="off" autofocus></label>
     <button class="btn primary" type="submit">Entrer</button>
     <p id="loginError" class="error"></p>
+    <a href="/" class="back-link">← Retour à la borne</a>
   </form>
 </div>
 
@@ -27,8 +28,9 @@
     <a href="#sessions">Sessions</a>
     <a href="#security">Codes &amp; partage</a>
     <div class="nav-foot">
-      <a href="/" target="_blank">Ouvrir la borne ↗</a>
+      <button id="btnBooth" class="btn primary small">← Retour à la borne</button>
       <button id="btnLogout" class="btn ghost small">Déconnexion</button>
+      <button id="btnShutdown" class="btn danger small hidden">Éteindre la borne</button>
     </div>
   </nav>
   <main id="main" class="main"></main>

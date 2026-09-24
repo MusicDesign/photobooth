@@ -88,7 +88,8 @@ export class Booth {
       },
       theme: this.themes.resolve(cfg),
       counters: this.publicCounters(),
-      share: { baseUrl: this.shareBaseUrl() },
+      share: { baseUrl: this.shareBaseUrl(), qrOnDone: cfg.share.qrOnDone !== false },
+      gallery: { enabled: !!cfg.gallery.booth, reprint: cfg.gallery.reprint, qr: cfg.gallery.qr !== false },
       clientVersion: clientVersion()
     };
   }
@@ -468,6 +469,41 @@ export class Booth {
     return this.sendToPrinter(s, copies, 'admin');
   }
 
+  // ---------- Galerie ----------
+
+  /** Photos de l'événement en cours validées par les invités, les plus récentes d'abord. */
+  gallery() {
+    return this.store.sessionsOfEvent(this.store.data.activeEventId)
+      .filter((s) => s.final && !this.isUnvalidated(s))
+      .map((s) => {
+        const v = this.view(s);
+        return { id: v.id, createdAt: v.createdAt, url: v.final.url, thumbUrl: v.final.thumbUrl, printing: s.status === 'printing' };
+      });
+  }
+
+  /**
+   * Réimpression depuis la galerie de la borne, selon gallery.reprint : « operator » demande le code
+   * opérateur (et lève le quota comme sur la borne), « guest » applique toutes les limites.
+   */
+  async galleryPrint(id, copies, pin) {
+    const cfg = this.cfg();
+    const mode = cfg.gallery.reprint;
+    if (mode !== 'operator' && mode !== 'guest') throw new HttpError(403, 'REPRINT_DISABLED', 'La réimpression est désactivée');
+    const s = this.store.getSession(id);
+    if (!s || s.eventId !== this.store.data.activeEventId || !s.final || this.isUnvalidated(s)) {
+      throw new HttpError(404, 'SESSION_NOT_FOUND', 'Photo introuvable dans la galerie');
+    }
+    const operator = mode === 'operator';
+    if (operator && String(pin ?? '') !== String(cfg.limits.operatorPin)) throw new HttpError(403, 'BAD_PIN', 'Code opérateur incorrect');
+    const max = operator ? cfg.limits.operatorMaxCopies : cfg.limits.maxCopiesPerSession;
+    if (!Number.isInteger(copies) || copies < 1 || copies > max) throw new HttpError(400, 'COPIES_INVALID', `Nombre de copies invalide (1 à ${max})`);
+    if (s.status === 'printing') throw new HttpError(409, 'SESSION_PRINTING', 'Cette photo est déjà en cours d\'impression');
+    if (this.printer.available === false) throw new HttpError(409, 'PRINTER_UNAVAILABLE', cfg.texts.printerUnavailable);
+    if (copies > this.paperLeft()) throw new HttpError(409, 'PAPER_EMPTY', cfg.texts.paperEmpty);
+    if (!operator && copies > this.quotaRemaining()) throw new HttpError(409, 'QUOTA_REACHED', cfg.texts.quotaReached);
+    return this.sendToPrinter(s, copies, 'gallery');
+  }
+
   async sendToPrinter(s, copies, origin) {
     if (copies === 0) {
       s.status = 'done';
@@ -541,9 +577,30 @@ export class Booth {
     this.broadcast({ type: 'counters', counters: this.publicCounters() });
   }
 
+  /**
+   * QR code Wi-Fi (format WIFI: reconnu par l'appareil photo d'iOS et d'Android) : rejoint le hotspot de la borne.
+   * null quand il est désactivé ou incomplet.
+   */
+  async wifiQr() {
+    const w = this.cfg().share.wifi || {};
+    const ssid = String(w.ssid || '').trim();
+    const open = w.security === 'nopass';
+    if (!w.enabled || !ssid || (!open && !w.password)) return null;
+    const escape = (v) => String(v).replace(/([\\;,:"])/g, '\\$1');
+    const payload = `WIFI:T:${open ? 'nopass' : 'WPA'};S:${escape(ssid)};${open ? '' : `P:${escape(w.password)};`};`;
+    const dataUrl = await QRCode.toDataURL(payload, { margin: 1, width: 320, color: { dark: '#000000', light: '#ffffff' } });
+    return { ssid, dataUrl };
+  }
+
+  /** Lien d'une photo : l'adresse publique si elle est réglée, sinon l'adresse de la borne sur le réseau. */
+  photoUrl(id) {
+    const pub = this.cfg().share.publicUrl?.trim().replace(/\/$/, '');
+    return `${pub || this.shareBaseUrl()}/g/${id}`;
+  }
+
   async qr(id) {
     const s = this.load(id);
-    const url = `${this.shareBaseUrl()}/g/${s.id}`;
+    const url = this.photoUrl(s.id);
     const dataUrl = await QRCode.toDataURL(url, { margin: 1, width: 360, color: { dark: '#000000', light: '#ffffff' } });
     return { url, dataUrl };
   }
