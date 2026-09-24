@@ -47,7 +47,7 @@ body[data-font="serif"] { font-family: Georgia, "Times New Roman", serif; }
 .screen.active { opacity: 1; pointer-events: auto; transform: none; }
 
 .center-col { display: flex; flex-direction: column; align-items: center; gap: 28px; text-align: center; }
-.headline { font-size: clamp(32px, 4.5vw, 64px); font-weight: 800; color: var(--secondary); margin: 0; max-width: 18ch; line-height: 1.1; }
+.headline { font-size: clamp(32px, 4.5vw, 64px); font-weight: 800; color: var(--secondary); margin: 0; max-width: 24ch; line-height: 1.1; text-wrap: balance; } /* 2 lignes égales plutôt que 3 */
 .title { font-size: clamp(26px, 3.4vw, 46px); font-weight: 800; color: var(--secondary); margin: 0; text-align: center; }
 .hint { font-size: clamp(16px, 1.6vw, 22px); opacity: 0.75; margin: 0; text-align: center; max-width: 34ch; }
 
@@ -89,7 +89,7 @@ body[data-font="serif"] { font-family: Georgia, "Times New Roman", serif; }
 .side { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; min-width: 340px; }
 
 /* Choix du template */
-.template-grid { display: flex; flex-wrap: wrap; gap: 32px; justify-content: center; align-items: flex-end; max-width: 1400px; }
+.template-grid { display: flex; flex-wrap: wrap; gap: 32px; justify-content: center; align-items: flex-end; max-width: 100%; } /* taille des cartes : sizeTemplateCards() */
 .template-card { appearance: none; border: 0; background: var(--surface); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 14px; transition: transform 0.12s ease; }
 .template-card:active { transform: scale(0.97); }
 /* Choix au clavier (flèches) : contour visible sur la carte sélectionnée */
@@ -101,6 +101,13 @@ body[data-font="serif"] { font-family: Georgia, "Times New Roman", serif; }
 .capture-layout, .review-layout { display: flex; align-items: center; justify-content: center; gap: 56px; width: 100%; height: 100%; }
 .preview-wrap { position: relative; flex: 1 1 auto; height: 100%; max-height: calc(100vh - 140px); display: flex; align-items: center; justify-content: center; }
 #preview { border-radius: 18px; box-shadow: var(--shadow); background: #ddd; max-width: 100%; max-height: 100%; }
+/* Paysage : le cadre prend la largeur de l'aperçu (fitCanvas), aperçu et boutons restent groupés au centre.
+   Pendant le décompte (.looking), le cadre couvre au contraire tout l'écran. */
+@media (orientation: landscape) {
+  #screen-capture:not(.looking) .preview-wrap { flex: 0 0 auto; width: var(--fit-w, auto); }
+}
+/* « Changer de cadre » affiché en bas à gauche : l'aperçu lui laisse sa place */
+#screen-capture:has(#btnCaptureBack:not(.hidden)):not(.looking) .preview-wrap { max-height: calc(100vh - 250px); }
 .countdown {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   font-size: clamp(120px, 24vw, 340px); font-weight: 900; color: #fff; text-shadow: 0 10px 50px rgba(0,0,0,0.55); pointer-events: none;
@@ -160,6 +167,7 @@ body[data-font="serif"] { font-family: Georgia, "Times New Roman", serif; }
 
 /* Relecture / copies */
 .final-wrap { flex: 1 1 auto; height: 100%; max-height: calc(100vh - 220px); display: flex; align-items: center; justify-content: center; }
+.review-layout > .final-wrap { flex: 0 1 auto; min-width: 0; } /* cadre à la taille de la photo : photo et boutons groupés au centre */
 .final-img { max-width: 100%; max-height: 100%; border-radius: 16px; box-shadow: var(--shadow); background: #fff; }
 .retake-chooser { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; max-width: 420px; }
 .retake-thumb { appearance: none; border: 4px solid transparent; background: var(--surface); border-radius: 16px; padding: 8px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 6px; font: inherit; font-weight: 700; color: var(--on-surface); box-shadow: var(--shadow); }
@@ -206,7 +214,28 @@ body[data-screen="idle"] .toast { bottom: calc(3vh + clamp(64px, 9vmin, 120px) +
 }
 
 /* Galerie de l'événement */
-.idle-gallery { position: absolute; left: 32px; bottom: 32px; min-width: 0; }
+/* Bouton Galerie de l'accueil : dernières photos en éventail + nom + nombre. --u : unité qui suit la taille d'écran */
+.idle-gallery {
+  --u: clamp(0.8px, 0.07vw, 1.25px);
+  position: absolute; left: 32px; bottom: 32px; display: flex; align-items: center; gap: calc(18 * var(--u));
+  padding: calc(12 * var(--u)) calc(28 * var(--u)) calc(12 * var(--u)) calc(14 * var(--u));
+  border: 0; border-radius: calc(22 * var(--u)); background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: inherit; font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.idle-gallery:focus-visible { outline: 4px solid var(--primary); outline-offset: 4px; }
+@media (prefers-reduced-motion: no-preference) { .idle-gallery { transition: transform 0.12s ease; } .idle-gallery:active { transform: scale(0.96); } }
+.gal-stack { position: relative; flex: none; height: calc(78 * var(--u)); width: calc((96 + (var(--n, 3) - 1) * 26) * var(--u)); }
+.gal-stack img {
+  position: absolute; top: calc(6 * var(--u)); width: calc(96 * var(--u)); height: calc(64 * var(--u)); object-fit: cover;
+  border-radius: calc(7 * var(--u)); border: calc(4 * var(--u)) solid #fff; box-shadow: 0 calc(5 * var(--u)) calc(14 * var(--u)) rgba(0, 0, 0, 0.5);
+}
+.gal-stack img:nth-child(1) { left: 0; transform: rotate(-8deg); }
+.gal-stack img:nth-child(2) { left: calc(26 * var(--u)); transform: rotate(-1deg); }
+.gal-stack img:nth-child(3) { left: calc(52 * var(--u)); transform: rotate(7deg); }
+.gal-stack img:only-child { transform: rotate(-4deg); }
+.gal-lbl { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.15; }
+.gal-lbl b { color: var(--secondary); font-size: calc(26 * var(--u)); font-weight: 800; }
+.gal-lbl span { color: var(--primary); font-size: calc(17 * var(--u)); font-weight: 800; }
 .gallery-grid {
   flex: 1 1 auto; min-height: 0; width: 100%; max-width: 1400px; overflow-y: auto; overscroll-behavior: contain;
   display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-content: start; align-items: start; justify-items: center; gap: 28px;
@@ -217,6 +246,10 @@ body[data-screen="idle"] .toast { bottom: calc(3vh + clamp(64px, 9vmin, 120px) +
 .gallery-thumb:focus-visible { outline: 5px solid var(--primary); outline-offset: 6px; }
 /* 4 par ligne, ratio de chaque photo respecté : un paysage prend la largeur de la colonne, une bande est plafonnée en hauteur */
 .gallery-thumb img { display: block; max-width: 100%; max-height: 320px; width: auto; height: auto; border-radius: 12px; pointer-events: none; }
+/* Stream Deck branché : la galerie montre la même page que les touches, sur autant de colonnes */
+.gallery-grid.paged { flex: 0 1 auto; overflow: hidden; max-width: none; align-content: center; }
+.gallery-grid.paged .gallery-thumb img { max-height: 44vh; }
+.gallery-nav { display: flex; align-items: center; justify-content: center; gap: 32px; }
 .btn-nav { min-width: 0; width: 88px; height: 88px; min-height: 88px; padding: 0; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; }
 .btn-nav svg { width: 40px; height: 40px; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 #screen-photo .review-layout > .side { flex: none; min-width: 400px; }
@@ -226,6 +259,11 @@ body[data-screen="idle"] .toast { bottom: calc(3vh + clamp(64px, 9vmin, 120px) +
 .photo-qr figcaption { font-size: 16px; opacity: 0.75; text-align: center; max-width: 24ch; }
 .photo-stage { flex: 1 1 auto; min-width: 0; height: 100%; display: flex; align-items: center; gap: 24px; }
 #photoWrap { touch-action: pan-y; min-width: 0; }
+/* Ni QR code ni réimpression (.solo) : photo centrée sur l'écran, compteur sous la photo */
+#screen-photo.solo .review-layout { flex-direction: column; gap: 16px; }
+#screen-photo.solo .photo-stage { width: 100%; height: auto; flex: 1 1 auto; min-height: 0; justify-content: center; }
+#screen-photo.solo .review-layout > .side { min-width: 0; flex: none; }
+body.wifi-on #screen-photo.solo { padding-left: calc(var(--wifi-w) + 48px); } /* centré : même marge des deux côtés */
 @media (orientation: portrait) {
   .photo-stage { width: 100%; height: auto; max-height: 62vh; }
 }

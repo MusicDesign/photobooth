@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#f8f9fa">
 <title>Photo Booth</title>
+<link id="favicon" rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="/booth.css">
 </head>
 <body data-font="system">
@@ -23,13 +24,20 @@
       <svg class="look-up-arrow" viewBox="0 0 24 24"><path d="M12 3l-8 8h5v10h6V11h5z"/></svg>
     </div>
     <!-- Galerie de l'événement (réglage admin) -->
-    <button id="btnGallery" class="btn btn-secondary idle-gallery hidden"></button>
+    <!-- Galerie : les 3 dernières photos en éventail, le nom et le nombre (renderIdleGallery) -->
+    <button id="btnGallery" class="idle-gallery hidden"><span class="gal-stack" aria-hidden="true"></span><span class="gal-lbl"><b id="txtGallery"></b><span id="galleryCount"></span></span></button>
   </section>
 
   <!-- Galerie : les photos de l'événement en cours -->
   <section class="screen" id="screen-gallery">
     <h2 id="txtGalleryTitle" class="title"></h2>
     <div id="galleryGrid" class="gallery-grid"></div>
+    <!-- Stream Deck branché : une page de miniatures à la fois, autant que de touches -->
+    <div id="galleryNav" class="gallery-nav hidden">
+      <button id="btnGalleryPrev" class="btn btn-ghost btn-nav" aria-label="Photos précédentes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <span id="galleryPage" class="shot-label"></span>
+      <button id="btnGalleryNext" class="btn btn-ghost btn-nav" aria-label="Photos suivantes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+    </div>
     <p id="txtGalleryEmpty" class="hint hidden"></p>
     <button id="btnGalleryBack" class="btn btn-ghost back">← Accueil</button>
   </section>
@@ -88,6 +96,8 @@
         <button id="btnCancel" class="btn btn-ghost">Annuler</button>
       </div>
     </div>
+    <!-- Plusieurs cadres au choix, aucune photo prise : retour au choix du cadre -->
+    <button id="btnCaptureBack" class="btn btn-ghost back hidden">← Changer de cadre</button>
   </section>
 
   <!-- Relecture : refaire ou garder -->

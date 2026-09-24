@@ -87,23 +87,28 @@ des navigateurs).
 
 Ouvre http://localhost:3000/admin.html, PIN par défaut `1234`. Depuis la borne,
 5 appuis en haut à droite de l'écran ouvrent aussi l'admin, dans la même
-fenêtre. En bas du menu : **← Retour à la borne** (revient à l'accueil et
+fenêtre ; sur le Stream Deck, les touches du haut dans l'ordre gauche, droite,
+gauche, droite (moins de 1,5 s entre deux appuis). Le code admin est demandé,
+son pavé s'affiche aussi sur le Stream Deck, qui propose ensuite retour à la
+borne, déconnexion et arrêt. En bas du menu : **← Retour à la borne** (revient à l'accueil et
 déconnecte l'admin), **Déconnexion**, et **Éteindre la borne** quand elle a été
 lancée par l'icône ou au démarrage (étape 10.5).
 
-Sept sections dans le menu de gauche :
+Le menu de gauche : trois sections de travail, puis les réglages.
 
 | Section | Ce qu'on y fait |
 |---|---|
-| Tableau de bord | Compteurs, état caméra et imprimante, papier restant, remises à zéro |
-| Limites d'impression | Copies par passage, reprises, quota de l'événement, code opérateur |
-| Thème & textes | Nom, logo, couleurs, police, tous les textes des écrans |
-| Templates | Création, éditeur de calques, activation, template par défaut |
-| Caméra & imprimante | Pilotes (dont le mode auto), commandes gphoto2, file CUPS et options lp |
-| Sessions | Historique par id, réimpression, galerie, suppression, réinitialisation |
-| Codes & partage | PIN admin, code opérateur, URL de base du QR code, galerie |
+| Tableau de bord | Compteurs, état du matériel et du Wi-Fi, papier restant, remises à zéro |
+| Événements & photos | Un dossier par événement : sessions, réimpression, exports, suppression |
+| Templates | Création, éditeur de calques (dont le détourage), activation, template par défaut |
+| Parcours invité | Décompte, reprises, relecture, miroir, retours à l'accueil, galerie de l'événement |
+| Impression | Imprimante (auto, CUPS, options lp), copies par passage, quota, alerte papier |
+| Partage | QR code des photos, Wi-Fi obligatoire ou non, adresses, QR code Wi-Fi de la borne |
+| Apparence | Nom, logo, couleurs, police, tous les textes des écrans |
+| Matériel | Caméra (pilote, flash, commandes gphoto2 avancées), Stream Deck |
+| Sécurité | PIN admin, code opérateur |
 
-**Première chose à faire : changer les codes** dans Codes & partage.
+**Première chose à faire : changer les codes** dans Sécurité.
 
 - PIN admin (défaut `1234`) : celui qui ouvre cette page.
 - Code opérateur (défaut `0000`) : saisi sur la borne, il lève la limite de
@@ -113,7 +118,7 @@ Sept sections dans le menu de gauche :
 
 ### La galerie de l'événement
 
-Codes & partage → Galerie de l'événement. Trois réglages, tous désactivés au départ :
+Parcours invité → Galerie de l'événement. Trois réglages, tous désactivés au départ :
 
 | Réglage | Effet |
 |---|---|
@@ -125,11 +130,11 @@ Codes & partage → Galerie de l'événement. Trois réglages, tous désactivés
 Le QR code de l'**écran de fin** (après l'impression) se coupe à part, dans
 la carte Partage (QR code). Il n'y a alors plus d'écran de fin : dès la fin de
 l'impression, la borne revient à l'accueil et affiche quelques secondes le texte
-`thanksNoQr` (Thème & textes).
+`thanksNoQr` (Apparence).
 
 La galerie montre les photos **validées** (« Je la garde » ou impression) de
 l'événement en cours, les plus récentes d'abord. Changer d'événement dans
-Sessions change la galerie. Attention : sur les téléphones, toute personne
+Événements & photos change la galerie. Attention : sur les téléphones, toute personne
 connectée au Wi-Fi de la borne voit toutes les photos de la soirée.
 
 **Vérification.** Galerie activée sur la borne, touche le bouton, ouvre une
@@ -161,7 +166,7 @@ M · 1/125 s · f/5.6 · ISO 800 · balance des blancs sur la lumière de la sal
 ```
 
 Le flash intégré : en P/Av/M il ne se déclenche que s'il est levé, et il ne
-se rabat qu'à la main. L'admin propose une option (Caméra & imprimante → Flash
+se rabat qu'à la main. L'admin propose une option (Matériel → Flash
 intégré : off, on, auto avec seuil de luminosité) qui envoie la commande de
 levée `popupflash` avant la photo, mais **le 2000D accepte cette commande sans
 lever le flash** (vérifié : il ne se charge pas). Sur ce boîtier, le flash se
@@ -207,7 +212,7 @@ gphoto2 répond « Could not claim the USB device », relance `killall ptpcamera
 
 ## 6. Activer le Canon dans la borne
 
-1. Admin → Caméra & imprimante → Pilote caméra : **auto** (le défaut). La borne
+1. Admin → Matériel → Pilote caméra : **auto** (le défaut). La borne
    détecte le boîtier en USB et passe sur gphoto2 toute seule, en 10 secondes
    au plus ; s'il est éteint ou débranché, elle repasse sur le repli choisi
    (webcam du navigateur par défaut). Le bloc « En ce moment » dit quel pilote
@@ -290,7 +295,7 @@ lpstat -W not-completed -o    # la file doit se vider quand le tirage sort
 
 ### 7.5 Activer dans la borne
 
-Admin → Caméra & imprimante → Pilote imprimante : **auto** (le défaut) ou
+Admin → Impression → Pilote imprimante : **auto** (le défaut) ou
 **cups**. Nom de la file : celui de `lpstat`, obligatoire en auto pour ne
 jamais imprimer sur une autre imprimante. Options lp, une par ligne, celles
 du test manuel. Enregistre : c'est appliqué tout de suite. Lance un passage
@@ -298,10 +303,10 @@ complet avec 1 copie.
 
 En auto, si l'imprimante est éteinte ou débranchée, la borne bascule sur le
 repli : **none** (l'invité repart avec le QR code, message configurable dans
-Thème & textes) ou **mock** (fichiers dans `output/prints`, pratique sur le
+Apparence) ou **mock** (fichiers dans `output/prints`, pratique sur le
 Mac). Sur la borne, garde **none** : jamais de faux tirage qui consomme le quota.
 
-**Vérification.** Le tirage sort, la session passe en `done` dans Sessions, le
+**Vérification.** Le tirage sort, la session passe en `done` dans Événements & photos, le
 compteur « tirages imprimés » avance. Si les marges sont mauvaises, ajuste le
 template dans l'éditeur (étape 8) plutôt que les options lp.
 
@@ -309,7 +314,7 @@ template dans l'éditeur (étape 8) plutôt que les options lp.
 
 ## 8. Personnaliser : thème, textes, templates
 
-### 8.1 Thème & textes
+### 8.1 Apparence
 
 - **Identité** : nom de la borne, délai de retour à l'accueil après l'écran final.
 - **Thème actif** : clair, sombre, festif, ou Personnalisé avec tes couleurs.
@@ -344,17 +349,18 @@ ouvre le résultat dans `output/prints/`.
 
 ## 9. Régler les limites d'impression
 
-Admin → Limites d'impression.
+Admin → Impression (limites) et Parcours invité (déroulé d'un passage).
 
 | Réglage | Défaut | Conseil |
 |---|---|---|
 | Copies maximum par passage | 2 | 1 par personne sur la photo, plafonné à 3 |
-| Autoriser « sans impression » (QR code seulement) | oui | Garde-le, ça économise le papier |
+| L'invité peut terminer sans imprimer | oui | Avec une imprimante branchée ; décoché, au moins un tirage par passage |
 | Reprises de photo autorisées | 2 | 0 = aucune, case « Illimité » possible ; au-delà de 2 la file d'attente s'allonge |
 | Validation automatique de la relecture | 30 s | Évite les sessions abandonnées devant l'écran |
 | Retour à l'accueil si personne ne lance la photo | 30 s | Même idée à l'écran de prise de vue ; l'obturateur se referme au retour à l'accueil |
+| Retour à l'accueil sur le choix du cadre et la galerie | 30 s | Sans interaction (écran, clavier ou Stream Deck) |
 | Décompte avant la photo | 3 s | 3 à 5 selon le public |
-| Quota total de tirages | 200 | Nombre de feuilles achetées pour la soirée |
+| Quota de tirages de l'événement | 200 | Nombre de feuilles achetées pour la soirée |
 | Alerte papier en dessous de | 20 | Le tableau de bord passe en orange |
 | Copies maximum avec le code opérateur | 10 | Pour les demandes exceptionnelles |
 
@@ -445,8 +451,8 @@ Comportement :
   pendant une impression, sauf confirmation.
 - **Relancer** : icône Photo Booth du bureau. Un deuxième appui pendant que la
   borne tourne ne lance rien de plus.
-- **Borne ↔ admin** : 5 appuis en haut à droite ouvrent l'admin dans la même
-  fenêtre ; **← Retour à la borne** revient à l'accueil et déconnecte l'admin
+- **Borne ↔ admin** : 5 appuis en haut à droite (ou G D G D sur les touches du
+  haut du Stream Deck) ouvrent l'admin dans la même fenêtre ; **← Retour à la borne** revient à l'accueil et déconnecte l'admin
   (le prochain invité ne peut pas y entrer sans le code).
 - **Plantage du serveur** : relancé en 3 s par le lanceur Chromium, la page se
   reconnecte seule.
@@ -489,10 +495,10 @@ sudo nmcli device wifi hotspot ifname wlp1s0 ssid PhotoBooth password 'motdepass
 sudo nmcli connection modify Hotspot connection.autoconnect yes
 ```
 
-La borne prend l'adresse `10.42.0.1`. Dans l'admin → Codes & partage → URL de
+La borne prend l'adresse `10.42.0.1`. Dans l'admin → Partage → URL de
 base : `http://10.42.0.1:3000`.
 
-**QR code Wi-Fi permanent.** Admin → Codes & partage → Wi-Fi de la borne :
+**QR code Wi-Fi permanent.** Admin → Partage → Wi-Fi de la borne :
 coche « Afficher le QR code Wi-Fi » et reprends le nom (`PhotoBooth`) et le mot
 de passe du hotspot. Un petit QR code s'affiche alors en bas à droite de tous
 les écrans de la borne : l'appareil photo d'un iPhone ou d'un Android propose
@@ -514,7 +520,7 @@ marche dans les deux cas :
 
 Mise en place, une fois :
 
-1. **Admin** → Codes & partage → Adresse publique : `https://photobooth.domain.fr`.
+1. **Admin** → Partage → Adresse publique : `https://photobooth.domain.fr`.
    Active aussi le QR code Wi-Fi (étape 10.7) : la page distante affiche le nom
    du réseau (jamais le mot de passe, elle est publique).
 2. **Page distante** : `npm run remote` produit `output/remote/`. Dépose son
@@ -571,7 +577,7 @@ pour refaire, imprimante, − et +, QR code pour « sans impression », etc.). L
 choix de cadre et de photo à refaire montrent leur miniature. Le pavé du code
 opérateur passe aussi sur les touches, en plusieurs pages sur un Mini.
 Tous les modèles sont reconnus (Mini 6 touches, MK.2 15, XL 32, Neo, Plus), à
-chaud, sans redémarrage. Réglages : admin → Caméra & imprimante → Stream Deck.
+chaud, sans redémarrage. Réglages : admin → Matériel → Stream Deck.
 
 - **Mac** : quitter l'application Stream Deck d'Elgato, qui réserve l'appareil.
 - **Linux** : donner l'accès USB à l'utilisateur connecté, une fois :
@@ -608,7 +614,7 @@ automatique. Un iPad trop ancien (iOS 9 et avant) ne convient pas.
 - [ ] Test complet sur la borne : allumage jusqu'au plein écran, passage, photo, impression, QR code lu depuis un téléphone, Éteindre puis relancer par l'icône.
 - [ ] Papier et ruban chargés, nombre de feuilles saisi dans Consommables.
 - [ ] Quota de l'événement = feuilles disponibles.
-- [ ] Sessions → **Réinitialiser les sessions**, Tableau de bord → **Remettre à zéro** le compteur de tirages.
+- [ ] Événements & photos → **Vider l'événement**, Tableau de bord → **Remettre à zéro** le compteur de tirages.
 - [ ] Batterie du boîtier ou coupleur secteur, objectif en MF avec mise au point faite sur place.
 - [ ] Codes admin et opérateur changés, code opérateur donné à l'équipe.
 
@@ -640,7 +646,7 @@ automatique. Un iPad trop ancien (iOS 9 et avant) ne convient pas.
 | Photo prise mais « gphoto2 a terminé sans produire de fichier » | Boîtier en RAW ou RAW+JPEG | Qualité d'image : JPEG seul |
 | Impression bloquée, erreur après 5 min | Papier, ruban, bourrage, mauvaise file | `lpstat -p`, vider la file avec `cancel -a`, vérifier le `media` |
 | Webcam refusée en mode navigateur | Borne ouverte via l'adresse IP | Ouvrir sur `http://localhost:3000` (ou passer en pilote gphoto2 / mock) |
-| La borne dit « L'imprimante n'est pas disponible » | Mode auto : file CUPS absente, désactivée, ou imprimante USB éteinte | Admin → Caméra & imprimante, bloc « En ce moment » donne la raison ; rallumer, puis « Détecter maintenant » |
+| La borne dit « L'imprimante n'est pas disponible » | Mode auto : file CUPS absente, désactivée, ou imprimante USB éteinte | Admin → Impression, bloc « En ce moment » donne la raison ; rallumer, puis « Détecter maintenant » |
 | La borne utilise la webcam alors que le Canon est branché | Mode auto : boîtier pas encore détecté (éteint, endormi, câble) | Tableau de bord → raison affichée sous « Caméra » ; le boîtier est repris dès qu'il répond, 10 s au plus |
 | La borne repasse en webcam une minute après l'allumage du Canon | Arrêt automatique du boîtier encore actif | Menu du boîtier → Arrêt auto : Désactiver (le 2000D ignore la commande USB) |
 | Le serveur s'arrête au démarrage avec « gphoto2 introuvable » | Ancien comportement | Ne se produit plus : la borne démarre sur le repli et l'admin affiche l'erreur sous « Caméra » |
@@ -649,7 +655,7 @@ automatique. Un iPad trop ancien (iOS 9 et avant) ne convient pas.
 | L'icône du bureau ouvre un éditeur de texte | Lanceur non autorisé | Clic droit sur l'icône → Autoriser l'exécution |
 | Rien ne s'ouvre au clic sur l'icône | Node ou Chromium introuvable, port 3000 pris | Lire `data/logs/launcher.log` |
 | Le port 3000 est déjà utilisé | Une autre application écoute dessus | `PORT=3001` dans le lanceur, ou arrêter l'autre application |
-| Une session reste en `shooting` ou `review` | Invité parti en cours de route | Normal ; elle se supprime dans Sessions, et la validation automatique limite le phénomène |
+| Une session reste en `shooting` ou `review` | Invité parti en cours de route | Normal ; elle se supprime dans Événements & photos, et la validation automatique limite le phénomène |
 
 Journal du serveur : la sortie du terminal sur Mac, `data/logs/booth.log` partout
 (`data/logs/launcher.log` pour le lanceur Linux ; `~/.config/Photo Booth/data/logs/`

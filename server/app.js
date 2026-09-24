@@ -1,5 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
+import path from 'node:path';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import { Config } from './config.js';
@@ -13,7 +14,7 @@ import { apiRouter } from './routes/api.js';
 import { adminRouter } from './routes/admin.js';
 import { galleryHtml, eventGalleryHtml } from './gallery.js';
 import { HttpError } from './util.js';
-import { OUTPUT_DIR, PUBLIC_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, UPLOADS_DIR, SAMPLES_DIR } from './paths.js';
+import { ROOT, OUTPUT_DIR, PUBLIC_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, UPLOADS_DIR, SAMPLES_DIR } from './paths.js';
 
 /**
  * Assemble l'application. Les variables d'environnement BOOTH_CAMERA et
@@ -53,18 +54,24 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   // Bascule de matériel : la borne recharge son bootstrap (mode caméra, imprimante disponible).
   devices.on('camera', (cam) => { booth.setCamera(cam); broadcast({ type: 'config' }); });
   devices.on('printer', (p) => { booth.setPrinter(p); broadcast({ type: 'config' }); });
+  devices.on('network', () => broadcast({ type: 'config' })); // Wi-Fi apparu ou perdu : QR codes affichés ou non
 
   // Stream Deck : la borne décrit son écran ('ui'), un appui lui est renvoyé ('deck'), à elle seule.
   let boothSocket = null;
+  const toBooth = (msg) => { if (boothSocket?.readyState === 1) boothSocket.send(JSON.stringify(msg)); };
   const deck = new StreamDeckRemote({
     config,
-    onPress: (id) => { if (boothSocket?.readyState === 1) boothSocket.send(JSON.stringify({ type: 'deck', id })); }
+    onPress: (id) => toBooth({ type: 'deck', id }),
+    onInfo: (info) => toBooth({ type: 'deckInfo', ...info })
   });
   wss.on('connection', (ws) => {
     ws.on('message', (raw) => {
       let msg;
       try { msg = JSON.parse(raw); } catch { return; }
-      if (msg?.type === 'ui') { boothSocket = ws; deck.setUi(msg); }
+      if (msg?.type === 'ui') {
+        if (boothSocket !== ws) { boothSocket = ws; toBooth({ type: 'deckInfo', ...deck.galleryInfo() }); }
+        deck.setUi(msg);
+      }
     });
   });
   if (process.env.BOOTH_STREAMDECK !== 'off') await deck.start();
@@ -76,11 +83,15 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
 
   app.disable('x-powered-by');
   app.use(express.json({ limit: '2mb' }));
+  // Favicon = le logo défini dans Apparence (toutes les pages, y compris celles des téléphones)
+  app.get('/favicon.ico', (req, res) => res.redirect(302, themes.resolve(config.get()).logo || '/assets/logo-default.svg'));
   app.use(express.static(PUBLIC_DIR, { index: 'index.html' }));
   app.use('/output', express.static(OUTPUT_DIR, { maxAge: '1h' }));
   app.use('/templates', express.static(TEMPLATES_DIR, { maxAge: '1h' }));
   app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '1h' }));
   app.use('/samples', express.static(SAMPLES_DIR, { maxAge: '1h' }));
+  // Détourage IA de l'aperçu : MediaPipe (script + wasm) servi en local, la borne est hors ligne.
+  app.use('/vendor/mediapipe', express.static(path.join(ROOT, 'node_modules', '@mediapipe', 'tasks-vision'), { maxAge: '1d' }));
 
   // Arrêt demandé depuis l'admin : la réponse part d'abord, la fermeture suit.
   let stopping = false;

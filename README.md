@@ -59,7 +59,7 @@ Flux invité : accueil → choix du cadre (optionnel) → aperçu live **dans le
 **choix du nombre de copies** → impression → écran final avec **QR code** vers une galerie
 locale.
 
-Admin (`/admin.html`, ou 5 appuis en haut à droite de la borne, dans la même fenêtre ;
+Admin (`/admin.html`, ou 5 appuis en haut à droite de la borne, ou G D G D sur les touches du haut du Stream Deck, dans la même fenêtre ;
 « Retour à la borne » y revient en déconnectant l'admin) :
 
 - **Limites** : copies max par passage, « sans impression » autorisé ou non, reprises

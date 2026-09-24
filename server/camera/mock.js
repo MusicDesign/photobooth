@@ -1,10 +1,9 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import { BaseCamera } from './base.js';
 import { MjpegBroadcaster } from './mjpeg.js';
-import { SAMPLES_DIR } from '../paths.js';
+import { samplePhotos } from '../samples.js';
 
-/** Caméra simulée : boucle sur data/samples/*.jpg. Sert aux tests automatiques. */
+/** Caméra simulée : boucle sur les photos d'exemple (voir samples.js). Sert aux tests automatiques. */
 export class MockCamera extends BaseCamera {
   name = 'mock';
 
@@ -16,11 +15,9 @@ export class MockCamera extends BaseCamera {
   }
 
   async init() {
-    const files = fs.existsSync(SAMPLES_DIR)
-      ? fs.readdirSync(SAMPLES_DIR).filter((f) => /\.jpe?g$/i.test(f)).sort()
-      : [];
-    if (!files.length) throw new Error(`Aucune image d'exemple dans ${SAMPLES_DIR} (lancer: npm run demo-assets)`);
-    this.frames = files.map((f) => fs.readFileSync(path.join(SAMPLES_DIR, f)));
+    const files = samplePhotos();
+    if (!files.length) throw new Error('Aucune photo d\'exemple (public/assets/template-photo.jpg, ou lancer : npm run demo-assets)');
+    this.frames = files.map((s) => fs.readFileSync(s.file));
     let k = 0;
     this.timer = setInterval(() => this.mjpeg.push(this.frames[k++ % this.frames.length]), 700);
   }

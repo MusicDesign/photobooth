@@ -4,7 +4,8 @@ import path from 'node:path';
 import express from 'express';
 import multer from 'multer';
 import archiver from 'archiver';
-import { UPLOADS_DIR, SAMPLES_DIR } from '../paths.js';
+import { UPLOADS_DIR } from '../paths.js';
+import { samplePhotos } from '../samples.js';
 import { HttpError, parseCookies } from '../util.js';
 import { CAMERA_DRIVERS, CAMERA_FALLBACKS } from '../camera/index.js';
 import { PRINTER_DRIVERS, PRINTER_FALLBACKS } from '../printer/index.js';
@@ -66,9 +67,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   });
 
   r.get('/state', async (req, res) => {
-    const samples = fs.existsSync(SAMPLES_DIR)
-      ? fs.readdirSync(SAMPLES_DIR).filter((f) => /\.jpe?g$/i.test(f)).sort().map((f) => `/samples/${f}`)
-      : [];
+    const samples = samplePhotos().map((s) => s.url);
     res.json({
       config: config.get(),
       counters: booth.publicCounters(),

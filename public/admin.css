@@ -9,6 +9,7 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ro
 .nav-title { font-weight: 800; font-size: 20px; padding: 0 22px 18px; }
 .nav a { color: #fff; text-decoration: none; padding: 12px 22px; opacity: 0.8; }
 .nav a.active, .nav a:hover { opacity: 1; background: rgba(255,255,255,0.1); }
+.nav-group { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.55; padding: 18px 22px 6px; }
 .nav-foot { margin-top: auto; padding: 18px 22px; display: flex; flex-direction: column; gap: 10px; }
 .main { padding: 28px 36px; max-width: 1200px; }
 h1 { margin: 0 0 6px; color: var(--s); }
@@ -22,8 +23,18 @@ h3 { margin: 0 0 12px; font-size: 16px; color: var(--muted); text-transform: upp
 .stat .v { font-size: 34px; font-weight: 800; color: var(--s); }
 .stat .l { color: var(--muted); font-size: 14px; }
 .stat.warn .v { color: var(--warn); } .stat.err .v { color: var(--err); }
-label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); margin-bottom: 14px; }
-label.inline { flex-direction: row; align-items: center; gap: 10px; color: var(--text); }
+/* Libellé au-dessus de son champ ; le texte du libellé reste d'un seul tenant, même avec un <code> ou un <b> dedans */
+label { display: block; font-size: 14px; line-height: 1.4; color: var(--muted); margin-bottom: 18px; }
+label > input:not([type=checkbox]):not([type=radio]):not([type=color]), label > select, label > textarea { display: block; width: 100%; box-sizing: border-box; margin-top: 6px; }
+label:not(.inline) > input[type=color] { display: block; margin-top: 6px; }
+label > .row, label > .detect, label > div { margin-top: 6px; }
+label.inline { display: flex; flex-direction: row; align-items: center; gap: 10px; color: var(--text); margin-bottom: 10px; }
+/* Aide sous un champ : collée à son champ, détachée du suivant */
+form small { line-height: 1.45; }
+form.card > small, form .grid-2 > div > small, form details > small { display: block; margin: 0 0 20px; }
+label + small { margin-top: -12px !important; }
+label.inline + small { margin-top: -4px !important; }
+label > small { display: block; margin-top: 6px; }
 input, select, textarea { font: inherit; padding: 10px 12px; border: 1px solid #d5d9e0; border-radius: 10px; background: #fff; color: var(--text); }
 input[type=color] { width: 60px; height: 40px; padding: 2px; }
 input[type=checkbox], input[type=radio] { width: 20px; height: 20px; }
@@ -49,7 +60,7 @@ td.actions { white-space: nowrap; text-align: right; }
 .tpl-card img { width: 140px; max-height: 140px; object-fit: contain; border-radius: 8px; background: repeating-conic-gradient(#e9e9e9 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
 .tpl-meta { flex: 1; font-size: 14px; color: var(--muted); }
 .tpl-meta strong { color: var(--text); font-size: 16px; }
-.preview-theme { border-radius: 14px; padding: 18px; display: flex; align-items: center; gap: 16px; margin-top: 8px; }
+.preview-theme { border-radius: 14px; padding: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 8px; }
 .preview-theme .pbtn { padding: 12px 20px; border-radius: 999px; font-weight: 800; }
 .logo-prev { height: 48px; }
 .toast { position: fixed; right: 24px; bottom: 24px; background: var(--s); color: #fff; padding: 12px 18px; border-radius: 12px; font-weight: 600; z-index: 20; }
@@ -113,3 +124,25 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 /* Navigation borne ↔ admin dans la même fenêtre (kiosque) */
 .nav-foot .btn { width: 100%; }
 .back-link { display: block; margin-top: 14px; text-align: center; color: var(--muted); }
+form.card details { color: inherit; font-size: inherit; margin-top: 14px; }
+form.card details summary { color: var(--muted); font-size: 14px; margin-bottom: 10px; }
+
+/* Apparence : pastilles de couleur de même largeur */
+.swatches { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+.swatches label.swatch { margin: 0; font-size: 13px; }
+.swatches label.swatch > span { color: var(--text); font-weight: 600; }
+.swatches label.swatch > small { font-size: 12px; line-height: 1.35; margin-top: 6px; }
+.swatches input[type=color] { display: block; width: 100%; height: 40px; margin-top: 6px; padding: 3px; box-sizing: border-box; }
+/* Logo, image de fond : aperçu, fichier, boutons, chacun sur sa ligne */
+.upload-card { display: flex; flex-direction: column; gap: 14px; }
+.upload-card h3 { margin-bottom: 0; }
+.upload-card .upload-current { display: flex; align-items: center; gap: 14px; min-height: 48px; }
+.upload-card .upload-current small { margin: 0; }
+.upload-card input[type=file] { width: 100%; box-sizing: border-box; }
+.row + small { margin-top: 12px; }
+
+/* Confirmation (éteindre la borne) : aussi pilotée par le Stream Deck */
+.confirm-dialog { border: 0; border-radius: 16px; padding: 24px 26px; max-width: 420px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+.confirm-dialog::backdrop { background: rgba(10, 12, 20, 0.45); }
+.confirm-dialog p { margin: 0 0 20px; white-space: pre-line; line-height: 1.5; }
+.confirm-dialog .row { justify-content: flex-end; }
