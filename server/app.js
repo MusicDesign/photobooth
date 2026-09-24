@@ -21,8 +21,9 @@ import { ROOT, OUTPUT_DIR, PUBLIC_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, 
  * BOOTH_PRINTER forcent un pilote sans toucher au fichier de config (tests).
  * onShutdown : appelé quand l'admin éteint la borne, après fermeture du serveur
  * (le lanceur quitte alors le processus, l'app Electron ferme sa fenêtre).
+ * onRestart : pareil pour « Redémarrer » ; seul un lanceur capable de se relancer le fournit (app Electron).
  */
-export async function createApp({ port = Number(process.env.PORT) || 3000, onShutdown = null } = {}) {
+export async function createApp({ port = Number(process.env.PORT) || 3000, onShutdown = null, onRestart = null } = {}) {
   for (const d of [OUTPUT_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, UPLOADS_DIR]) fs.mkdirSync(d, { recursive: true });
 
   const config = new Config();
@@ -93,19 +94,22 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   // Détourage IA de l'aperçu : MediaPipe (script + wasm) servi en local, la borne est hors ligne.
   app.use('/vendor/mediapipe', express.static(path.join(ROOT, 'node_modules', '@mediapipe', 'tasks-vision'), { maxAge: '1d' }));
 
-  // Arrêt demandé depuis l'admin : la réponse part d'abord, la fermeture suit.
+  // Arrêt ou redémarrage demandé depuis l'admin : la réponse part d'abord, puis caméra, Stream Deck et
+  // serveur se ferment proprement avant que le lanceur quitte (et se relance).
   let stopping = false;
-  const shutdown = onShutdown && (() => {
+  const stopThen = (then, what) => then && (() => {
     if (stopping) return;
     stopping = true;
-    console.log('[booth] arrêt demandé depuis l\'admin');
+    console.log(`[booth] ${what} demandé depuis l'admin`);
     setTimeout(async () => {
-      try { await close(); } catch (e) { console.error(`[booth] arrêt : ${e.message}`); }
-      await onShutdown();
+      try { await close(); } catch (e) { console.error(`[booth] ${what} : ${e.message}`); }
+      await then();
     }, 300);
   });
+  const shutdown = stopThen(onShutdown, 'arrêt');
+  const restart = stopThen(onRestart, 'redémarrage');
 
-  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown }));
+  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart }));
   app.use('/api', apiRouter({ booth }));
 
   // Page d'une photo (tous les QR codes y mènent). Galerie téléphone ouverte : navigation entre les photos.

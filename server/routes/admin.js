@@ -14,7 +14,7 @@ import { FORMATS, FONTS, DEFAULT_FORMAT } from '../templates.js';
 const EDITABLE_SECTIONS = ['booth', 'camera', 'printer', 'limits', 'templates', 'theme', 'texts', 'admin', 'share', 'gallery'];
 const IMAGE_EXT = { 'image/png': '.png', 'image/svg+xml': '.svg', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
 
-export function adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown }) {
+export function adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart }) {
   const r = express.Router();
   const tokens = new Set();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024 } });
@@ -66,6 +66,13 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     shutdown();
   });
 
+  r.post('/restart', (req, res) => {
+    if (!restart) throw new HttpError(409, 'RESTART_UNAVAILABLE', 'Redémarrage non disponible dans ce mode de lancement (serveur lancé dans un terminal)');
+    if (booth.printing() && !req.body?.force) throw new HttpError(409, 'PRINTING', 'Une impression est en cours');
+    res.json({ ok: true });
+    restart();
+  });
+
   r.get('/state', async (req, res) => {
     const samples = samplePhotos().map((s) => s.url);
     res.json({
@@ -85,6 +92,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       devices: devices.status(),
       streamDeck: deck.status(),
       canShutdown: !!shutdown,
+      canRestart: !!restart,
       events: store.listEvents().map((ev) => booth.eventView(ev)),
       activeEventId: store.data.activeEventId,
       sessions: store.sessionsOfEvent(store.data.activeEventId).map((s) => booth.view(s)),

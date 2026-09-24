@@ -1392,6 +1392,7 @@ async function boot() {
   $('#login').classList.add('hidden');
   $('#shell').classList.remove('hidden');
   $('#btnShutdown').classList.toggle('hidden', !S.canShutdown);
+  $('#btnRestart').classList.toggle('hidden', !S.canRestart);
   sendDeckUi();
   if (!S.formats || !S.theme || S.templates.some((t) => !t.layers)) {
     $('#main').innerHTML = `<h2>Serveur à redémarrer</h2>
@@ -1419,12 +1420,25 @@ $('#btnShutdown').onclick = async () => {
   document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>Borne éteinte</h1>
     <p class="sub">Pour la relancer : icône « Photo Booth » sur le bureau.</p></div></div>`;
 };
+// Redémarrer : le logiciel se ferme proprement (caméra, Stream Deck) et se relance tout seul sur l'accueil.
+$('#btnRestart').onclick = async () => {
+  if (!await askConfirm('Redémarrer la borne ?\n\nLe logiciel se ferme puis se relance tout seul, en quelques secondes. Utile si la caméra ou le Stream Deck ne répond plus.', 'Redémarrer', 'retake')) return;
+  try {
+    await api('/api/admin/restart', { method: 'POST', body: {} });
+  } catch (e) {
+    if (e.code !== 'PRINTING' || !await askConfirm(`${e.message}\n\nRedémarrer quand même ?`, 'Redémarrer quand même', 'retake')) return toast(e.message, true);
+    await api('/api/admin/restart', { method: 'POST', body: { force: true } });
+  }
+  document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>Redémarrage…</h1>
+    <p class="sub">La borne revient dans quelques secondes.</p></div></div>`;
+};
 /** Confirmation dans la page : se valide à la souris, au clavier ou depuis le Stream Deck. */
-function askConfirm(text, okLabel) {
+function askConfirm(text, okLabel, deckIcon = 'power') {
   return new Promise((resolve) => {
     const dlg = $('#confirmDialog');
     $('#confirmText').textContent = text;
     $('#cfOk').textContent = okLabel;
+    $('#cfOk').dataset.icon = deckIcon; // pictogramme de la touche « valider » sur le Stream Deck
     const done = (v) => { dlg.close(); $('#cfOk').onclick = $('#cfCancel').onclick = dlg.oncancel = null; sendDeckUi(); resolve(v); };
     $('#cfOk').onclick = () => done(true);
     $('#cfCancel').onclick = () => done(false);
@@ -1447,11 +1461,13 @@ function sendDeckUi() {
   const shell = !$('#shell').classList.contains('hidden');
   let items;
   if (dlg.open) {
-    items = [{ id: 'cfOk', label: $('#cfOk').textContent, icon: 'power', kind: 'primary', style: DECK_DANGER }, { id: 'cfCancel', label: 'Annuler', icon: 'x', kind: 'ghost' }];
+    items = [{ id: 'cfOk', label: $('#cfOk').textContent, icon: $('#cfOk').dataset.icon || 'power', kind: 'primary', style: DECK_DANGER }, { id: 'cfCancel', label: 'Annuler', icon: 'x', kind: 'ghost' }];
   } else {
     items = [{ id: 'btnBooth', label: 'Retour à la borne', icon: 'back', kind: 'ghost' }];
     if (shell) items.push({ id: 'btnLogout', label: 'Déconnexion', icon: 'logout', kind: 'ghost' });
-    if (shell && !$('#btnShutdown').classList.contains('hidden')) items.push({ id: 'btnShutdown', label: 'Éteindre', icon: 'power', kind: 'ghost', style: DECK_DANGER });
+    // Redémarrer et éteindre sur la rangée du haut, retour et déconnexion en bas
+    if (shell && !$('#btnRestart').classList.contains('hidden')) items.push({ id: 'btnRestart', label: 'Redémarrer', icon: 'retake', kind: 'primary', style: { bg: '#2f6fdd', fg: '#ffffff', border: null } });
+    if (shell && !$('#btnShutdown').classList.contains('hidden')) items.push({ id: 'btnShutdown', label: 'Éteindre', icon: 'power', kind: 'primary', style: DECK_DANGER });
   }
   deckSock.send(JSON.stringify({ type: 'ui', screen: dlg.open ? 'admin-confirm' : 'admin', items, colors: S?.theme?.colors || {} }));
 }

@@ -46,7 +46,11 @@ async function start() {
   installFileLog();
 
   let stopped = false;
-  const { server, port, close } = await createApp({ onShutdown: () => { stopped = true; app.quit(); } });
+  const { server, port, close } = await createApp({
+    onShutdown: () => { stopped = true; app.quit(); },
+    // Redémarrer : nouvelle instance au départ de celle-ci (même dossier d'app, même environnement)
+    onRestart: () => { stopped = true; app.relaunch(app.isPackaged ? {} : { args: [app.getAppPath()] }); app.exit(0); }
+  });
   try {
     await new Promise((resolve, reject) => {
       server.once('error', (e) => reject(e.code === 'EADDRINUSE' ? new Error(`le port ${port} est déjà utilisé (serveur lancé dans un terminal ?)`) : e));

@@ -392,11 +392,12 @@ function renderPreview() {
   const t = state.template;
   if (!t) return;
   const live = liveSize();
-  const shutter = state.live ? shutterValue() : 0;
+  const shutter = shutterValue(); // fermé tant que la caméra n'envoie rien (webcam comprise), puis s'ouvre
   renderTemplate(c.getContext('2d'), t, {
     scale: state.previewScale,
     photos: state.shotImages,
-    live: state.live ? { el: state.live.el, w: live?.w || 0, h: live?.h || 0, shot: state.currentShot, shutter } : null,
+    // Toujours un live pour la photo en cours : pas de gris « Photo 1 » pendant que la caméra démarre
+    live: { el: state.live?.el || null, w: live?.w || 0, h: live?.h || 0, shot: state.currentShot, shutter },
     mirror: state.session ? !!state.session.mirror : !!state.boot.booth.mirrorPreview,
     assets: state.assets,
     placeholder: true,
@@ -1172,7 +1173,9 @@ function deckItems() {
     const label = glyph || (el.querySelector('.template-name, span')?.textContent || el.textContent || el.getAttribute('aria-label') || '').trim();
     // Miniature sur la touche, sauf pour les cadres : leur nom, plus lisible qu'un cadre réduit à 72 px
     const image = CHOICE_CLASSES.some((c) => el.classList.contains(c)) && !el.classList.contains('template-card') ? deckThumb(el) : null;
-    const icon = DECK_ICONS[el.id] || { del: 'delete', ok: 'check' }[el.dataset.k] || null; // pavé du code : ⌫ et OK en pictogrammes
+    let icon = DECK_ICONS[el.id] || { del: 'delete', ok: 'check' }[el.dataset.k] || null; // pavé du code : ⌫ et OK en pictogrammes
+    // « Sans impression » : QR code seulement s'il s'affichera vraiment (Wi-Fi, option active), sinon retour à l'accueil
+    if (el.id === 'btnNoPrint' && state.boot.share?.qrOnDone === false) icon = 'home';
     items.push({ id: el.dataset.deck, label: label || '•', kind: deckKind(el), disabled: el.disabled, icon, image, style: deckKeyStyle(el, root) });
   }
   return items;
