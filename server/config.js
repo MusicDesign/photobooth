@@ -23,7 +23,7 @@ export const DEFAULTS = {
   },
   camera: {
     // auto    : gphoto2 si un boîtier est branché, sinon `fallback` (surveillé toutes les 10 s)
-    // browser : webcam via le navigateur (dev sur Mac, ou webcam USB sur le Pi)
+    // browser : webcam via le navigateur (dev sur Mac, ou webcam USB sur la borne Linux)
     // mock    : photos d'exemple, pour les tests automatiques
     // gphoto2 : Canon EOS 2000D en USB
     driver: 'auto',
@@ -52,7 +52,7 @@ export const DEFAULTS = {
   printer: {
     // auto : cups si la file nommée ci-dessous répond, sinon `fallback`
     // mock : écrit le fichier dans output/prints (dev)
-    // cups : commande lp (Raspberry Pi + Gutenprint)
+    // cups : commande lp (Linux + Gutenprint)
     // none : impression désactivée, l'invité repart avec le QR code
     driver: 'auto',
     fallback: 'none',
@@ -110,13 +110,37 @@ export const DEFAULTS = {
     noPrint: 'Sans impression',
     printing: 'Impression en cours…',
     thanks: 'Merci ! Scannez le QR code pour récupérer votre photo.',
+    thanksNoQr: 'Merci et bonne soirée !', // écran de fin quand le QR code est désactivé
     quotaReached: 'Les impressions sont terminées pour ce soir, mais votre photo vous attend en ligne !',
     paperEmpty: 'Plus de papier pour le moment, mais votre photo vous attend en ligne !', // stock à 0 (admin)
     printerUnavailable: "L'imprimante n'est pas disponible, mais votre photo vous attend en ligne !",
-    finish: 'Terminer'
+    finish: 'Terminer',
+    gallery: 'Galerie',
+    galleryTitle: 'Les photos de la soirée',
+    galleryEmpty: 'Pas encore de photo : à vous de jouer !',
+    reprint: 'Réimprimer',
+    galleryQr: 'Scannez pour récupérer cette photo',
+    wifiQr: 'Wi-Fi des photos',
+    remoteTitle: 'Votre photo vous attend sur la borne',   // page distante (adresse publique), hors du Wi-Fi de la borne
+    remoteHint: 'Connectez-vous au Wi-Fi de la borne : scannez le QR code Wi-Fi en bas à droite de son écran. Votre photo s\'affichera ici toute seule.'
   },
   admin: { pin: '1234' },
-  share: { baseUrl: '' }  // vide = http://<ip locale>:<port>
+  share: {
+    baseUrl: '',           // vide = http://<ip locale>:<port>
+    // Adresse publique (ex. https://photobooth.domain.fr) : les QR codes de photo y mènent. Sur le Wi-Fi de la borne,
+    // le DNS du hotspot la fait pointer sur la borne ; ailleurs, la page distante (npm run remote) invite à s'y connecter.
+    publicUrl: '',
+    qrOnDone: true,        // QR code de la photo sur l'écran de fin
+    // QR code Wi-Fi affiché en permanence en bas à droite de la borne : le téléphone rejoint le hotspot en un scan.
+    // Doit reprendre le nom et le mot de passe du hotspot (TUTORIEL.md, étape 10.7). security : WPA | nopass (réseau ouvert)
+    wifi: { enabled: false, ssid: '', password: '', security: 'WPA' }
+  },
+  gallery: {
+    booth: false,          // bouton « Galerie » sur l'accueil de la borne
+    web: false,            // page /galerie pour les téléphones connectés au Wi-Fi de la borne
+    reprint: 'operator',   // réimpression depuis la galerie de la borne : off | operator (code opérateur) | guest (libre)
+    qr: true               // QR code de la photo affichée dans la visionneuse de la borne
+  }
 };
 
 export class Config extends EventEmitter {

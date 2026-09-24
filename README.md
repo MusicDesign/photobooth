@@ -1,8 +1,9 @@
 # Photo Booth
 
-Borne photo tactile pensée pour tourner **hors ligne sur un Raspberry Pi**, avec un
-**Canon EOS 2000D** piloté par gphoto2 et une imprimante photo via CUPS. Interface
-web plein écran (Chromium en mode kiosque), backend Node.js.
+Borne photo tactile pensée pour tourner **hors ligne sur un PC Linux** (tablette ou
+mini-PC tactile, Fedora ou Ubuntu), avec un **Canon EOS 2000D** piloté par gphoto2 et une
+imprimante photo via CUPS. Interface web plein écran (Chromium en kiosque ou app Electron),
+backend Node.js.
 
 État : **POC de l'étape 1**. Tout le flux invité fonctionne avec une caméra et une
 imprimante simulées, testable sur un Mac. Les pilotes gphoto2 et CUPS sont écrits
@@ -10,7 +11,7 @@ mais pas encore validés avec le matériel (étapes 2 et 3).
 
 ## Démarrer sur le Mac
 
-Guide complet pas à pas (Mac, boîtier Canon, imprimante, Raspberry Pi, jour J) :
+Guide complet pas à pas (Mac, boîtier Canon, imprimante, PC Linux de la borne, jour J) :
 [TUTORIEL.md](TUTORIEL.md).
 
 ```bash
@@ -25,10 +26,30 @@ Camera, ou webcam USB) et l'imprimante est **simulée** : les tirages sont écri
 navigateur) : ouvrez la borne en local, pas via l'adresse IP.
 
 ```bash
-npm run smoke                 # test de bout en bout, sans matériel (30 étapes, données temporaires)
+npm run smoke                 # test de bout en bout, sans matériel (51 étapes, données temporaires)
+npm run app                   # la borne en app de bureau plein écran (Electron), Ctrl+Maj+Q pour quitter
+npm run remote                # page distante de l'adresse publique → output/remote (TUTORIEL.md, étape 10.8)
 node scripts/screenshots.js   # capture tous les écrans avec Chrome headless → output/screenshots/
 BOOTH_CAMERA=mock npm start   # caméra simulée côté serveur (flux MJPEG), utile sans webcam
 ```
+
+## Sur la borne (PC Linux)
+
+```bash
+git clone https://github.com/MusicDesign/photobooth.git && cd photobooth
+npm install
+scripts/kiosk/install-linux.sh --no-sleep   # icône bureau + lancement auto en plein écran
+```
+
+Au démarrage de la session, la borne s'ouvre seule en plein écran. **Éteindre la borne**
+(admin, en bas du menu) ferme le logiciel ; l'icône **Photo Booth** du bureau le relance.
+Deux lanceurs au choix, même comportement :
+
+- **Chromium en kiosque** (défaut) : `scripts/kiosk/photobooth.sh`, serveur relancé s'il plante.
+- **App Electron** : `install-linux.sh --electron` (depuis le dépôt) ou `--exec` vers
+  l'AppImage construite par `npm run app:build` sur la borne elle-même.
+
+Détails, connexion automatique, pare-feu et hotspot : [TUTORIEL.md, étape 10](TUTORIEL.md#10-installer-sur-le-pc-de-la-borne-linux).
 
 ## Ce que fait le POC
 
@@ -37,7 +58,8 @@ Flux invité : accueil → choix du cadre (optionnel) → aperçu live **dans le
 **choix du nombre de copies** → impression → écran final avec **QR code** vers une galerie
 locale.
 
-Admin (`/admin.html`, ou 5 appuis en haut à droite de la borne) :
+Admin (`/admin.html`, ou 5 appuis en haut à droite de la borne, dans la même fenêtre ;
+« Retour à la borne » y revient en déconnectant l'admin) :
 
 - **Limites** : copies max par passage, « sans impression » autorisé ou non, reprises
   max, validation automatique, décompte, **quota total de l'événement**, alerte papier,
@@ -55,6 +77,15 @@ Admin (`/admin.html`, ou 5 appuis en haut à droite de la borne) :
   ne tourne que pendant la prise de vue : au repos l'obturateur est refermé.
 - **Stream Deck** : télécommande Elgato en USB, les touches reprennent les actions de l'écran
   en cours (pictogrammes, miniatures), pour une borne sans écran tactile.
+- **Galerie** (désactivée par défaut) : sur la borne, bouton « Galerie » à l'accueil pour parcourir
+  les photos de l'événement en cours (grille, photo par photo, balayage) ; sur les téléphones,
+  page `/galerie` sur le Wi-Fi de la borne. Réimpression depuis la borne seulement :
+  désactivée, avec le code opérateur, ou libre (quota, papier et copies max appliqués).
+- **Adresse publique** (facultative, ex. `https://photobooth.domain.fr`) : les QR codes de photo y
+  mènent ; sur le Wi-Fi de la borne le domaine pointe vers elle, ailleurs une page distante
+  (`npm run remote`) rappelle de rejoindre le Wi-Fi et affiche la photo dès que c'est fait.
+- **QR code Wi-Fi** (désactivé par défaut) : en bas à droite de tous les écrans, il connecte le
+  téléphone au hotspot de la borne en un scan (format `WIFI:` reconnu par iOS et Android).
 - **Sessions** : historique par id, réimpression, lien galerie, suppression d'une session ou réinitialisation complète (fiches, photos et compteur). **Compteurs** : tirages, papier restant.
 
 ## Templates
@@ -97,8 +128,9 @@ Le fichier `data/templates/<id>/template.json` reste lisible et modifiable à la
 
 Repères 300 dpi : 10x15 cm = 1800 × 1200 px (paysage) ou 1200 × 1800 (portrait), bande
 5x15 = 600 × 1800. Les anciens templates « PNG + emplacements » sont convertis automatiquement
-en calques au chargement. Sur le Raspberry Pi, installez `fonts-liberation` pour que les
-polices du serveur correspondent à celles du navigateur.
+en calques au chargement. Sur la borne, installez les polices Liberation (`liberation-fonts`
+sous Fedora, `fonts-liberation` sous Ubuntu) pour que les polices du serveur correspondent
+à celles du navigateur.
 
 ## Structure
 
@@ -115,7 +147,13 @@ server/
   camera/           browser · mock · gphoto2 (+ diffuseur MJPEG)
   printer/          mock · cups
   routes/           api.js (borne) · admin.js (PIN)
-  gallery.js        page /g/:id ouverte depuis le QR code
+  gallery.js        pages téléphone : /g/:id (photo, tous les QR codes) et /galerie (grille)
+electron/
+  main.js           app de bureau : serveur dans le processus + fenêtre kiosque
+scripts/kiosk/
+  photobooth.sh           lanceur Linux : serveur + Chromium plein écran
+  photobooth-electron.sh  lanceur Linux de l'app Electron du dépôt
+  install-linux.sh        icône bureau, menu, lancement automatique
 public/
   index.html booth.js booth.css    interface tactile
   admin.html admin.js admin.css    administration
@@ -135,22 +173,27 @@ API principale (JSON) : `GET /api/bootstrap`, `POST /api/session`,
 `POST /api/session/:id/shot/:index` (multipart `photo` en mode navigateur),
 `POST /api/session/:id/compose`, `POST /api/session/:id/print {copies}`,
 `POST /api/session/:id/unlock {pin}`, `GET /api/session/:id/qr`, `GET /api/live.mjpeg`.
+Galerie : `GET /api/gallery` (borne si `gallery.booth`, téléphones si `gallery.web`),
+`POST /api/gallery/:id/print {copies, pin?}` (depuis la borne uniquement, c'est-à-dire une
+requête locale, selon `gallery.reprint`).
 Admin sous `/api/admin/*` (cookie après `POST /api/admin/login`, ou en-tête `x-admin-pin`).
 Sessions côté admin : `DELETE /api/admin/sessions/:id`, `POST /api/admin/sessions/reset`.
+Arrêt : `POST /api/admin/shutdown` (refusé pendant une impression sauf `{force: true}`) ;
+le serveur se ferme puis sort avec le code 0, que le lanceur lit comme un arrêt volontaire.
 
 ## Prochaines étapes
 
 2. **Canon 2000D via gphoto2** (pilote écrit, à valider) : `brew install gphoto2` sur le
-   Mac pour un premier test, puis sur le Pi. Réglages boîtier : arrêt auto désactivé,
-   Wi-Fi désactivé, carte SD insérée, objectif en manuel à distance fixe. Sur le Pi,
+   Mac pour un premier test, puis sur la borne Linux. Réglages boîtier : arrêt auto désactivé,
+   Wi-Fi désactivé, carte SD insérée, objectif en manuel à distance fixe. Sous Linux,
    désactiver `gvfs-gphoto2-volume-monitor`. Les commandes sont modifiables dans l'admin.
 3. **Impression réelle** (pilote `cups` écrit, à valider) : imprimante à choisir
    (Selphy CP1500 en perso, DNP DS-RX1HS ou HiTi P525L en événementiel), pilote
    Gutenprint, nom de file et option `media` dans l'admin, calibrage des marges.
-4. **Kiosque Raspberry Pi** : Raspberry Pi OS 64 bits, Chromium `--kiosk` au démarrage
-   sur `http://localhost:3000`, écran tactile, veille désactivée, service systemd pour
-   le serveur, hotspot Wi-Fi + `share.baseUrl` pour le QR code.
-5. **Finitions** : profils d'événement, filtres, bouton physique GPIO, passage de la
+4. **Kiosque Linux** (lanceurs écrits, à valider sur la machine) : test sur le PC de la
+   borne (tactile, veille, connexion automatique), hotspot Wi-Fi + `share.baseUrl` pour le
+   QR code.
+5. **Finitions** : profils d'événement, filtres, bouton physique (USB), passage de la
    persistance JSON à SQLite, alignement magnétique dans l'éditeur.
 
 ## Limites connues du POC

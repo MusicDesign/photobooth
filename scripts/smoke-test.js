@@ -441,6 +441,118 @@ async function runSteps(app, camera) {
     assert.equal((await put(`/api/admin/templates/${tplA.id}`, { layers: [{ type: 'rect', x: 0, y: 0, width: 10, height: 10 }] }, ADMIN)).data.error, 'NO_PHOTO_LAYER');
   });
 
+  await step('QR code Wi-Fi : désactivé par défaut, format WIFI:, caractères spéciaux échappés', async () => {
+    assert.equal((await j('/api/wifi')).data.wifi, null);
+    await put('/api/admin/config', { share: { wifi: { enabled: true, ssid: 'Photo;Booth', password: '' } } }, ADMIN);
+    assert.equal((await j('/api/wifi')).data.wifi, null, 'WPA sans mot de passe : pas de QR');
+    await put('/api/admin/config', { share: { wifi: { password: 'a:b"c' } } }, ADMIN);
+    const w = (await j('/api/wifi')).data.wifi;
+    assert.equal(w.ssid, 'Photo;Booth');
+    assert.ok(w.dataUrl.startsWith('data:image/png'));
+    // ; : " échappés par une barre oblique inverse, comme le veut le format WIFI: des QR codes
+    const payload = 'WIFI:T:WPA;S:Photo\\;Booth;P:a\\:b\\"c;;';
+    const expected = await (await import('qrcode')).default.toDataURL(payload, { margin: 1, width: 320, color: { dark: '#000000', light: '#ffffff' } });
+    assert.equal(w.dataUrl, expected, 'contenu du QR code');
+    await put('/api/admin/config', { share: { wifi: { enabled: false, ssid: '', password: '' } } }, ADMIN);
+  });
+
+  await step('adresse publique : QR codes vers le domaine, /api/ping, page distante générée', async () => {
+    assert.equal((await j('/api/ping')).data.photobooth, true);
+    const x = (await post('/api/session', { templateId: 'classic-10x15' })).data;
+    await put('/api/admin/config', { share: { publicUrl: 'https://photobooth.example.fr/', wifi: { enabled: true, ssid: 'PhotoBooth', password: 'secret-wifi' } } }, ADMIN);
+    assert.equal((await j(`/api/session/${x.id}/qr`)).data.url, `https://photobooth.example.fr/g/${x.id}`);
+    const out = path.join(tmp, `remote-${camera}`);
+    const { execFileSync } = await import('node:child_process');
+    const { fileURLToPath } = await import('node:url');
+    execFileSync(process.execPath, [fileURLToPath(new URL('./build-remote.js', import.meta.url)), out], { env: process.env });
+    const page = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
+    assert.ok(page.includes('/api/ping') && page.includes('PhotoBooth'), 'rappel Wi-Fi et vérification de la borne');
+    assert.ok(!page.includes('secret-wifi'), 'jamais le mot de passe Wi-Fi sur la page publique');
+    for (const f of ['404.html', '_redirects', '.htaccess']) assert.ok(fs.existsSync(path.join(out, f)), f);
+    await put('/api/admin/config', { share: { publicUrl: '', wifi: { enabled: false, ssid: '', password: '' } } }, ADMIN);
+    assert.ok((await j(`/api/session/${x.id}/qr`)).data.url.endsWith(`/g/${x.id}`));
+    await post(`/api/session/${x.id}/abandon`, {});
+  });
+
+  let galleryIds;
+  await step('galerie : fermée par défaut, photos validées de l\'événement, pages téléphone', async () => {
+    assert.equal((await j('/api/gallery')).status, 403);
+    assert.equal((await fetch(`${base}/galerie`)).status, 404);
+    const make = async () => {
+      const x = (await post('/api/session', { templateId: 'classic-10x15' })).data;
+      await shot(x.id, 0);
+      await post(`/api/session/${x.id}/compose`, {});
+      return x.id;
+    };
+    const older = await make();
+    await post(`/api/session/${older}/print`, { copies: 0 });
+    const newer = await make();
+    await post(`/api/session/${newer}/keep`, {});
+    const pending = await make(); // en relecture, pas validée : jamais dans la galerie
+
+    await put('/api/admin/config', { gallery: { booth: true } }, ADMIN);
+    const gboot = (await j('/api/bootstrap')).data;
+    assert.equal(gboot.gallery.enabled, true);
+    assert.equal(gboot.gallery.qr, true, 'QR de la galerie actif par défaut');
+    assert.equal(gboot.share.qrOnDone, true, 'QR de fin actif par défaut');
+    await put('/api/admin/config', { gallery: { qr: false }, share: { qrOnDone: false } }, ADMIN);
+    const off = (await j('/api/bootstrap')).data;
+    assert.equal(off.gallery.qr, false);
+    assert.equal(off.share.qrOnDone, false);
+    await put('/api/admin/config', { gallery: { qr: true }, share: { qrOnDone: true } }, ADMIN);
+    const { items } = (await j('/api/gallery')).data;
+    const ids = items.map((it) => it.id);
+    assert.ok(ids.includes(older) && ids.includes(newer), 'photos validées absentes');
+    assert.ok(!ids.includes(pending), 'une photo non validée ne doit pas apparaître');
+    assert.ok(ids.indexOf(newer) < ids.indexOf(older), 'plus récentes d\'abord');
+    assert.ok(items.every((it) => it.url && it.thumbUrl));
+    assert.equal((await fetch(`${base}/galerie`)).status, 404, 'page téléphone fermée tant que gallery.web est faux');
+
+    await put('/api/admin/config', { gallery: { web: true } }, ADMIN);
+    const grid = await (await fetch(`${base}/galerie`)).text();
+    assert.ok(grid.includes(`/g/${older}`) && !grid.includes(pending), 'la grille ouvre la page unique /g/:id');
+    // Une seule page photo : celle des QR codes, avec la navigation quand la galerie téléphone est ouverte
+    const photo = await (await fetch(`${base}/g/${older}`)).text();
+    assert.ok(photo.includes('Télécharger la photo') && photo.includes('href="/galerie"'));
+    assert.ok(photo.includes(`href="/g/${newer}"`), 'flèche vers la photo voisine');
+    assert.ok(!(await (await fetch(`${base}/g/${pending}`)).text()).includes('href="/galerie"'), 'photo hors galerie : pas de navigation');
+    assert.equal((await fetch(`${base}/galerie/${older}`, { redirect: 'manual' })).headers.get('location'), `/g/${older}`);
+    await post(`/api/session/${pending}/abandon`, {});
+    galleryIds = { older, newer };
+  });
+
+  await step('galerie : réimpression off / code opérateur / libre, limites appliquées', async () => {
+    const { older, newer } = galleryIds;
+    const reprint = (id, body) => post(`/api/gallery/${id}/print`, body);
+    await put('/api/admin/config', { gallery: { reprint: 'off' } }, ADMIN);
+    assert.equal((await reprint(older, { copies: 1 })).data.error, 'REPRINT_DISABLED');
+
+    await put('/api/admin/config', { gallery: { reprint: 'operator' }, limits: { eventQuota: 0 } }, ADMIN);
+    assert.equal((await reprint(older, { copies: 1 })).data.error, 'BAD_PIN');
+    const pin = app.config.get().limits.operatorPin;
+    const before = (await j('/api/bootstrap')).data.counters.printed;
+    const ok = await reprint(older, { copies: 3, pin }); // au-delà du max invité (2), permis à l'opérateur
+    assert.equal(ok.status, 200, JSON.stringify(ok.data));
+    assert.equal((await reprint(older, { copies: 1, pin })).data.error, 'SESSION_PRINTING');
+    await waitStatus(older, 'done');
+    assert.equal((await j('/api/bootstrap')).data.counters.printed, before + 3);
+
+    await put('/api/admin/config', { gallery: { reprint: 'guest' } }, ADMIN);
+    assert.equal((await reprint(newer, { copies: 3 })).data.error, 'COPIES_INVALID');
+    assert.equal((await reprint(newer, { copies: 1 })).status, 200);
+    await waitStatus(newer, 'done');
+    await put('/api/admin/config', { limits: { eventQuota: (await j('/api/bootstrap')).data.counters.printed } }, ADMIN);
+    assert.equal((await reprint(newer, { copies: 1 })).data.error, 'QUOTA_REACHED');
+    await put('/api/admin/config', { limits: { eventQuota: 0 }, gallery: { booth: false, web: false, reprint: 'operator' } }, ADMIN);
+    assert.equal((await reprint(newer, { copies: 1 })).status, 403, 'galerie fermée : plus de réimpression');
+  });
+
+  await step('arrêt : indisponible sans lanceur (409)', async () => {
+    const r = await post('/api/admin/shutdown', {}, ADMIN);
+    assert.equal(r.status, 409);
+    assert.equal(r.data.error, 'SHUTDOWN_UNAVAILABLE');
+  });
+
   await step('templates : suppression', async () => {
     for (const id of [tplA.id, tplB.id]) assert.equal((await j(`/api/admin/templates/${id}`, { method: 'DELETE', headers: ADMIN })).status, 200);
     assert.ok(!fs.existsSync(path.join(app.templates.dir, tplA.id)));
@@ -469,9 +581,30 @@ async function runSteps(app, camera) {
 
 }
 
+/** « Éteindre la borne » : code admin exigé, serveur fermé, puis le lanceur est prévenu. */
+async function runShutdown() {
+  console.log('\nArrêt depuis l\'admin');
+  let notify;
+  const notified = new Promise((r) => { notify = r; });
+  const app = await createApp({ port: 0, onShutdown: () => notify() });
+  await new Promise((r) => app.server.listen(0, r));
+  const base = `http://127.0.0.1:${app.server.address().port}`;
+  const shutdown = (headers = {}) => fetch(`${base}/api/admin/shutdown`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: '{}' });
+  await step('arrêt depuis l\'admin : code exigé, serveur fermé, lanceur prévenu', async () => {
+    assert.equal((await shutdown()).status, 401);
+    const ADMIN = { 'x-admin-pin': app.config.get().admin.pin };
+    const state = await (await fetch(`${base}/api/admin/state`, { headers: ADMIN })).json();
+    assert.equal(state.canShutdown, true);
+    assert.equal((await shutdown(ADMIN)).status, 200);
+    await notified;
+    await assert.rejects(fetch(`${base}/api/bootstrap`), 'le serveur devrait être fermé');
+  });
+}
+
 try {
   await run('mock');
   await run('browser');
+  await runShutdown();
   console.log(`\n${passed} étapes OK. Données temporaires : ${tmp}`);
 } catch {
   console.error('\nÉchec du test.');

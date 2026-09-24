@@ -105,7 +105,7 @@ export class Gphoto2Camera extends BaseCamera {
       const { stdout } = await execFileP('gphoto2', ['--version']);
       console.log(`[gphoto2] ${stdout.split('\n')[0]}`);
     } catch {
-      throw new Error('gphoto2 introuvable. Installer : sudo apt install gphoto2 (Pi) ou brew install gphoto2 (Mac).');
+      throw new Error('gphoto2 introuvable. Installer : sudo dnf install gphoto2 (Fedora), sudo apt install gphoto2 (Ubuntu) ou brew install gphoto2 (Mac).');
     }
     // Un live view orphelin (serveur tué brutalement) garderait l'obturateur ouvert et l'appareil réservé.
     await this.killOrphans();

@@ -21,6 +21,7 @@ const state = {
   timers: {},
   copies: 1,
   maxCopies: 1,
+  gallery: { items: [], index: 0, copies: 1, printingId: null, qr: new Map() },
   pendingConfigReload: false
 };
 
@@ -117,6 +118,9 @@ function applyBoot() {
   t('#btnStart', 'start'); t('#txtReview', 'review'); t('#btnRetake', 'retake'); t('#btnKeep', 'keep');
   t('#txtCopies', 'copies'); t('#btnPrint', 'print'); t('#btnNoPrint', 'noPrint'); t('#txtPrinting', 'printing');
   t('#txtThanks', 'thanks'); t('#btnFinish', 'finish');
+  t('#btnGallery', 'gallery'); t('#txtGalleryTitle', 'galleryTitle'); t('#txtGalleryEmpty', 'galleryEmpty'); t('#btnReprint', 'reprint'); t('#txtGalleryQr', 'galleryQr'); t('#txtWifiQr', 'wifiQr');
+  renderWifiQr();
+  $('#btnGallery').classList.toggle('hidden', !state.boot.gallery?.enabled);
 }
 
 /**
@@ -130,6 +134,17 @@ window.addEventListener('pointerdown', (e) => {
   state.touch = true;
   showWelcome();
 }, true);
+
+/** QR code Wi-Fi en bas à droite, sur tous les écrans (body.wifi-on : la pastille papier remonte au-dessus). */
+async function renderWifiQr() {
+  let wifi = null;
+  try { wifi = (await api('/api/wifi')).wifi; } catch { /* serveur ancien ou injoignable : pas de QR */ }
+  document.body.classList.toggle('wifi-on', !!wifi);
+  $('#wifiQr').classList.toggle('hidden', !wifi);
+  if (!wifi) return;
+  $('#wifiQrImg').src = wifi.dataUrl;
+  $('#wifiSsid').textContent = wifi.ssid;
+}
 
 /** Pastille discrète pour l'opérateur, en bas à droite, quand le papier est bas (seuil de l'admin) ou épuisé. */
 function renderPaperBadge() {
@@ -173,6 +188,7 @@ async function reloadBoot() {
 function showScreen(name) {
   for (const s of $$('.screen')) s.classList.toggle('active', s.id === `screen-${name}`);
   state.screen = name;
+  document.body.dataset.screen = name; // styles propres à un écran (ex. bandeau au-dessus de la flèche de l'accueil)
   clearTimer('idleReturn');
   clearTimer('reviewTimeout');
   clearTimer('autoNext');
@@ -189,6 +205,7 @@ function showScreen(name) {
   if (name === 'idle' && state.pendingConfigReload) reloadBoot().catch(() => {});
   // Sécurité : un écran laissé sans interaction revient à l'accueil.
   if (['template', 'copies'].includes(name)) setTimer('idleReturn', goIdle, 120000);
+  if (GALLERY_SCREENS.includes(name)) galleryActivity();
 }
 
 function goIdle() {
@@ -315,7 +332,7 @@ function fitCanvas() {
   const cssH = Math.floor(t.height * cssScale);
   // Arrondi CSS du canvas (18 px) ramené en unités du template : le liseré et le flux suivent la même courbe.
   state.frameRadius = 18 / cssScale;
-  // Résolution interne plafonnée : confortable pour un Raspberry Pi.
+  // Résolution interne plafonnée : confortable pour un PC modeste.
   const internalW = Math.min(Math.round(cssW * Math.min(window.devicePixelRatio || 1, 2)), 1400);
   state.previewScale = internalW / t.width;
   c.width = internalW;
@@ -688,6 +705,13 @@ function pollPrint() {
 
 async function showDone() {
   clearTimer('printPoll');
+  // QR code désactivé dans l'admin : rien à scanner, retour direct à l'accueil avec le remerciement en bandeau.
+  if (state.boot.share?.qrOnDone === false) {
+    goIdle();
+    toast(state.boot.texts.thanksNoQr || '', 5000);
+    return;
+  }
+  $('#txtThanks').textContent = state.boot.texts.thanks || '';
   try {
     const q = await api(`/api/session/${state.session.id}/qr`);
     $('#qrImg').src = q.dataUrl;
@@ -753,14 +777,141 @@ async function adminAccess() {
   }
 }
 
+// ---------- Galerie : photos de l'événement, navigation, réimpression ----------
+
+const GALLERY_SCREENS = ['gallery', 'photo'];
+const GALLERY_IDLE_MS = 60000;
+
+/** Un geste dans la galerie repousse le retour automatique à l'accueil. */
+function galleryActivity() {
+  if (GALLERY_SCREENS.includes(state.screen)) setTimer('idleReturn', goIdle, GALLERY_IDLE_MS);
+}
+
+async function openGallery() {
+  try {
+    state.gallery.items = (await api('/api/gallery')).items;
+  } catch (e) {
+    toast(e.message);
+    return;
+  }
+  renderGalleryGrid();
+  showScreen('gallery');
+  $('#galleryGrid').scrollTop = 0;
+}
+
+function renderGalleryGrid() {
+  const { items } = state.gallery;
+  const grid = $('#galleryGrid');
+  grid.innerHTML = '';
+  $('#txtGalleryEmpty').classList.toggle('hidden', items.length > 0);
+  items.forEach((it, i) => {
+    const b = document.createElement('button');
+    b.className = 'gallery-thumb';
+    b.innerHTML = `<img src="${it.thumbUrl}" alt="" loading="lazy" decoding="async">`;
+    b.addEventListener('click', () => showPhoto(i));
+    grid.appendChild(b);
+  });
+}
+
+function showPhoto(index) {
+  const { items } = state.gallery;
+  if (!items.length) { showScreen('gallery'); return; }
+  state.gallery.index = Math.max(0, Math.min(items.length - 1, index));
+  state.gallery.copies = 1;
+  const it = items[state.gallery.index];
+  $('#photoImg').src = it.url;
+  $('#photoCount').textContent = `${state.gallery.index + 1} / ${items.length}`;
+  $('#btnPhotoPrev').disabled = state.gallery.index === 0;
+  $('#btnPhotoNext').disabled = state.gallery.index === items.length - 1;
+  renderPhotoQr(it.id);
+  renderReprint();
+  if (state.screen !== 'photo') showScreen('photo');
+  else galleryActivity();
+}
+
+/** QR code vers la page de la photo (/g/:id), pour la récupérer sur un téléphone. Mis en cache par photo. */
+async function renderPhotoQr(id) {
+  $('.photo-qr').classList.toggle('hidden', state.boot.gallery?.qr === false);
+  if (state.boot.gallery?.qr === false) return;
+  const img = $('#photoQr');
+  const cached = state.gallery.qr.get(id);
+  img.classList.toggle('hidden', !cached);
+  if (cached) { img.src = cached; return; }
+  try {
+    const { dataUrl } = await api(`/api/session/${id}/qr`);
+    state.gallery.qr.set(id, dataUrl);
+    if (state.gallery.items[state.gallery.index]?.id !== id) return; // l'invité est déjà passé à une autre photo
+    img.src = dataUrl;
+    img.classList.remove('hidden');
+  } catch { /* sans QR, la photo reste consultable */ }
+}
+
+/** Réimpression selon le réglage de l'admin ; les limites sont rappelées avant l'appui, le serveur tranche. */
+function renderReprint() {
+  const { boot } = state;
+  const mode = boot.gallery?.reprint;
+  const box = $('#photoPrint');
+  box.classList.toggle('hidden', mode !== 'operator' && mode !== 'guest');
+  if (box.classList.contains('hidden')) return;
+  const it = state.gallery.items[state.gallery.index];
+  const c = boot.counters;
+  const max = mode === 'operator' ? boot.limits.operatorMaxCopies : boot.limits.maxCopiesPerSession;
+  state.gallery.copies = Math.max(1, Math.min(max, state.gallery.copies));
+  let blocked = '';
+  if (boot.printer.available === false) blocked = boot.texts.printerUnavailable;
+  else if (c?.paperEmpty) blocked = 'Plus de papier pour le moment';
+  else if (mode === 'guest' && c?.quotaReached) blocked = 'Les impressions sont terminées pour ce soir';
+  else if (it.printing || state.gallery.printingId === it.id) blocked = 'Impression en cours…';
+  $('#photoCopies').textContent = state.gallery.copies;
+  $('#btnPhotoMinus').disabled = !!blocked || state.gallery.copies <= 1;
+  $('#btnPhotoPlus').disabled = !!blocked || state.gallery.copies >= max;
+  $('#btnReprint').disabled = !!blocked;
+  $('#reprintHint').textContent = blocked || (mode === 'operator' ? 'Code opérateur demandé' : '');
+}
+
+async function galleryReprint() {
+  const it = state.gallery.items[state.gallery.index];
+  if (!it) return;
+  let pin;
+  if (state.boot.gallery?.reprint === 'operator') {
+    pin = await askPin('Code opérateur');
+    if (pin === null) return;
+  }
+  const copies = state.gallery.copies;
+  try {
+    await api(`/api/gallery/${it.id}/print`, { method: 'POST', body: { copies, pin } });
+    state.gallery.printingId = it.id;
+    toast(copies > 1 ? `${copies} tirages lancés` : 'Tirage lancé');
+  } catch (e) {
+    toast(e.message);
+  }
+  renderReprint();
+}
+
+/** Balayage horizontal sur la photo : précédente / suivante. */
+function bindPhotoSwipe() {
+  let start = null;
+  const wrap = $('#photoWrap');
+  wrap.addEventListener('pointerdown', (e) => { start = { x: e.clientX, y: e.clientY }; });
+  wrap.addEventListener('pointerup', (e) => {
+    if (!start) return;
+    const dx = e.clientX - start.x, dy = e.clientY - start.y;
+    start = null;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) showPhoto(state.gallery.index + (dx < 0 ? 1 : -1));
+  });
+  wrap.addEventListener('pointercancel', () => { start = null; });
+}
+
 // ---------- WebSocket : config, compteurs, impression ----------
 
 // ---------- Stream Deck : les boutons de l'écran en cours, reproduits sur les touches ----------
 // La borne décrit ses actions visibles au serveur (qui les dessine), et exécute les appuis reçus
 // comme des clics. Même chemin que le tactile : aucune logique propre au Stream Deck.
 
+const CHOICE_CLASSES = ['template-card', 'retake-thumb', 'gallery-thumb'];
+
 function deckKind(el) {
-  if (el.classList.contains('template-card') || el.classList.contains('retake-thumb')) return 'choice';
+  if (CHOICE_CLASSES.some((c) => el.classList.contains(c))) return 'choice';
   if (el.classList.contains('btn-primary') || el.classList.contains('key-ok')) return 'primary';
   if (el.classList.contains('btn-secondary')) return 'secondary';
   return 'ghost';
@@ -769,7 +920,9 @@ function deckKind(el) {
 // Pictogramme par bouton, dessiné par le serveur sur la touche.
 const DECK_ICONS = {
   btnStart: 'camera', btnCancel: 'x', pinCancel: 'x', btnTemplateBack: 'back', btnKeep: 'check', btnRetake: 'retake',
-  btnPrint: 'printer', btnNoPrint: 'qr', btnFinish: 'home', btnMinus: 'minus', btnPlus: 'plus'
+  btnPrint: 'printer', btnNoPrint: 'qr', btnFinish: 'home', btnMinus: 'minus', btnPlus: 'plus',
+  btnGalleryBack: 'home', btnPhotoBack: 'x', btnPhotoPrev: 'back', btnPhotoNext: 'next', btnReprint: 'printer',
+  btnPhotoMinus: 'minus', btnPhotoPlus: 'plus'
 };
 
 /** Miniature (data URL JPEG, 120 px) d'un canvas ou d'une image de la page, mise en cache sur l'élément. */
@@ -838,9 +991,9 @@ function deckItems() {
     items.push({ id: 'countdown', label: cd.textContent, kind: 'display', display: true, style: { bg: page, fg: solid(getComputedStyle(document.documentElement).getPropertyValue('--primary').trim(), page), border: null } });
   }
   let n = 0;
-  for (const el of root.querySelectorAll('button, #copiesValue')) {
+  for (const el of root.querySelectorAll('button, #copiesValue, #photoCopies')) {
     if (!visible(el) || el.classList.contains('link')) continue;
-    if (el.id === 'copiesValue') {
+    if (el.id === 'copiesValue' || el.id === 'photoCopies') {
       const st = deckStyle(el);
       items.push({ id: 'copies', label: el.textContent, kind: 'display', display: true, style: { bg: st.page, fg: st.fg, border: null } });
       continue;
@@ -855,7 +1008,7 @@ function deckItems() {
     if (!el.dataset.deck) el.dataset.deck = el.id || `deck-${Date.now().toString(36)}-${n++}`;
     const glyph = { minus: '−', plus: '+' }[el.dataset.icon]; // boutons dont l'icône est dessinée en CSS
     const label = glyph || (el.querySelector('.template-name, span')?.textContent || el.textContent || el.getAttribute('aria-label') || '').trim();
-    const image = el.classList.contains('template-card') || el.classList.contains('retake-thumb') ? deckThumb(el) : null;
+    const image = CHOICE_CLASSES.some((c) => el.classList.contains(c)) ? deckThumb(el) : null;
     const icon = DECK_ICONS[el.id] || { del: 'delete', ok: 'check' }[el.dataset.k] || null; // pavé du code : ⌫ et OK en pictogrammes
     items.push({ id: el.dataset.deck, label: label || '•', kind: deckKind(el), disabled: el.disabled, icon, image, style: deckStyle(el) });
   }
@@ -904,13 +1057,17 @@ function onKeyDown(e) {
       e.preventDefault();
       return;
     }
-    const choices = [...root.querySelectorAll('.template-card, .retake-thumb')].filter(visible);
+    const choices = [...root.querySelectorAll('.template-card, .retake-thumb, .gallery-thumb')].filter(visible);
     if (e.key === ' ' || e.key === 'Enter') {
       if (root.id === 'screen-idle') { onIdleTap(); done = true; }
       else if (choices.includes(document.activeElement)) done = act(document.activeElement);
       else done = act([...root.querySelectorAll('.btn-primary')].find(visible));
     } else if (e.key === 'Escape') {
-      done = act([...root.querySelectorAll('#btnCancel, #btnTemplateBack')].find(visible));
+      done = act([...root.querySelectorAll('#btnCancel, #btnTemplateBack, #btnGalleryBack, #btnPhotoBack')].find(visible));
+    } else if (root.id === 'screen-photo' && ['ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      done = act(e.key === 'ArrowLeft' ? $('#btnPhotoPrev') : $('#btnPhotoNext')); // ← → : photo, ↑ ↓ : copies
+    } else if (root.id === 'screen-photo' && (KEY_MINUS.includes(e.key) || KEY_PLUS.includes(e.key))) {
+      done = act(KEY_PLUS.includes(e.key) ? $('#btnPhotoPlus') : $('#btnPhotoMinus'));
     } else if (KEY_MINUS.includes(e.key) || KEY_PLUS.includes(e.key)) {
       const plus = KEY_PLUS.includes(e.key);
       if (choices.length) {
@@ -952,8 +1109,20 @@ function connectWs() {
     } else if (msg.type === 'counters') {
       if (state.boot) state.boot.counters = msg.counters;
       renderPaperBadge();
+      if (state.screen === 'photo') renderReprint();
     } else if (msg.type === 'live') {
       state.liveStreaming = !!msg.streaming; // ouvre ou referme l'obturateur dessiné sur l'aperçu
+    } else if (msg.type === 'sessions' && GALLERY_SCREENS.includes(state.screen)) {
+      // L'admin a supprimé des photos : la galerie se recharge (retour à la grille).
+      openGallery();
+    } else if (msg.type === 'print' && msg.sessionId === state.gallery.printingId) {
+      if (msg.status === 'error') toast(msg.message || 'Erreur imprimante', 5000);
+      if (msg.status === 'done' || msg.status === 'error') {
+        state.gallery.printingId = null;
+        const it = state.gallery.items.find((x) => x.id === msg.sessionId);
+        if (it) it.printing = false;
+        if (state.screen === 'photo') renderReprint();
+      }
     } else if (msg.type === 'sessions' && state.session) {
       // L'admin a supprimé ou réinitialisé des sessions : si la nôtre a disparu, retour à l'accueil.
       api(`/api/session/${state.session.id}`).catch((e) => {
@@ -986,6 +1155,16 @@ function bind() {
   $('#btnNoPrint').addEventListener('click', () => doPrint(0));
   $('#btnOperator').addEventListener('click', operatorUnlock);
   $('#btnFinish').addEventListener('click', goIdle);
+  $('#btnGallery').addEventListener('click', (e) => { e.stopPropagation(); openGallery(); }); // pas de départ de session
+  $('#btnGalleryBack').addEventListener('click', goIdle);
+  $('#btnPhotoBack').addEventListener('click', () => showScreen('gallery'));
+  $('#btnPhotoPrev').addEventListener('click', () => showPhoto(state.gallery.index - 1));
+  $('#btnPhotoNext').addEventListener('click', () => showPhoto(state.gallery.index + 1));
+  $('#btnPhotoMinus').addEventListener('click', () => { state.gallery.copies -= 1; renderReprint(); });
+  $('#btnPhotoPlus').addEventListener('click', () => { state.gallery.copies += 1; renderReprint(); });
+  $('#btnReprint').addEventListener('click', galleryReprint);
+  bindPhotoSwipe();
+  for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, galleryActivity, true);
 
   // Zone invisible en haut à droite : 5 appuis en 3 s ouvrent l'admin.
   let taps = [];

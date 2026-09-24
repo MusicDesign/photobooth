@@ -1,8 +1,10 @@
 {
   "name": "photo-booth",
+  "productName": "Photo Booth",
   "version": "0.1.0",
-  "description": "Photo booth tactile pour Raspberry Pi : Canon EOS via gphoto2, impression CUPS, templates et thèmes personnalisables.",
+  "description": "Photo booth tactile pour PC Linux : Canon EOS via gphoto2, impression CUPS, templates et thèmes personnalisables.",
   "type": "module",
+  "main": "electron/main.js",
   "private": true,
   "engines": {
     "node": ">=20"
@@ -11,7 +13,10 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "demo-assets": "node scripts/make-demo-assets.js",
-    "smoke": "node scripts/smoke-test.js"
+    "smoke": "node scripts/smoke-test.js",
+    "remote": "node scripts/build-remote.js",
+    "app": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "app:build": "electron-builder"
   },
   "dependencies": {
     "@elgato-stream-deck/node": "^7.7.0",
@@ -19,7 +24,63 @@
     "express": "^5.1.0",
     "multer": "^2.0.1",
     "qrcode": "^1.5.4",
-    "sharp": "^0.34.3",
+    "sharp": "^0.35.4",
     "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "local.photobooth.kiosk",
+    "productName": "Photo Booth",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**",
+      "server/**",
+      "public/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "data",
+        "to": "data-seed",
+        "filter": [
+          "templates/default/**",
+          "themes/**",
+          "samples/**",
+          "uploads/.gitkeep"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      "**/node_modules/sharp/**",
+      "**/node_modules/@img/**",
+      "**/node_modules/node-hid/**",
+      "**/node_modules/@julusian/**",
+      "**/node_modules/@elgato-stream-deck/**"
+    ],
+    "npmRebuild": false,
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility",
+      "icon": "build/icon.png"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "build/icon.png"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png"
+    }
   }
 }

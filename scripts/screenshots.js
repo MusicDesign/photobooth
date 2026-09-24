@@ -26,7 +26,7 @@ const { createApp } = await import('../server/app.js');
 const app = await createApp({ port: 0 });
 await new Promise((r) => app.server.listen(0, r));
 const base = `http://127.0.0.1:${app.server.address().port}`;
-app.config.update({ printer: { mockDelayMs: 1500 }, limits: { countdownSec: 1 } });
+app.config.update({ printer: { mockDelayMs: 1500 }, limits: { countdownSec: 1 }, share: { wifi: { enabled: true, ssid: 'PhotoBooth', password: 'photos2026' } } }); // QR Wi-Fi visible sur toutes les captures
 
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'booth-chrome-'));
@@ -159,12 +159,92 @@ try {
     await shot(name);
   }
 
+  // Galerie de l'événement : quelques passages de plus, puis réglages, borne et téléphone
+  app.config.update({ gallery: { booth: true, web: true, reprint: 'operator' } });
+  await evaluate(`(async () => {
+    for (const templateId of ['classic-10x15', 'strip-3', 'classic-10x15', 'classic-10x15', 'strip-3']) {
+      const post = (u, b = {}) => fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then((r) => r.json());
+      const x = await post('/api/session', { templateId });
+      const n = templateId === 'strip-3' ? 3 : 1;
+      for (let i = 0; i < n; i++) await post('/api/session/' + x.id + '/shot/' + i);
+      await post('/api/session/' + x.id + '/compose');
+      await post('/api/session/' + x.id + '/print', { copies: 0 });
+    }
+    return true;
+  })()`);
+  await evaluate(`location.hash = "security", true`);
+  await sleep(600);
+  await evaluate(`document.querySelector('#formGallery').scrollIntoView(), true`);
+  await sleep(200);
+  await shot('20-admin-galerie');
+
+  await page('Page.navigate', { url: `${base}/` });
+  await waitFor(`document.querySelector('#screen-idle.active') && !document.querySelector('#btnGallery').classList.contains('hidden')`);
+  await sleep(800);
+  await shot('21-accueil-bouton-galerie');
+  await click('#btnGallery');
+  await waitFor(`document.querySelector('#screen-gallery.active') && document.querySelectorAll('.gallery-thumb img').length >= 6 && [...document.querySelectorAll('.gallery-thumb img')].every((i) => i.complete)`);
+  await sleep(600);
+  await shot('22-galerie-borne');
+  for (const [w, h, cols] of [[1280, 900, 3], [900, 1000, 2], [500, 900, 1]]) { // la grille passe à 3, 2 puis 1 colonne
+    await page('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+    await sleep(400);
+    await shot(`22-galerie-borne-${cols}-colonne${cols > 1 ? 's' : ''}`);
+  }
+  await page('Emulation.setDeviceMetricsOverride', { width: 1920, height: 1200, deviceScaleFactor: 1, mobile: false });
+  await sleep(300);
+  await evaluate(`document.querySelectorAll('.gallery-thumb')[1].click(), true`);
+  await waitFor(`document.querySelector('#screen-photo.active') && document.querySelector('#photoImg').complete`);
+  await sleep(600);
+  await shot('23-galerie-borne-photo');
+  for (const [w, h] of [[1366, 768], [800, 1280]]) { // petit écran paysage, écran portrait : rien sous le QR Wi-Fi
+    await page('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+    await sleep(400);
+    await shot(`23-galerie-borne-photo-${w}x${h}`);
+  }
+  await page('Emulation.setDeviceMetricsOverride', { width: 1920, height: 1200, deviceScaleFactor: 1, mobile: false });
+  await sleep(300);
+  app.config.update({ gallery: { qr: false } }); // variante sans QR code (réglage admin)
+  await evaluate(`fetch('/api/bootstrap').then((r) => r.json()).then(() => true)`);
+  await evaluate(`document.querySelector('#btnPhotoBack').click(), true`);
+  await sleep(300);
+  await page('Page.reload');
+  await waitFor(`document.querySelector('#screen-idle.active') && !document.querySelector('#btnGallery').classList.contains('hidden')`);
+  await click('#btnGallery');
+  await waitFor(`document.querySelectorAll('.gallery-thumb').length >= 6`);
+  await evaluate(`document.querySelectorAll('.gallery-thumb')[1].click(), true`);
+  await waitFor(`document.querySelector('#screen-photo.active') && document.querySelector('#photoImg').complete`);
+  await sleep(600);
+  await shot('23-galerie-borne-photo-sans-qr');
+  app.config.update({ gallery: { qr: true } });
+
+  // QR code de fin désactivé : retour direct à l'accueil après l'impression, remerciement en bandeau
+  app.config.update({ share: { qrOnDone: false }, gallery: { booth: false } });
+  await page('Page.navigate', { url: `${base}/` });
+  await waitFor(`document.querySelector('#screen-idle.active') && document.querySelector('#txtWelcome').textContent.length > 0`);
+  await click('#screen-idle');
+  await waitFor(`document.querySelector('#screen-template.active') && document.querySelectorAll('.template-card').length === 2`);
+  await evaluate(`document.querySelectorAll('.template-card')[0].click(), true`); // 10x15, une photo
+  await waitFor(`document.querySelector('#screen-capture.active') && !document.querySelector('#btnStart').classList.contains('hidden')`);
+  await click('#btnStart');
+  await waitFor(`document.querySelector('#screen-review.active')`, 40000);
+  await click('#btnKeep');
+  await waitFor(`document.querySelector('#screen-copies.active')`);
+  await click('#btnPrint');
+  await waitFor(`document.querySelector('#screen-idle.active') && !document.querySelector('#toast').classList.contains('hidden')`, 20000);
+  await sleep(300);
+  await shot('10b-fin-sans-qr-retour-accueil');
+  app.config.update({ share: { qrOnDone: true } });
+
   // Galerie invité
   const sid = await evaluate(`fetch('/api/admin/state').then(r => r.json()).then(s => s.sessions[0].id)`);
   await page('Emulation.setDeviceMetricsOverride', { width: 430, height: 932, deviceScaleFactor: 2, mobile: true });
   await page('Page.navigate', { url: `${base}/g/${sid}` });
   await sleep(1000);
-  await shot('19-galerie-invite-mobile');
+  await shot('19-photo-invite-mobile'); // page unique des QR codes, navigation incluse quand la galerie téléphone est ouverte
+  await page('Page.navigate', { url: `${base}/galerie` });
+  await sleep(1000);
+  await shot('24-galerie-evenement-mobile');
   console.log(`\nCaptures dans ${OUT}`);
 } catch (e) {
   console.error(`\nÉchec : ${e.message}`);

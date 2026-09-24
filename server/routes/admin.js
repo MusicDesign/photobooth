@@ -10,10 +10,10 @@ import { CAMERA_DRIVERS, CAMERA_FALLBACKS } from '../camera/index.js';
 import { PRINTER_DRIVERS, PRINTER_FALLBACKS } from '../printer/index.js';
 import { FORMATS, FONTS, DEFAULT_FORMAT } from '../templates.js';
 
-const EDITABLE_SECTIONS = ['booth', 'camera', 'printer', 'limits', 'templates', 'theme', 'texts', 'admin', 'share'];
+const EDITABLE_SECTIONS = ['booth', 'camera', 'printer', 'limits', 'templates', 'theme', 'texts', 'admin', 'share', 'gallery'];
 const IMAGE_EXT = { 'image/png': '.png', 'image/svg+xml': '.svg', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
 
-export function adminRouter({ booth, config, store, templates, themes, devices, deck }) {
+export function adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown }) {
   const r = express.Router();
   const tokens = new Set();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024 } });
@@ -58,6 +58,13 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     next();
   });
 
+  r.post('/shutdown', (req, res) => {
+    if (!shutdown) throw new HttpError(409, 'SHUTDOWN_UNAVAILABLE', 'Arrêt non disponible dans ce mode de lancement');
+    if (booth.printing() && !req.body?.force) throw new HttpError(409, 'PRINTING', 'Une impression est en cours');
+    res.json({ ok: true });
+    shutdown();
+  });
+
   r.get('/state', async (req, res) => {
     const samples = fs.existsSync(SAMPLES_DIR)
       ? fs.readdirSync(SAMPLES_DIR).filter((f) => /\.jpe?g$/i.test(f)).sort().map((f) => `/samples/${f}`)
@@ -78,6 +85,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       printer: await booth.printerStatus(),
       devices: devices.status(),
       streamDeck: deck.status(),
+      canShutdown: !!shutdown,
       events: store.listEvents().map((ev) => booth.eventView(ev)),
       activeEventId: store.data.activeEventId,
       sessions: store.sessionsOfEvent(store.data.activeEventId).map((s) => booth.view(s)),
@@ -225,7 +233,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     const base = `${event.date} ${event.name}`.replace(/[\\/:*?"<>|]+/g, '-').trim();
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="export.zip"; filename*=UTF-8''${encodeURIComponent(`${base} - ${label}.zip`)}`);
-    // Les JPEG sont déjà compressés : stockés tels quels, l'archive part tout de suite et le Pi / mini PC ne peine pas
+    // Les JPEG sont déjà compressés : stockés tels quels, l'archive part tout de suite et la borne ne peine pas
     const zip = archiver('zip', { store: true });
     zip.on('warning', (e) => console.warn(`[export] ${e.message}`));
     zip.on('error', (e) => { console.warn(`[export] ${e.message}`); res.destroy(e); });

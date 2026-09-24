@@ -11,15 +11,17 @@ import { Devices } from './devices.js';
 import { StreamDeckRemote } from './streamdeck.js';
 import { apiRouter } from './routes/api.js';
 import { adminRouter } from './routes/admin.js';
-import { galleryHtml } from './gallery.js';
+import { galleryHtml, eventGalleryHtml } from './gallery.js';
 import { HttpError } from './util.js';
 import { OUTPUT_DIR, PUBLIC_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, UPLOADS_DIR, SAMPLES_DIR } from './paths.js';
 
 /**
  * Assemble l'application. Les variables d'environnement BOOTH_CAMERA et
  * BOOTH_PRINTER forcent un pilote sans toucher au fichier de config (tests).
+ * onShutdown : appelé quand l'admin éteint la borne, après fermeture du serveur
+ * (le lanceur quitte alors le processus, l'app Electron ferme sa fenêtre).
  */
-export async function createApp({ port = Number(process.env.PORT) || 3000 } = {}) {
+export async function createApp({ port = Number(process.env.PORT) || 3000, onShutdown = null } = {}) {
   for (const d of [OUTPUT_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, UPLOADS_DIR]) fs.mkdirSync(d, { recursive: true });
 
   const config = new Config();
@@ -80,14 +82,38 @@ export async function createApp({ port = Number(process.env.PORT) || 3000 } = {}
   app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '1h' }));
   app.use('/samples', express.static(SAMPLES_DIR, { maxAge: '1h' }));
 
-  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck }));
+  // Arrêt demandé depuis l'admin : la réponse part d'abord, la fermeture suit.
+  let stopping = false;
+  const shutdown = onShutdown && (() => {
+    if (stopping) return;
+    stopping = true;
+    console.log('[booth] arrêt demandé depuis l\'admin');
+    setTimeout(async () => {
+      try { await close(); } catch (e) { console.error(`[booth] arrêt : ${e.message}`); }
+      await onShutdown();
+    }, 300);
+  });
+
+  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown }));
   app.use('/api', apiRouter({ booth }));
 
+  // Page d'une photo (tous les QR codes y mènent). Galerie téléphone ouverte : navigation entre les photos.
   app.get('/g/:id', (req, res) => {
     const cfg = config.get();
     const session = booth.view(booth.load(req.params.id));
-    res.type('html').send(galleryHtml({ session, theme: themes.resolve(cfg), boothName: cfg.booth.name, texts: cfg.texts }));
+    const items = cfg.gallery.web ? booth.gallery() : [];
+    const index = items.findIndex((it) => it.id === session.id);
+    const nav = index < 0 ? null : { index, total: items.length, prev: items[index - 1], next: items[index + 1] };
+    res.type('html').send(galleryHtml({ session, theme: themes.resolve(cfg), boothName: cfg.booth.name, texts: cfg.texts, nav }));
   });
+
+  // Grille de l'événement pour les téléphones (réglage gallery.web) ; chaque photo s'ouvre sur /g/:id.
+  app.get('/galerie', (req, res) => {
+    const cfg = config.get();
+    res.status(cfg.gallery.web ? 200 : 404).type('html')
+      .send(eventGalleryHtml({ theme: themes.resolve(cfg), boothName: cfg.booth.name, texts: cfg.texts, items: cfg.gallery.web ? booth.gallery() : null }));
+  });
+  app.get('/galerie/:id', (req, res) => res.redirect(301, `/g/${encodeURIComponent(req.params.id)}`)); // anciens liens
 
   app.get('/admin', (req, res) => res.redirect('/admin.html'));
 

@@ -1,6 +1,6 @@
 import express from 'express';
 import multer from 'multer';
-import { HttpError } from '../util.js';
+import { HttpError, isLocalRequest } from '../util.js';
 
 export function apiRouter({ booth }) {
   const r = express.Router();
@@ -54,6 +54,24 @@ export function apiRouter({ booth }) {
   });
 
   r.get('/session/:id/qr', async (req, res) => res.json(await booth.qr(req.params.id)));
+
+  r.get('/wifi', async (req, res) => res.json({ wifi: await booth.wifiQr() }));
+
+  // Interrogé par la page distante (adresse publique) : répondre ici, c'est que le téléphone est sur le Wi-Fi de la borne.
+  r.get('/ping', (req, res) => res.set('Cache-Control', 'no-store').json({ photobooth: true }));
+
+  // Galerie : sur l'écran de la borne si gallery.booth, depuis un téléphone si gallery.web.
+  // La réimpression n'est acceptée que depuis la borne elle-même.
+  r.get('/gallery', (req, res) => {
+    const g = booth.cfg().gallery;
+    if (!((g.booth && isLocalRequest(req)) || g.web)) throw new HttpError(403, 'GALLERY_DISABLED', 'La galerie n\'est pas ouverte');
+    res.json({ items: booth.gallery() });
+  });
+
+  r.post('/gallery/:id/print', async (req, res) => {
+    if (!booth.cfg().gallery.booth || !isLocalRequest(req)) throw new HttpError(403, 'GALLERY_DISABLED', 'Réimpression possible uniquement sur la borne');
+    res.json(await booth.galleryPrint(req.params.id, Number(req.body?.copies), req.body?.pin));
+  });
 
   r.all('/{*rest}', () => {
     throw new HttpError(404, 'NOT_FOUND', 'Route API inconnue');

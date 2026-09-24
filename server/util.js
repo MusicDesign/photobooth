@@ -68,3 +68,8 @@ export function parseCookies(header = '') {
   }
   return out;
 }
+
+/** Requête venue de la machine elle-même : l'écran de la borne (les téléphones arrivent par le réseau). */
+export function isLocalRequest(req) {
+  return ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+}

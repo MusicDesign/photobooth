@@ -1,10 +1,13 @@
+import fs from 'node:fs';
+import https from 'node:https';
 import { installFileLog } from './log.js';
 import { createApp } from './app.js';
 
 installFileLog();
 import { lanIp } from './util.js';
 
-const { server, port, config, close } = await createApp();
+// Code de sortie 0 : le lanceur de la borne comprend « arrêt volontaire » et ne relance pas.
+const { app, server, port, config, close } = await createApp({ onShutdown: () => process.exit(0) });
 
 server.listen(port, () => {
   const cfg = config.get();
@@ -14,6 +17,14 @@ server.listen(port, () => {
   console.log(`  Réseau  : http://${lanIp()}:${port}  (partage QR)`);
   console.log(`  Caméra  : ${cfg.camera.driver}   Imprimante : ${cfg.printer.driver}\n`);
 });
+
+// Adresse publique en HTTPS sur le Wi-Fi de la borne : certificat du domaine (TUTORIEL.md, étape 10.8).
+// Les téléphones y arrivent sur le port 443, redirigé vers BOOTH_HTTPS_PORT par le pare-feu.
+if (process.env.BOOTH_TLS_CERT && process.env.BOOTH_TLS_KEY) {
+  const httpsPort = Number(process.env.BOOTH_HTTPS_PORT) || 3443;
+  const tls = { cert: fs.readFileSync(process.env.BOOTH_TLS_CERT), key: fs.readFileSync(process.env.BOOTH_TLS_KEY) };
+  https.createServer(tls, app).listen(httpsPort, () => console.log(`  HTTPS   : port ${httpsPort} (certificat ${process.env.BOOTH_TLS_CERT})`));
+}
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
