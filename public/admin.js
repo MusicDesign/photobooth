@@ -69,13 +69,25 @@ function deckState() {
 }
 
 /** Le flash est-il parti sur la dernière photo ? (EXIF, le boîtier ne dit rien de fiable avant) */
+/** Ce qui s'est passé sur la dernière photo (lu dans son EXIF) : avec ou sans flash. */
 function flashState() {
   const c = S.camera || {};
-  if (c.flashFired == null) return '<span class="badge">inconnu</span> <small>connu après la première photo</small>';
-  const at = c.flashFiredAt ? ` <small>photo de ${new Date(c.flashFiredAt).toLocaleTimeString('fr-FR')}</small>` : '';
-  return c.flashFired
-    ? `<span class="badge warn">parti sur la dernière photo</span>${at}`
-    : `<span class="badge">pas parti sur la dernière photo</span>${at}`;
+  if (c.flashFired == null) return 'pas encore de photo depuis le branchement du boîtier';
+  const at = c.flashFiredAt ? ` (${new Date(c.flashFiredAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })})` : '';
+  return `dernière photo${at} <span class="badge ${c.flashFired ? 'warn' : ''}">${c.flashFired ? 'prise avec le flash' : 'prise sans flash'}</span>`;
+}
+
+/** Tableau de bord : le réglage de la borne, puis la dernière photo, et un conseil si les deux ne collent pas. */
+function flashSummary() {
+  const c = S.camera || {};
+  const manual = c.flashControl === false;
+  const autoProfile = S.config.camera.control?.mode === 'auto' ? S.config.camera.control.auto?.profile : undefined;
+  const mode = manual ? 'manuel : levé à la main, il part à chaque photo'
+    : autoProfile !== undefined ? `mode Auto : ${autoProfile?.flash ? 'la borne le lève (réglage du calibrage)' : 'sans flash (réglage du calibrage)'}`
+    : { off: 'la borne ne le lève jamais', on: 'la borne le lève avant chaque photo', auto: 'la borne le lève si la scène est sombre' }[c.flash] || 'la borne ne le lève jamais';
+  const stray = c.flashStray || (!manual && c.flash === 'off' && c.flashFired === true && c.control !== 'auto')
+    ? ' · <span class="badge err">levé : à rabattre à la main</span> <small>il part à chaque photo, même quand la borne ne le demande pas</small>' : '';
+  return `${mode} · ${flashState()}${stray}`;
 }
 
 function dashboard() {
@@ -94,8 +106,8 @@ function dashboard() {
   <div class="grid-2" style="margin-top:22px">
     <div class="card">
       <h3>Matériel</h3>
-      <p>Caméra <code>${esc(S.camera.driver)}</code> <span class="badge ${S.camera.ok ? 'ok' : 'err'}">${S.camera.ok ? 'OK' : 'problème'}</span>${S.camera.standby ? ' <small>live view en veille, obturateur fermé</small>' : ''}${S.camera.driver === 'gphoto2' ? `<br><small>Flash : ${flashState()}</small>` : ''}${S.devices.camera.requested === 'auto' ? `<br><small>auto · ${esc(S.devices.camera.reason)}</small>` : ''}${S.camera.lastError ? `<br><small>${esc(S.camera.lastError)}</small>` : ''}${S.camera.lastCaptureError ? `<br><small><b>Dernier échec de photo</b> (${new Date(S.camera.lastCaptureError.at).toLocaleTimeString('fr-FR')}) : ${esc(S.camera.lastCaptureError.message)}</small>` : ''}</p>
-      <p>Imprimante <code>${esc(S.printer.driver)}</code> <span class="badge ${S.printer.ok ? 'ok' : 'err'}">${S.printer.ok ? 'OK' : 'problème'}</span>${S.devices.printer.requested === 'auto' ? `<br><small>auto · ${esc(S.devices.printer.reason)}</small>` : ''}<br><small>${esc(S.printer.message)}</small></p>
+      <p>Caméra <code>${esc(S.camera.driver)}</code> <span class="badge ${S.camera.ok ? 'ok' : 'err'}">${S.camera.ok ? 'OK' : 'problème'}</span>${S.camera.battery ? ` <span class="badge ${S.camera.battery.percent <= 25 ? 'warn' : 'ok'}" title="Lue à ${new Date(S.camera.battery.at).toLocaleTimeString('fr-FR')}, quand le boîtier est au repos">batterie ${esc(S.camera.battery.level)}</span>` : ''}${S.camera.standby ? ' <small>live view en veille, obturateur fermé</small>' : ''}${S.camera.driver === 'gphoto2' ? `<br><small>Flash : ${flashSummary()}</small>` : ''}${S.devices.camera.requested === 'auto' ? `<br><small>auto · ${esc(S.devices.camera.reason)}</small>` : ''}${S.camera.lastError ? `<br><small>${esc(S.camera.lastError)}</small>` : ''}${S.camera.lastCaptureError ? `<br><small><b>Dernier échec de photo</b> (${new Date(S.camera.lastCaptureError.at).toLocaleTimeString('fr-FR')}) : ${esc(S.camera.lastCaptureError.message)}</small>` : ''}</p>
+      <p>Imprimante <code>${esc(S.printer.driver)}</code> ${S.printer.driver === 'none' ? '<span class="badge">aucune</span>' : `<span class="badge ${S.printer.ok ? 'ok' : 'err'}">${S.printer.ok ? 'OK' : 'problème'}</span>`}${S.devices.printer.requested === 'auto' ? `<br><small>auto · ${esc(S.devices.printer.reason)}</small>` : ''}<br><small>${esc(S.printer.message)}</small></p>
       ${S.devices.network ? `<p>Wi-Fi <span class="badge ${S.devices.network.wifi ? 'ok' : 'err'}">${S.devices.network.wifi ? 'connecté' : 'absent'}</span><br><small>${S.devices.network.wifi ? `${esc(S.devices.network.iface)} · ${esc(S.devices.network.ip)}` : S.config.share.requireWifi === false ? 'QR codes affichés quand même (réglage <a href="#sharing">Partage</a>)' : 'QR codes des photos masqués'}</small></p>` : ''}
       <p>Stream Deck ${deckState()}</p>
       <p>Partage : <code>${esc(S.shareBaseUrl)}</code></p>
@@ -219,6 +231,7 @@ function themeSection() {
         <h3>Identité de la borne</h3>
         <label>Nom de la borne <input name="boothName" value="${esc(cfg.booth.name)}"></label>
         <label class="inline"><input name="showName" type="checkbox" ${cfg.booth.showName !== false ? 'checked' : ''}> Afficher le nom à côté du logo sur la borne</label>
+        <label>Curseur de la souris sur la borne <select name="cursor">${[['show', 'Toujours visible'], ['idle', 'Masqué quand la souris ne bouge pas (3 s)'], ['hide', 'Toujours masqué']].map(([v, l]) => `<option value="${v}" ${(cfg.booth.cursor || 'show') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         <h3 style="margin-top:18px">Couleurs</h3>
         <label>Thème actif <select name="active">${options}<option value="custom" ${cfg.theme.active === 'custom' ? 'selected' : ''}>Personnalisé (couleurs ci-contre)</option></select></label>
       </div>
@@ -330,10 +343,10 @@ function hardware() {
       <div>
         ${S.camera.flashControl === false ? `
         <label>Flash intégré ${flashState()}</label>
-        <small>Le ${esc(S.camera.model || 'boîtier')} ne lève pas son flash par USB, n'indique pas sa position avant la photo et ne permet pas d'empêcher un flash levé de partir : c'est sa position qui décide, et la borne le constate sur chaque photo. Levé = à chaque photo, rabattu = jamais. Pour l'interdire même levé : menu du boîtier, contrôle du flash, émission de l'éclair désactivée.</small>` : `
-        <label>Flash intégré ${sel('flash', ['off', 'on', 'auto'], g.flash || 'off')}</label>
+        <small>Le ${esc(S.camera.model || 'boîtier')}${S.camera.firmware ? ` (firmware ${esc(S.camera.firmware)})` : ''} ne lève pas son flash par USB${/1500D|2000D|Rebel T7|Kiss X90/i.test(S.camera.model || '') ? ' (possible à partir du firmware 1.2.1, à installer depuis le site de Canon)' : ''}, n'indique pas sa position avant la photo et ne permet pas d'empêcher un flash levé de partir : c'est sa position qui décide, et la borne le constate sur chaque photo. Levé = à chaque photo, rabattu = jamais. Pour l'interdire même levé : menu du boîtier, contrôle du flash, émission de l'éclair désactivée.</small>` : `
+        <label>Flash intégré ${sel('flash', ['off', 'on', 'auto'], g.flash || 'off')}${cfg.camera.control?.mode === 'auto' ? '<small>Sans effet en mode Auto (bloc Boîtier ci-dessous) : c\'est le calibrage qui décide du flash.</small>' : ''}</label>
         <div class="row"><label>Seuil du mode auto (luminosité 0-255, flash levé en dessous) <input name="flashAutoThreshold" type="number" min="0" max="255" value="${g.flashAutoThreshold ?? 60}" style="width:120px"></label></div>
-        <small><b>off</b> : la borne ne lève jamais le flash. <b>on</b> : levé par USB avant chaque photo. <b>auto</b> : levé si la scène est sombre d'après le live view${S.camera.sceneLuma != null ? ` (luminosité actuelle : ${S.camera.sceneLuma}/255)` : ''}. Une fois levé, le flash intégré ne se rabat qu'à la main. État actuel : ${flashState()}.${S.camera.lastFlashError ? ` <b>Dernière levée refusée par le boîtier : ${esc(S.camera.lastFlashError)}</b>` : ''}</small>`}
+        <small><b>off</b> : la borne ne lève jamais le flash. <b>on</b> : levé par USB avant chaque photo. <b>auto</b> : levé si la scène est sombre d'après le live view${S.camera.sceneLuma != null ? ` (luminosité actuelle : ${S.camera.sceneLuma}/255)` : ''}. Une fois levé, le flash intégré ne se rabat qu'à la main. En ce moment : ${flashState()}.${S.camera.lastFlashError ? ` <b>Dernière levée refusée par le boîtier : ${esc(S.camera.lastFlashError)}</b>` : ''}</small>`}
         <label>Coupure du live view quand l'aperçu n'est plus affiché (secondes) <input name="liveIdleSec" type="number" min="0" step="1" value="${Math.round((g.liveIdleMs ?? 8000) / 1000)}"></label>
         <small>Hors prise de vue, l'obturateur du boîtier est refermé : capteur et batterie au repos. Le live redémarre dès qu'un invité touche l'écran.</small>
       </div>
@@ -354,6 +367,7 @@ function hardware() {
       <button class="btn btn-detect" type="button">Détecter maintenant</button>
     </div>
   </form>
+  ${S.camera.driver === 'gphoto2' ? cameraControlCard() : ''}
   <form id="formDeck" class="card">
     <h3>Stream Deck</h3>
     <label class="inline"><input name="deckEnabled" type="checkbox" ${(cfg.booth.streamDeck?.enabled ?? true) ? 'checked' : ''}> Utiliser un Stream Deck Elgato branché en USB comme télécommande</label>
@@ -365,6 +379,315 @@ function hardware() {
     <small>Les touches reprennent les boutons de l'écran affiché, aux couleurs du thème, y compris le pavé du code opérateur. Branché, il pilote aussi la galerie de la borne (autant de photos par page que de touches). Sur Mac, quitter l'application Stream Deck d'Elgato, qui réserve l'appareil.</small>
     <button class="btn primary" type="submit">Enregistrer</button>
   </form>`;
+}
+
+// ---------- Boîtier : réglages de prise de vue (mode boîtier / manuel / auto avec calibrage) ----------
+
+// Valeurs gphoto2 (anglais) affichées en français quand on les connaît
+const CAM_FR = {
+  Manual: 'Manuel (M)', P: 'Programme (P)', AV: 'Priorité ouverture (Av)', TV: 'Priorité vitesse (Tv)', Auto: 'Automatique',
+  'One Shot': 'Un coup', 'AI Focus': 'AI Focus', 'AI Servo': 'AI Servo (continu)', Single: 'Unique', Continuous: 'Rafale',
+  'Timer 10 sec': 'Retardateur 10 s', 'Timer 2 sec': 'Retardateur 2 s', 'Continuous timer': 'Retardateur en rafale',
+  Standard: 'Standard', Portrait: 'Portrait', Landscape: 'Paysage', Neutral: 'Neutre', Faithful: 'Fidèle', Monochrome: 'Noir et blanc',
+  'AWB White': 'Auto (priorité blanc)', Daylight: 'Lumière du jour', Shadow: 'Ombre', Cloudy: 'Nuageux', Tungsten: 'Tungstène',
+  Fluorescent: 'Fluorescent', Flash: 'Flash', Evaluative: 'Évaluative', Partial: 'Partielle', 'Center-weighted average': 'Moyenne pondérée centrale',
+  L: 'Grande · fine', cL: 'Grande · normale', M: 'Moyenne · fine', cM: 'Moyenne · normale', S1: 'Petite 1 · fine', cS1: 'Petite 1 · normale',
+  S2: 'Petite 2', S3: 'Petite 3', 'RAW + L': 'RAW + Grande fine', RAW: 'RAW seul (pas de JPEG : à éviter)', None: 'Aucun',
+  '2 seconds': '2 s', '4 seconds': '4 s', '8 seconds': '8 s', Hold: 'Maintenu', Live: 'Live', LiveFace: 'Visages', Quick: 'Rapide',
+  'Standard (disabled in manual exposure)': 'Standard (sans effet en M)'
+};
+const camFr = (v) => CAM_FR[v] || v;
+const CTL = { settings: null, loading: false, calibration: null, poll: null }; // gardé entre deux rafraîchissements
+
+function cameraControlCard() {
+  const ctl = S.config.camera.control || { mode: 'camera' };
+  const opt = (v, title, desc) => `<label class="inline ctl-mode"><input type="radio" name="ctlMode" value="${v}" ${ctl.mode === v ? 'checked' : ''}> <span><b>${title}</b><small>${desc}</small></span></label>`;
+  return `
+  <div class="card" id="cameraControl">
+    <h3>Boîtier : réglages de prise de vue</h3>
+    <div class="ctl-modes">
+      ${opt('camera', 'Réglages du boîtier', 'La borne ne touche pas à l\'exposition : molette et menus de l\'appareil décident.')}
+      ${opt('manual', 'Manuel', 'Tu choisis chaque réglage ici ; ils sont poussés au boîtier à chaque branchement.')}
+      ${opt('auto', 'Auto : la borne gère tout', 'Base éprouvée et exposition trouvée par un calibrage sur place.')}
+    </div>
+    <div id="ctlBody"></div>
+  </div>`;
+}
+
+function renderCtlBody() {
+  const box = $('#ctlBody');
+  if (!box) return;
+  const mode = document.querySelector('input[name=ctlMode]:checked')?.value || 'camera';
+  const ctl = S.config.camera.control || {};
+  if (mode === 'camera') {
+    box.innerHTML = '<p class="sub">Rien n\'est imposé : ce que tu règles sur l\'appareil est ce qui sert pour les photos.</p>';
+  } else if (mode === 'manual') {
+    if (!CTL.settings) {
+      box.innerHTML = `<p class="sub">${CTL.loading ? 'Lecture des réglages du boîtier…' : 'Réglages lus directement sur le boîtier, avec les choix qu\'il propose.'}</p>${CTL.loading ? '' : '<button class="btn secondary" type="button" id="ctlRead">Lire les réglages du boîtier</button>'}`;
+      $('#ctlRead')?.addEventListener('click', loadCameraSettings);
+      if (!CTL.loading) loadCameraSettings();
+      return;
+    }
+    const saved = ctl.manual || {};
+    const fields = S.cameraSettings.map(([key, label]) => {
+      const s = CTL.settings[key];
+      if (!s) return '';
+      const cur = saved[key] ?? s.current;
+      const choices = s.choices.length ? s.choices : [s.current];
+      return `<label>${esc(label)}<select name="${esc(key)}" ${s.readonly ? 'disabled' : ''}>${choices.map((c) => `<option value="${esc(c)}" ${c === cur ? 'selected' : ''}>${esc(camFr(c))}</option>`).join('')}</select>${s.current !== cur ? `<small>sur le boîtier en ce moment : ${esc(camFr(s.current))}</small>` : ''}</label>`;
+    }).join('');
+    box.innerHTML = `<form id="formManualCam"><div class="grid-2 ctl-grid">${fields}</div>
+      <small>Vitesse et ouverture comptent en M ; la correction d'exposition en P, Av et Tv. Le mode choisi ici prime sur la molette du boîtier.</small>
+      <div class="row"><button class="btn primary" type="submit">Enregistrer et appliquer</button><button class="btn" type="button" id="ctlReload">Relire le boîtier</button></div></form>`;
+    $('#ctlReload').onclick = () => { CTL.settings = null; loadCameraSettings(); };
+    $('#formManualCam').onsubmit = (e) => {
+      e.preventDefault();
+      const manual = Object.fromEntries([...new FormData(e.target).entries()]);
+      CTL.settings = null; // relu après application
+      saveConfig({ camera: { control: { mode: 'manual', manual } } }, 'Réglages enregistrés, appliqués au boîtier dès qu\'il est libre');
+    };
+  } else {
+    box.innerHTML = autoPanel(ctl);
+    bindAutoPanel();
+  }
+}
+
+async function loadCameraSettings() {
+  CTL.loading = true;
+  renderCtlBody();
+  try { CTL.settings = (await api('/api/admin/camera/settings')).settings; } catch (e) { toast(e.message, true); }
+  CTL.loading = false;
+  renderCtlBody();
+}
+
+function profileLine(p) {
+  if (!p) return '';
+  const s = p.settings || {};
+  return `${esc(s.shutterspeed)} s · f/${esc(s.aperture)} · ISO ${esc(camFr(s.iso))} · ${p.flash ? 'avec flash' : 'sans flash'}`;
+}
+
+function autoPanel(ctl) {
+  const a = ctl.auto || {};
+  const c = CTL.calibration;
+  const current = a.profile
+    ? `<p>Réglage en place : <b>${profileLine(a.profile)}</b><br><small>Calibré le ${new Date(a.calibratedAt).toLocaleString('fr-FR')} · ${esc(a.reason || '')}</small></p>`
+    : '<p class="sub">Pas encore de calibrage : la borne utilise 1/125 s · f/5.6 · ISO automatique, sans flash.</p>';
+  const last = c?.state === 'done' ? `<p><small>Dernier calibrage : ${c.shots.length} photo${c.shots.length > 1 ? 's' : ''} · proposition ${c.profile ? profileLine(c.profile) : 'aucune'}</small> <button class="btn small" type="button" id="calibSeeLast">Voir les photos</button></p>` : '';
+  return `${current}
+    <p class="sub">Le calibrage s'ouvre en plein écran : cadrage avec l'aperçu, décompte pour se placer, puis une série sans flash et une série avec flash (2 à ${MAX_CALIB_SHOTS} photos, moins de 30 s). La borne compare et choisit. Les photos de test n'apparaissent pas dans la galerie.</p>
+    <div class="row"><button class="btn ${a.profile ? '' : 'primary'}" type="button" id="calibStart">${a.profile ? 'Recalibrer' : 'Lancer le calibrage'}</button>
+    ${a.profile && ctl.mode !== 'auto' ? '<button class="btn primary" type="button" id="ctlUseAuto">Utiliser ce réglage</button>' : ''}</div>
+    ${last}`;
+}
+
+function bindAutoPanel() {
+  $('#calibStart')?.addEventListener('click', () => openCalibration('preview'));
+  $('#calibSeeLast')?.addEventListener('click', () => openCalibration('results'));
+  $('#ctlUseAuto')?.addEventListener('click', () => saveConfig({ camera: { control: { mode: 'auto' } } }, 'Mode auto activé'));
+}
+
+// ---------- Calibrage plein écran : cadrage → décompte → photos → résultats ----------
+
+const MAX_CALIB_SHOTS = 7; // au plus 3 sans flash + 4 avec (server/camera/control.js)
+const CAL = { stage: null, countdown: 10, timer: null };
+const CALIB_DELAYS = [5, 10, 15, 20]; // secondes de décompte proposées avant les photos
+
+/** Délai du décompte, depuis la liste de l'écran ou les touches − / + du Stream Deck. */
+function setCalibDelay(sec) {
+  CAL.countdown = sec;
+  const sel = $('#coDelay');
+  if (sel) sel.value = String(sec);
+  sendDeckUi();
+}
+
+function openCalibration(stage) {
+  let ov = $('#calibOverlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'calibOverlay';
+    ov.className = 'calib-overlay';
+    ov.setAttribute('role', 'dialog');
+    ov.setAttribute('aria-label', 'Calibrage du boîtier');
+    document.body.appendChild(ov);
+    document.addEventListener('keydown', calibKeys);
+  }
+  CAL.stage = stage;
+  renderCalibration();
+}
+
+function closeCalibration() {
+  clearInterval(CAL.timer);
+  $('#calibOverlay')?.remove();
+  document.removeEventListener('keydown', calibKeys);
+  CAL.stage = null;
+  sendDeckUi();
+  if (currentSection() === 'hardware') renderCtlBody();
+}
+
+function calibKeys(e) {
+  if (e.key !== 'Escape') return;
+  if ($('#calibLightbox')) { $('#calibLightbox').remove(); return; }
+  if (CAL.stage === 'preview' || CAL.stage === 'results' || CAL.stage === 'error') closeCalibration();
+  else if (CAL.stage === 'countdown') { clearInterval(CAL.timer); CAL.stage = 'preview'; renderCalibration(); }
+}
+
+function renderCalibration() {
+  const ov = $('#calibOverlay');
+  if (!ov) return;
+  const c = CTL.calibration;
+  const head = (title, sub = '') => `<header class="co-head"><div><h2>${title}</h2>${sub ? `<p>${sub}</p>` : ''}</div>
+    ${['preview', 'results', 'error'].includes(CAL.stage) ? '<button class="btn ghost" type="button" id="coClose">Fermer</button>' : ''}</header>`;
+  const live = `<div class="co-live"><img id="coLive" src="/api/live.mjpeg?t=${Date.now()}" alt="Aperçu du boîtier"></div>`;
+
+  if (CAL.stage === 'preview') {
+    ov.innerHTML = `${head('Calibrage du boîtier', 'Cadre la photo comme pour l\'événement, puis lance : un décompte laisse le temps de se placer.')}
+      <div class="co-main">${live}
+        <aside class="co-side">
+          <ol>
+            <li>Place l'appareil à sa position définitive et règle le cadrage avec l'aperçu.</li>
+            <li>Allume l'éclairage de l'événement.</li>
+            <li><b>Rabats le flash avant de lancer.</b> La borne fait d'abord les photos sans flash, puis le lève elle-même pour la série avec flash : tu n'as rien à toucher pendant le calibrage.</li>
+            <li>Au lancement, place-toi (ou un substitut) là où se tiendront les invités, et ne bouge plus pendant les photos.</li>
+          </ol>
+          ${S.camera.flashFired || S.camera.flashStray ? '<div class="alert">La dernière photo a été prise avec le flash : il est sûrement levé. <b>Rabats-le avant de lancer</b>, sinon il partira sur toutes les photos de test (la borne le relèvera elle-même s\'il en faut).</div>' : ''}
+          <label>Décompte avant les photos <select id="coDelay">${CALIB_DELAYS.map((n) => `<option value="${n}" ${n === CAL.countdown ? 'selected' : ''}>${n} secondes</option>`).join('')}</select></label>
+          <p class="co-note">2 séries : sans flash puis avec flash, 2 à ${MAX_CALIB_SHOTS} photos, moins de 30 s au total. À la fin, rabats le flash si le réglage choisi est sans flash.</p>
+          <button class="btn primary co-go" type="button" id="coGo">Lancer le calibrage</button>
+        </aside>
+      </div>`;
+    $('#coDelay').onchange = (e) => setCalibDelay(Number(e.target.value));
+    $('#coGo').onclick = startCalibCountdown;
+  } else if (CAL.stage === 'countdown') {
+    ov.innerHTML = `${head('Placez-vous')}
+      <div class="co-main co-center">${live}<div class="co-count" id="coCount">${CAL.left}</div>
+        <p class="co-note">Les photos commencent à zéro. <button class="btn ghost small" type="button" id="coCancel">Annuler</button></p></div>`;
+    $('#coCancel').onclick = () => { clearInterval(CAL.timer); CAL.stage = 'preview'; renderCalibration(); };
+  } else if (CAL.stage === 'running') {
+    const done = c?.shots?.length || 0;
+    const pct = Math.min(95, Math.round((Math.max(done, (c?.step || 1) - 0.5) / MAX_CALIB_SHOTS) * 100));
+    ov.innerHTML = `${head('Ne bougez pas', 'Photos de test en cours : la borne cherche le bon réglage pour ce lieu.')}
+      <div class="co-main co-center">
+        <div class="co-progress"><div style="width:${pct}%"></div></div>
+        <p class="co-step">Photo ${c?.step || 1} · ${esc(c?.label || 'préparation')}<br><small>jusqu'à ${MAX_CALIB_SHOTS} photos, souvent moins : l'écran l'indique dès que c'est fini</small></p>
+        <div class="co-strip">${(c?.shots || []).map((sh) => `<img src="${esc(sh.thumb)}" alt="">`).join('')}</div>
+      </div>`;
+  } else if (CAL.stage === 'results') {
+    const pick = c?.profile;
+    const isPick = (sh) => pick && sh.flash === !!pick.flash && ['shutterspeed', 'aperture', 'iso'].every((k) => sh.settings?.[k] === pick.settings?.[k]);
+    const cards = (c?.shots || []).map((sh) => `
+      <figure class="co-shot ${isPick(sh) ? 'picked' : ''}">
+        <button type="button" class="co-thumb" data-open="${esc(sh.url)}" aria-label="Agrandir la photo ${sh.n}"><img src="${esc(sh.thumb)}" alt=""></button>
+        ${isPick(sh) ? '<span class="co-ribbon">Choix de la borne</span>' : ''}
+        <figcaption><b>${esc(sh.label)}</b><span>${esc(sh.summary)}</span>
+          <span>luminosité ${sh.mean}/255${sh.clipped > 2 ? ` · ${sh.clipped} % brûlé` : ''} · <span class="badge ${sh.ok ? 'ok' : ''}">${sh.ok ? 'dans la cible' : 'hors cible'}</span></span>
+          ${isPick(sh) ? '' : `<button class="btn small" type="button" id="coPick-${sh.n}" data-pick="${sh.n}">Choisir ce réglage</button>`}
+        </figcaption>
+      </figure>`).join('');
+    ov.innerHTML = `${head('Résultat du calibrage', esc(c?.reason || ''))}
+      ${flashAdvice(c, pick)}
+      <div class="co-shots">${cards || '<p>Aucune photo.</p>'}</div>
+      <footer class="co-foot">
+        ${pick ? '<button class="btn primary" type="button" id="coKeep">Garder le choix de la borne</button>' : ''}
+        <button class="btn" type="button" id="coAgain">Recommencer</button>
+      </footer>`;
+    ov.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openLightbox(b.dataset.open)));
+    ov.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => {
+      const sh = c.shots.find((x) => String(x.n) === b.dataset.pick);
+      if (!sh.flash && (c.flashRaised || c.shots.some((x) => x.flash))) toast('Réglage sans flash : rabats le flash à la main, sinon il part à chaque photo', true);
+      keepCalibration({ flash: sh.flash, settings: { ...sh.settings } }, `Choisi à la main : ${sh.label} (${sh.summary}, luminosité ${sh.mean}/255).`);
+    }));
+    $('#coKeep')?.addEventListener('click', () => keepCalibration(pick, c.reason));
+    $('#coAgain').onclick = () => openCalibration('preview');
+  } else if (CAL.stage === 'error') {
+    ov.innerHTML = `${head('Calibrage interrompu')}<div class="co-main co-center"><div class="alert">${esc(c?.error || 'Erreur inconnue')}</div>
+      <button class="btn primary" type="button" id="coAgain">Recommencer</button></div>`;
+    $('#coAgain').onclick = () => openCalibration('preview');
+  }
+  $('#coClose')?.addEventListener('click', closeCalibration);
+  // Touches du Stream Deck : tout de suite, puis quand les miniatures des résultats sont chargées
+  sendDeckUi();
+  ov.querySelectorAll('.co-shot img').forEach((img) => { if (!img.complete) img.addEventListener('load', sendDeckUi, { once: true }); });
+}
+
+/** Que faire du flash après le calibrage : il ne se rabat qu'à la main, et levé il part à chaque photo. */
+function flashAdvice(c, pick) {
+  const raised = c?.flashRaised || (c?.shots || []).some((sh) => sh.flash);
+  if (!raised) return '';
+  if (pick && !pick.flash) return '<div class="alert"><b>Rabats le flash maintenant.</b> Ce réglage est sans flash, mais levé il part à chaque photo.</div>';
+  return '<div class="co-info">Le flash reste levé : c\'est voulu, ce réglage l\'utilise. Si tu choisis une photo sans flash, rabats-le à la main.</div>';
+}
+
+function startCalibCountdown() {
+  CAL.left = CAL.countdown;
+  CAL.stage = 'countdown';
+  renderCalibration();
+  clearInterval(CAL.timer);
+  CAL.timer = setInterval(async () => {
+    CAL.left -= 1;
+    if (CAL.left > 0) { $('#coCount').textContent = CAL.left; sendDeckUi(); return; }
+    clearInterval(CAL.timer);
+    // Zéro : on libère l'aperçu (le boîtier ne sert qu'à une chose à la fois), puis on lance
+    const img = $('#coLive');
+    if (img) img.src = '';
+    CAL.stage = 'running';
+    CTL.calibration = { state: 'running', step: 0, shots: [] };
+    renderCalibration();
+    try {
+      CTL.calibration = (await api('/api/admin/camera/calibrate', { method: 'POST', body: {} })).calibration;
+      pollCalibration();
+    } catch (e) {
+      CTL.calibration = { state: 'error', error: e.message };
+      CAL.stage = 'error';
+      renderCalibration();
+    }
+  }, 1000);
+}
+
+function openLightbox(url) {
+  const lb = document.createElement('div');
+  lb.id = 'calibLightbox';
+  lb.className = 'co-lightbox';
+  lb.innerHTML = `<img src="${esc(url)}" alt="Photo de test"><button class="btn" type="button">Fermer</button>`;
+  lb.addEventListener('click', () => lb.remove()); // clic n'importe où (ou Échap) : fermé
+  document.body.appendChild(lb);
+}
+
+function keepCalibration(profile, reason) {
+  closeCalibration();
+  saveConfig({ camera: { control: { mode: 'auto', auto: { profile, calibratedAt: new Date().toISOString(), reason } } } }, 'Réglage gardé, appliqué au boîtier');
+}
+
+function pollCalibration() {
+  clearTimeout(CTL.poll);
+  CTL.poll = setTimeout(async () => {
+    try { CTL.calibration = (await api('/api/admin/camera/calibration')).calibration; } catch { /* réessaie */ }
+    const st = CTL.calibration?.state;
+    if (CAL.stage) {
+      CAL.stage = st === 'done' ? 'results' : st === 'error' ? 'error' : 'running';
+      renderCalibration();
+    } else if (currentSection() === 'hardware') renderCtlBody();
+    if (st === 'running') pollCalibration();
+  }, 800);
+}
+
+function bindCameraControl() {
+  if (!$('#cameraControl')) return;
+  document.querySelectorAll('input[name=ctlMode]').forEach((r) => r.addEventListener('change', () => {
+    const ctl = S.config.camera.control || {};
+    if (r.value === 'camera') saveConfig({ camera: { control: { mode: 'camera' } } }, 'Le boîtier décide de ses réglages');
+    else if (r.value === 'auto' && ctl.auto?.profile) saveConfig({ camera: { control: { mode: 'auto' } } }, 'Mode auto activé');
+    else renderCtlBody(); // manuel : on enregistre avec le formulaire ; auto sans calibrage : on calibre d'abord
+  }));
+  renderCtlBody();
+  if (CTL.calibration?.state === 'running') { if (!CAL.stage) openCalibration('running'); pollCalibration(); }
+  else if (!CTL.calibration) { // dernier calibrage (ou celui en cours) : affiché même après un rechargement
+    api('/api/admin/camera/calibration').then((r) => {
+      if (!r.calibration || CTL.calibration) return;
+      CTL.calibration = r.calibration;
+      renderCtlBody();
+      if (r.calibration.state === 'running') { openCalibration('running'); pollCalibration(); }
+    }).catch(() => {});
+  }
 }
 
 // Événement affiché dans la section Sessions : #sessions=<id> (par défaut l'événement en cours)
@@ -1207,7 +1530,7 @@ function bindSection(sec) {
       e.preventDefault();
       const fd = new FormData(form);
       saveConfig({
-        booth: { name: fd.get('boothName'), showName: fd.get('showName') === 'on' },
+        booth: { name: fd.get('boothName'), showName: fd.get('showName') === 'on', cursor: fd.get('cursor') },
         theme: { active: fd.get('active'), custom: {
           font: fd.get('font'),
           colors: { primary: fd.get('color_primary'), secondary: fd.get('color_secondary'), background: fd.get('color_background'), surface: fd.get('color_surface'), text: fd.get('color_text'), onPrimary: fd.get('color_onPrimary') }
@@ -1315,6 +1638,7 @@ function bindSection(sec) {
 
 /** Formulaires de réglages : chacun enregistre ses propres champs, quelle que soit la section qui l'affiche. */
 function bindSettingsForms() {
+  bindCameraControl();
   const form = (id, fn) => { const f = $(id); if (f) f.onsubmit = (e) => { e.preventDefault(); fn(new FormData(f), f); }; };
   document.querySelectorAll('.btn-detect').forEach((b) => b.addEventListener('click', async () => {
     try { await api('/api/admin/devices/refresh', { method: 'POST' }); toast('Détection relancée'); refresh(); } catch (e) { toast(e.message, true); }
@@ -1455,16 +1779,61 @@ const ON_BOOTH = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)
 const DECK_DANGER = { bg: '#d62839', fg: '#ffffff', border: null };
 let deckSock = null;
 
+/** Miniature (data URL) d'une image de la page, pour une touche du Stream Deck. */
+function deckImage(img) {
+  if (!img?.naturalWidth) return null;
+  const c = document.createElement('canvas');
+  const k = 120 / Math.max(img.naturalWidth, img.naturalHeight);
+  c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+  try { c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); return c.toDataURL('image/jpeg', 0.75); } catch { return null; }
+}
+
+/** Touches de l'écran de calibrage, étape par étape. */
+function calibDeckItems() {
+  const c = CTL.calibration;
+  const accent = { bg: S?.theme?.colors?.primary || '#e63946', fg: '#ffffff', border: null };
+  const show = (label) => ({ id: 'coInfo', label: String(label), kind: 'display', display: true });
+  switch (CAL.stage) {
+    // Délai du décompte : − nombre + (mêmes identifiants que le choix des copies : même disposition des touches)
+    case 'preview': return [
+      { id: 'btnMinus', label: '−', icon: 'minus', kind: 'ghost', disabled: CAL.countdown <= CALIB_DELAYS[0] },
+      { id: 'copies', label: String(CAL.countdown), kind: 'display', display: true },
+      { id: 'btnPlus', label: '+', icon: 'plus', kind: 'ghost', disabled: CAL.countdown >= CALIB_DELAYS[CALIB_DELAYS.length - 1] },
+      { id: 'coGo', label: 'Lancer', icon: 'play', kind: 'primary', style: accent },
+      { id: 'coClose', label: 'Fermer', icon: 'x', kind: 'ghost' }
+    ];
+    case 'countdown': return [show(CAL.left), { id: 'coCancel', label: 'Annuler', icon: 'x', kind: 'ghost' }];
+    case 'running': return [show(`${c?.step || 1}/${MAX_CALIB_SHOTS}`)];
+    case 'results': {
+      const pick = c?.profile;
+      const shots = [...document.querySelectorAll('#calibOverlay .co-shot')].map((fig, i) => {
+        const sh = c.shots[i];
+        const picked = fig.classList.contains('picked');
+        return { id: picked ? 'coKeep' : `coPick-${sh.n}`, label: `Photo ${sh.n}`, kind: 'choice', image: deckImage(fig.querySelector('img')) };
+      });
+      return [...shots, ...(pick ? [{ id: 'coKeep', label: 'Garder', icon: 'check', kind: 'primary', style: accent }] : []),
+        { id: 'coAgain', label: 'Recommencer', icon: 'retake', kind: 'ghost' }, { id: 'coClose', label: 'Fermer', icon: 'x', kind: 'ghost' }];
+    }
+    default: return [{ id: 'coAgain', label: 'Recommencer', icon: 'retake', kind: 'primary', style: accent }, { id: 'coClose', label: 'Fermer', icon: 'x', kind: 'ghost' }];
+  }
+}
+
 function sendDeckUi() {
   if (!ON_BOOTH || deckSock?.readyState !== 1) return;
   const dlg = $('#confirmDialog');
   const shell = !$('#shell').classList.contains('hidden');
+  if (CAL.stage && !dlg.open) {
+    deckSock.send(JSON.stringify({ type: 'ui', screen: `admin-calib-${CAL.stage}`, items: calibDeckItems(), colors: S?.theme?.colors || {} }));
+    return;
+  }
   let items;
   if (dlg.open) {
     items = [{ id: 'cfOk', label: $('#cfOk').textContent, icon: $('#cfOk').dataset.icon || 'power', kind: 'primary', style: DECK_DANGER }, { id: 'cfCancel', label: 'Annuler', icon: 'x', kind: 'ghost' }];
   } else {
     items = [{ id: 'btnBooth', label: 'Retour à la borne', icon: 'back', kind: 'ghost' }];
     if (shell) items.push({ id: 'btnLogout', label: 'Déconnexion', icon: 'logout', kind: 'ghost' });
+    // Calibrage du boîtier lançable depuis le Stream Deck (boîtier gphoto2 branché)
+    if (shell && S?.camera?.driver === 'gphoto2') items.push({ id: 'deckCalib', label: 'Calibrer', icon: 'camera', kind: 'ghost' });
     // Redémarrer et éteindre sur la rangée du haut, retour et déconnexion en bas
     if (shell && !$('#btnRestart').classList.contains('hidden')) items.push({ id: 'btnRestart', label: 'Redémarrer', icon: 'retake', kind: 'primary', style: { bg: '#2f6fdd', fg: '#ffffff', border: null } });
     if (shell && !$('#btnShutdown').classList.contains('hidden')) items.push({ id: 'btnShutdown', label: 'Éteindre', icon: 'power', kind: 'primary', style: DECK_DANGER });
@@ -1473,6 +1842,12 @@ function sendDeckUi() {
 }
 
 function onDeckPress(id) {
+  if (id === 'deckCalib') { if (!CAL.stage) openCalibration('preview'); return; }
+  if (CAL.stage === 'preview' && (id === 'btnMinus' || id === 'btnPlus')) { // délai du décompte, un cran à la fois
+    const i = CALIB_DELAYS.indexOf(CAL.countdown) + (id === 'btnPlus' ? 1 : -1);
+    if (i >= 0 && i < CALIB_DELAYS.length) setCalibDelay(CALIB_DELAYS[i]);
+    return;
+  }
   const el = document.getElementById(id);
   if (el && !el.disabled && (el.offsetParent !== null || el.closest('dialog[open]'))) el.click();
   else if (id === 'btnBooth') location.href = '/'; // page de connexion : retour direct à la borne

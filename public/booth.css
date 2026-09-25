@@ -190,7 +190,8 @@ body[data-font="serif"] { font-family: Georgia, "Times New Roman", serif; }
 /* Accueil : le bandeau passe au-dessus de la flèche vers le Stream Deck */
 body[data-screen="idle"] .toast { bottom: calc(3vh + clamp(64px, 9vmin, 120px) + 32px); }
 /* Pastille opérateur « papier bas » : petite, discrète, dans un coin ; rouge quand il n'y en a plus */
-.paper-badge { position: fixed; right: 14px; bottom: 12px; z-index: 55; font-size: 13px; font-weight: 700; padding: 5px 10px; border-radius: 999px; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); opacity: 0.55; pointer-events: none; }
+.op-badges { position: fixed; right: 14px; bottom: 12px; z-index: 55; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; pointer-events: none; }
+.paper-badge { font-size: 13px; font-weight: 700; padding: 5px 10px; border-radius: 999px; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); opacity: 0.55; pointer-events: none; }
 .paper-badge.empty { background: #d62828; color: #fff; opacity: 0.9; }
 .admin-hotspot { position: fixed; top: 0; right: 0; width: 120px; height: 120px; z-index: 60; }
 
@@ -283,7 +284,7 @@ body.wifi-on #screen-photo.solo { padding-left: calc(var(--wifi-w) + 48px); } /*
 .wifi-qr figcaption { display: flex; flex-direction: column; align-items: center; font-size: 13px; line-height: 1.25; color: var(--text); text-align: center; }
 .wifi-qr figcaption span { opacity: 0.7; }
 .wifi-qr figcaption b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-body.wifi-on .paper-badge { bottom: calc(24px + var(--wifi-w) + 56px); }
+body.wifi-on .op-badges { bottom: calc(24px + var(--wifi-w) + 56px); }
 
 /* QR Wi-Fi affiché : les écrans lui laissent sa colonne à droite (en portrait, sa bande en bas),
    pour que rien ne passe dessous, quelle que soit la taille de l'écran. Même marge à gauche :
@@ -293,3 +294,7 @@ body.wifi-on #screen-photo { padding-left: 40px; } /* visionneuse : rien de cent
 @media (orientation: portrait) {
   body.wifi-on .screen, body.wifi-on #screen-gallery, body.wifi-on #screen-photo { padding-left: 24px; padding-right: 24px; padding-bottom: calc(var(--wifi-w) + 110px); }
 }
+
+/* Curseur de la souris masqué (Admin → Apparence) : toujours, ou quand la souris ne bouge pas */
+body[data-cursor="hide"], body[data-cursor="hide"] *,
+body[data-cursor="idle"].cursor-idle, body[data-cursor="idle"].cursor-idle * { cursor: none !important; }

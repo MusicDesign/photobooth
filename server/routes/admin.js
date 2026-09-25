@@ -4,10 +4,11 @@ import path from 'node:path';
 import express from 'express';
 import multer from 'multer';
 import archiver from 'archiver';
-import { UPLOADS_DIR } from '../paths.js';
+import { UPLOADS_DIR, OUTPUT_DIR } from '../paths.js';
 import { samplePhotos } from '../samples.js';
 import { HttpError, parseCookies } from '../util.js';
 import { CAMERA_DRIVERS, CAMERA_FALLBACKS } from '../camera/index.js';
+import { MANUAL_SETTINGS, MAX_SHOTS } from '../camera/control.js';
 import { PRINTER_DRIVERS, PRINTER_FALLBACKS } from '../printer/index.js';
 import { FORMATS, FONTS, DEFAULT_FORMAT } from '../templates.js';
 
@@ -66,6 +67,43 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     shutdown();
   });
 
+  // ---------- Boîtier : réglages de prise de vue et calibrage ----------
+  const camera = () => {
+    if (booth.camera.name !== 'gphoto2' || !booth.camera.readSettings) throw new HttpError(409, 'NO_CAMERA_CONTROL', 'Réglages disponibles seulement avec un boîtier branché (pilote gphoto2)');
+    return booth.camera;
+  };
+  r.get('/camera/settings', async (req, res) => {
+    try { res.json({ settings: await camera().readSettings() }); } catch (e) { throw e instanceof HttpError ? e : new HttpError(409, 'CAMERA_BUSY', e.message); }
+  });
+
+  // Dernier calibrage (et celui en cours) : l'admin l'interroge pendant qu'il tourne.
+  let calibration = null;
+  const calibDir = path.join(OUTPUT_DIR, 'calibration');
+  const urlOf = (file) => `/output/calibration/${path.relative(calibDir, file).split(path.sep).join('/')}`;
+  // settings + flash : de quoi garder n'importe quelle photo de test comme réglage (choix à la main)
+  const shotView = (s) => ({ n: s.n, label: s.label, summary: s.summary, mean: s.mean, clipped: Math.round(s.clipped * 1000) / 10, ok: s.ok, thumb: urlOf(s.thumb), url: urlOf(s.file), settings: s.settings, flash: /flash/i.test(s.label) || !!s.flashFired });
+  r.get('/camera/calibration', (req, res) => res.json({ calibration }));
+  r.post('/camera/calibrate', (req, res) => {
+    const cam = camera();
+    if (cam.calibrating) throw new HttpError(409, 'CALIBRATING', 'Calibrage déjà en cours');
+    if (booth.guestActive()) throw new HttpError(409, 'GUEST_ACTIVE', 'Un invité est en pleine séance : relance le calibrage quand la borne est revenue à l\'accueil');
+    const id = new Date().toISOString().replace(/[:.]/g, '-');
+    // On ne garde que les 3 derniers calibrages sur le disque
+    try { fs.readdirSync(calibDir).sort().slice(0, -2).forEach((d) => fs.rmSync(path.join(calibDir, d), { recursive: true, force: true })); } catch { /* pas encore de dossier */ }
+    calibration = { id, state: 'running', step: 0, label: 'Préparation du boîtier', shots: [], maxShots: MAX_SHOTS };
+    res.json({ calibration });
+    console.log('[booth] calibrage du boîtier lancé depuis l\'admin');
+    cam.calibrateVenue(path.join(calibDir, id), (s) => { calibration = { ...calibration, step: s.step, label: s.label, shots: s.shots.map(shotView) }; }, { evictViewers: true })
+      .then((result) => {
+        calibration = { ...calibration, state: 'done', profile: result.profile, reason: result.reason, shots: result.shots.map(shotView), flashRaised: result.shots.some((s) => s.flashFired) };
+        console.log(`[booth] calibrage terminé : ${result.reason}`);
+      })
+      .catch((e) => {
+        calibration = { ...calibration, state: 'error', error: e.message };
+        console.warn(`[booth] calibrage : ${e.message}`);
+      });
+  });
+
   r.post('/restart', (req, res) => {
     if (!restart) throw new HttpError(409, 'RESTART_UNAVAILABLE', 'Redémarrage non disponible dans ce mode de lancement (serveur lancé dans un terminal)');
     if (booth.printing() && !req.body?.force) throw new HttpError(409, 'PRINTING', 'Une impression est en cours');
@@ -91,6 +129,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       printer: await booth.printerStatus(),
       devices: devices.status(),
       streamDeck: deck.status(),
+      cameraSettings: MANUAL_SETTINGS, // réglages du mode manuel, dans l'ordre, avec leur libellé
       canShutdown: !!shutdown,
       canRestart: !!restart,
       events: store.listEvents().map((ev) => booth.eventView(ev)),

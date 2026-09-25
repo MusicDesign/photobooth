@@ -5,10 +5,19 @@ import sharp from 'sharp';
 import { BaseCamera } from './base.js';
 import { JpegFrameParser, MjpegBroadcaster } from './mjpeg.js';
 import { sleep } from '../util.js';
+import { AUTO_BASE, AUTO_DEFAULT, MANUAL_KEYS, calibrate as runCalibration } from './control.js';
 
 const execFileP = promisify(execFile);
-// Boîtiers qui acceptent popupflash sans lever le flash (vérifié sur le 2000D, alias 1500D / Rebel T7 / Kiss X90).
+// Boîtiers qui acceptent popupflash sans lever le flash (vérifié sur le 2000D, alias 1500D / Rebel T7 / Kiss X90)…
 const NO_REMOTE_FLASH = /\b(1500D|2000D|Rebel T7|Kiss X90|3000D|4000D|Rebel T100)\b/i;
+// … sauf à partir de ce firmware : le 2000D en 1.2.1 lève bien son flash par USB (vérifié, absent des notes de Canon).
+const REMOTE_FLASH_FIRMWARE = { re: /\b(1500D|2000D|Rebel T7|Kiss X90)\b/i, min: [1, 2, 1] };
+/** « 3-1.2.1 » (deviceversion) → [1, 2, 1], ou null. */
+function parseFirmware(v) {
+  const m = /(\d+)\.(\d+)\.(\d+)\s*$/.exec(v || '');
+  return m ? m.slice(1).map(Number) : null;
+}
+const atLeast = (v, min) => { for (let i = 0; i < min.length; i++) { if (v[i] !== min[i]) return v[i] > min[i]; } return true; };
 /** Balise EXIF Flash (0x9209), bit 0 = flash déclenché. Retourne true / false, ou null si absente. */
 function exifFlashFired(buf) {
   if (!buf || buf.length < 14) return null;
@@ -87,6 +96,15 @@ export class Gphoto2Camera extends BaseCamera {
     this.failing = false; // dernier lancement du live en échec (appareil absent, occupé…)
     this.starting = false;
     this.idleTimer = null;
+    this.battery = null;      // { level: '75%', percent: 75, at } : lu au repos, voir maybeReadBattery()
+    this.statusRead = null;   // lecture d'état en cours (promesse) : photo et live l'attendent
+    this.idleSince = null;
+    this.batteryAt = 0;
+    this.batteryTimer = setInterval(() => this.maybeReadBattery(), 10000);
+    this.batteryTimer.unref?.();
+    this.control = { mode: 'camera' }; // réglages de prise de vue imposés depuis l'admin (voir control.js)
+    this.applied = {};                 // valeurs déjà poussées au boîtier depuis sa détection
+    this.calibrating = null;           // calibrage en cours : { step, label, shots }
     this.gotFrame = false; // au moins une image reçue du live en cours
     this.sceneLuma = null; // luminosité moyenne (0-255) de la dernière image du live, pour le flash auto
     this.lumaBusy = false;
@@ -133,10 +151,75 @@ export class Gphoto2Camera extends BaseCamera {
       if (found) this.model = line.replace(/\s+usb:.*$/i, '').trim();
       this.failing = !found;
       this.lastError = found ? null : 'Aucun appareil détecté en USB (allumé ? câble ? Wi-Fi du boîtier coupé ?)';
+      if (found) await this.readFirmware();
       if (found) await this.setup();
+      if (found) { this.applied = {}; await this.applyControl().catch((e) => console.warn(`[gphoto2] réglages du boîtier refusés : ${e.message}`)); }
     } catch (e) {
       this.failing = true;
       this.lastError = e.message;
+    }
+  }
+
+  /**
+   * Lit l'état du boîtier en une seule commande gphoto2 : firmware (à la détection, décide si le flash se lève
+   * par USB sur les petits Rebel) et niveau de batterie. Jamais en même temps qu'une autre commande : l'appelant
+   * s'assure que le boîtier est libre, et un dépassement de délai arrête gphoto2 en douceur (SIGINT), jamais
+   * SIGKILL (le 2000D se bloque si on coupe une transaction en cours).
+   */
+  async readStatus({ firmware = false } = {}) {
+    const keys = [...(firmware ? ['/main/status/deviceversion'] : []), '/main/status/batterylevel'];
+    const out = await this.run(`gphoto2 ${keys.map((k) => `--get-config ${k}`).join(' ')}`, 8000, { timeoutSignal: 'SIGINT' }).promise;
+    const values = [...out.matchAll(/^Current:\s*(.+)$/gm)].map((m) => m[1].trim());
+    if (firmware) {
+      this.firmware = values.shift() || this.firmware || null;
+      if (this.firmware) console.log(`[gphoto2] ${this.model} · firmware ${this.firmware}${this.flashControl() ? ' · flash pilotable par USB' : ''}`);
+    }
+    const level = values.shift();
+    if (level) this.setBattery(level);
+  }
+
+  async readFirmware() {
+    if (this.live || this.busy || this.starting) return;
+    this.statusRead = this.readStatus({ firmware: true }).catch(() => { /* illisible : règle du modèle */ });
+    await this.statusRead;
+    this.statusRead = null;
+    this.batteryAt = Date.now();
+  }
+
+  setBattery(level) {
+    const percent = Number.parseInt(level, 10);
+    const prev = this.battery?.level;
+    this.battery = { level, percent: Number.isFinite(percent) ? percent : null, at: new Date().toISOString() };
+    if (prev !== level) {
+      console.log(`[gphoto2] batterie : ${level}`);
+      this.onBattery?.(this.battery);
+    }
+  }
+
+  /**
+   * Batterie relue seulement quand le boîtier est au repos depuis 30 s (ni live, ni photo, ni commande),
+   * au plus toutes les 5 minutes. Pendant la lecture (~0,5 s) le boîtier est marqué occupé : le live
+   * attend, et une photo lancée à ce moment attend la fin de la lecture (voir arm / capture).
+   */
+  async maybeReadBattery() {
+    const idle = this.model && !this.failing && !this.live && !this.busy && !this.starting && !this.stopping
+      && !this.capturing && !this.arming && !this.pending && !this.statusRead;
+    if (!idle) { this.idleSince = null; return; }
+    this.idleSince ??= Date.now();
+    if (Date.now() - this.idleSince < 30000 || Date.now() - this.batteryAt < 5 * 60 * 1000) return;
+    this.busy = true;
+    this.statusRead = this.readStatus().catch((e) => console.warn(`[gphoto2] batterie illisible : ${e.message.split('\n')[0]}`));
+    try {
+      await this.statusRead;
+    } finally {
+      this.statusRead = null;
+      this.batteryAt = Date.now();
+      this.idleSince = null;
+      // Une photo a pu commencer pendant la lecture : elle garde le boîtier « occupé »
+      if (!this.arming && !this.capturing && !this.pending) {
+        this.busy = false;
+        if (this.wanted()) this.startLive(); // un invité a touché l'écran pendant la lecture
+      }
     }
   }
 
@@ -166,12 +249,32 @@ export class Gphoto2Camera extends BaseCamera {
       if (fired === null) return;
       this.flashFired = fired;
       this.flashFiredAt = new Date().toISOString();
+      // Parti alors que la borne ne l'a pas demandé : levé à la main (il ne se rabat pas par USB)
+      const stray = fired && this.lastFlash === false;
+      if (stray && !this.flashStray) console.warn('[gphoto2] le flash est parti sans être demandé : il est levé, à rabattre à la main');
+      this.flashStray = stray;
+      if (!fired) this.flashUpKnown = false; // parti sans flash : il a été rabattu
+      this.refreshFlashWarning();
     } catch { /* EXIF illisible : on garde la dernière valeur */ }
+  }
+
+  /**
+   * « Flash levé : à rabattre » : il est parti sans être demandé sur la dernière photo, ou la borne vient de le
+   * lever (calibrage) alors que le réglage en place est sans flash. Prévient la borne et l'admin à chaque changement.
+   */
+  refreshFlashWarning() {
+    const warn = !!this.flashStray || (!!this.flashUpKnown && !this.wantFlash());
+    if (warn === !!this.flashWarn) return;
+    this.flashWarn = warn;
+    this.onFlashStray?.(warn);
   }
 
   /** Le boîtier sait-il lever son flash par USB ? */
   flashControl() {
-    return !NO_REMOTE_FLASH.test(this.model || '');
+    const model = this.model || '';
+    if (!NO_REMOTE_FLASH.test(model)) return true;
+    const fw = parseFirmware(this.firmware);
+    return !!fw && REMOTE_FLASH_FIRMWARE.re.test(model) && atLeast(fw, REMOTE_FLASH_FIRMWARE.min);
   }
 
   startLive() {
@@ -200,14 +303,14 @@ export class Gphoto2Camera extends BaseCamera {
   }
 
   /** Lance une commande shell avec délai maximal. Retourne { promise, kill } ; la promesse rejette avec la dernière ligne d'erreur. */
-  run(cmd, timeoutMs) {
+  run(cmd, timeoutMs, { timeoutSignal = 'SIGKILL' } = {}) {
     const p = spawn('sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     let err = '';
     let out = '';
     let killed = false;
     const kill = (sig = 'SIGINT') => { killed = true; try { process.kill(-p.pid, sig); } catch { try { p.kill(sig); } catch { /* déjà parti */ } } };
     const promise = new Promise((resolve, reject) => {
-      const t = setTimeout(() => { err += `\ngphoto2 n'a pas répondu en ${Math.round(timeoutMs / 1000)} s`; kill('SIGKILL'); }, timeoutMs);
+      const t = setTimeout(() => { err += `\ngphoto2 n'a pas répondu en ${Math.round(timeoutMs / 1000)} s`; kill(timeoutSignal); }, timeoutMs);
       p.stdout.on('data', (d) => { out += d.toString(); });
       p.stderr.on('data', (d) => { err += d.toString(); });
       p.on('exit', (code) => {
@@ -286,8 +389,152 @@ export class Gphoto2Camera extends BaseCamera {
       .finally(() => { this.lumaBusy = false; });
   }
 
+  // ---------- Réglages de prise de vue (admin → Matériel → Boîtier) ----------
+
+  /** Donne le boîtier à fn seul : attend qu'il soit libre, coupe le live, et le rend ensuite (live relancé si besoin). */
+  async exclusive(fn, { timeoutMs = 60000, noViewers = false } = {}) {
+    const t0 = Date.now();
+    const occupied = () => this.busy || this.arming || this.capturing || this.pending || this.statusRead || this.starting || this.stopping || (noViewers && this.wanted());
+    while (occupied()) {
+      if (Date.now() - t0 > timeoutMs) throw new Error('Appareil occupé, réessayez dans un instant');
+      await sleep(200);
+    }
+    this.busy = true; // posé sans attente depuis le test : aucune autre commande ne peut s'intercaler
+    let release;
+    this.statusRead = new Promise((r) => { release = r; }); // photo et lecture de batterie attendent la fin
+    try {
+      if (this.live) await this.stopLive();
+      return await fn();
+    } finally {
+      release();
+      this.statusRead = null;
+      this.busy = false;
+      if (this.wanted()) this.startLive();
+    }
+  }
+
+  /** gphoto2 en anglais (valeurs stables quelle que soit la langue), arrêt en douceur au dépassement de délai. */
+  gp(args, timeoutMs = 20000) {
+    return this.run(`LANG=C LC_ALL=C gphoto2 ${args}`, timeoutMs, { timeoutSignal: 'SIGINT' }).promise;
+  }
+
+  /** { clé: { label, readonly, current, choices } } pour les réglages demandés, en une commande. */
+  async readConfig(keys) {
+    const out = await this.gp(keys.map((k) => `--get-config ${k}`).join(' '));
+    const result = {};
+    const blocks = out.split(/^END\s*$/m);
+    keys.forEach((key, i) => {
+      const b = blocks[i] || '';
+      const field = (name) => (new RegExp(`^${name}:\\s*(.*)$`, 'm').exec(b) || [])[1]?.trim();
+      if (!field('Label')) return;
+      result[key] = {
+        label: field('Label'),
+        readonly: field('Readonly') === '1',
+        current: field('Current') ?? '',
+        choices: [...b.matchAll(/^Choice:\s*\d+\s+(.*)$/gm)].map((m) => m[1].trim())
+      };
+    });
+    return result;
+  }
+
+  /** Pousse des réglages (le mode d'exposition d'abord : vitesse et ouverture n'existent qu'en manuel). */
+  async writeConfig(values) {
+    const entries = Object.entries(values).filter(([, v]) => v !== undefined && v !== null && v !== '');
+    if (!entries.length) return;
+    entries.sort(([a], [b]) => (a === 'autoexposuremodedial' ? -1 : b === 'autoexposuremodedial' ? 1 : 0));
+    await this.gp(entries.map(([k, v]) => `--set-config ${k}=${quoteArg(v)}`).join(' '));
+    console.log(`[gphoto2] réglages : ${entries.map(([k, v]) => `${k}=${v}`).join(', ')}`);
+  }
+
+  /** Réglages voulus selon le mode : rien (boîtier), ceux de l'admin (manuel), base + calibrage (auto). */
+  controlTarget() {
+    const c = this.control || {};
+    if (c.mode === 'manual') return Object.fromEntries(Object.entries(c.manual || {}).filter(([k, v]) => MANUAL_KEYS.includes(k) && v !== ''));
+    if (c.mode === 'auto') return { ...AUTO_BASE, ...(c.auto?.profile || AUTO_DEFAULT).settings };
+    return {};
+  }
+
+  /** Pousse ce qui diffère de ce qui a déjà été appliqué depuis la détection. */
+  async applyControl() {
+    const target = this.controlTarget();
+    const diff = Object.fromEntries(Object.entries(target).filter(([k, v]) => this.applied[k] !== v));
+    if (!Object.keys(diff).length) return;
+    await this.writeConfig(diff);
+    Object.assign(this.applied, diff);
+  }
+
+  /** Nouveau réglage de l'admin : appliqué dès que plus personne n'utilise la borne (jamais pendant une séance). */
+  setControl(control) {
+    const next = control || { mode: 'camera' };
+    if (JSON.stringify(next) === JSON.stringify(this.control)) return;
+    this.control = next;
+    this.refreshFlashWarning(); // réglage sans flash gardé juste après un calibrage qui l'a levé
+    if (!this.model) return; // pas encore détecté : appliqué à la détection
+    clearTimeout(this.controlTimer);
+    this.controlTimer = setTimeout(() => {
+      this.exclusive(() => this.applyControl(), { timeoutMs: 10 * 60 * 1000, noViewers: true })
+        .catch((e) => console.warn(`[gphoto2] réglages du boîtier non appliqués : ${e.message}`));
+    }, 500);
+  }
+
+  /** Admin : valeurs actuelles et choix possibles de chaque réglage, lus sur le boîtier. */
+  readSettings() {
+    return this.exclusive(() => this.readConfig(MANUAL_KEYS), { timeoutMs: 15000 });
+  }
+
+  /**
+   * Calibrage sur place (mode auto) : photos de test pour trouver l'exposition du lieu (voir control.js).
+   * Refusé pendant une séance. Les réglages du boîtier sont remis comme avant à la fin ; le profil trouvé
+   * n'est appliqué que si l'admin le garde.
+   */
+  async calibrateVenue(dir, onStep = () => {}, { evictViewers = false } = {}) {
+    if (this.calibrating) throw new Error('Calibrage déjà en cours');
+    // Aucune séance en cours (vérifié par l'appelant) : le seul aperçu ouvert est celui de l'écran de
+    // calibrage, qu'on ferme ici plutôt que d'attendre que le navigateur coupe sa connexion.
+    if (evictViewers) this.mjpeg.close();
+    for (let i = 0; i < 30 && this.wanted(); i++) await sleep(200);
+    if (this.wanted()) throw new Error('Une séance est en cours sur la borne : réessayez quand elle est revenue à l\'accueil');
+    this.calibrating = { step: 0, label: 'Préparation du boîtier', shots: [] };
+    onStep(this.calibrating);
+    try {
+      return await this.exclusive(async () => {
+        const keys = [...new Set([...Object.keys(AUTO_BASE), 'shutterspeed', 'aperture', 'iso'])];
+        const before = await this.readConfig(keys);
+        try {
+          const result = await runCalibration({
+            flashControl: this.flashControl(),
+            write: (v) => this.writeConfig(v),
+            shoot: async (file) => {
+              await this.gp(`--set-config capturetarget=0 --capture-image-and-download --filename ${quoteArg(file)} --force-overwrite`, 30000)
+                .catch(async (e) => { await this.recover(); throw e; });
+              if (!fs.existsSync(file)) throw new Error('le boîtier n\'a pas rendu de photo');
+            },
+            raiseFlash: () => this.gp('--set-config popupflash=1', 8000).catch(() => {})
+          }, {
+            dir,
+            onStep: (s) => {
+              this.calibrating = { ...this.calibrating, step: s.step, label: s.label, shots: s.shot ? [...this.calibrating.shots, s.shot] : this.calibrating.shots };
+              onStep(this.calibrating);
+            }
+          });
+          // Une photo de test a flashé : le flash est levé (il ne se rabat qu'à la main)
+          if (result.shots.some((sh) => sh.flashFired)) { this.flashUpKnown = true; this.refreshFlashWarning(); }
+          return result;
+        } finally {
+          // Réglages d'avant le calibrage, puis ceux du mode choisi dans l'admin
+          await this.writeConfig(Object.fromEntries(Object.entries(before).filter(([, v]) => !v.readonly).map(([k, v]) => [k, v.current]))).catch(() => {});
+          this.applied = {};
+          await this.applyControl().catch(() => {});
+        }
+      }, { timeoutMs: 15000, noViewers: true });
+    } finally {
+      this.calibrating = null;
+    }
+  }
+
   /** Le flash intégré doit-il être levé pour la prochaine photo ? (mode on, ou auto et scène sombre) */
   wantFlash() {
+    if (this.control?.mode === 'auto') return !!(this.control.auto?.profile || AUTO_DEFAULT).flash; // choisi par le calibrage
     const mode = this.opts.flash || 'off';
     if (mode === 'on') return true;
     if (mode === 'auto') return this.sceneLuma !== null && this.sceneLuma < (this.opts.flashAutoThreshold ?? 60);
@@ -373,6 +620,7 @@ export class Gphoto2Camera extends BaseCamera {
     const t0 = Date.now();
     this.busy = true; // bloque la relance du live et la bascule de pilote
     this.arming = (async () => {
+      if (this.statusRead) await this.statusRead; // lecture de batterie en cours : elle finit d'abord
       const tStop = Date.now();
       await this.stopLive(false); // l'ouverture de la liaison gphoto2 sert de pause de stabilisation
       const stopMs = Date.now() - tStop;
@@ -434,6 +682,7 @@ export class Gphoto2Camera extends BaseCamera {
         return destFile;
       }
       // Sans pré-armement : on coupe le live maintenant et tout se fait à « 0 » (mise au point comprise).
+      if (this.statusRead) await this.statusRead; // lecture de batterie en cours : elle finit d'abord
       this.busy = true;
       await this.stopLive();
       await this.raiseFlash();
@@ -472,9 +721,14 @@ export class Gphoto2Camera extends BaseCamera {
       liveview: !!this.live,
       standby: this.opts.liveview && !this.live && !this.starting && !this.failing,
       model: this.model || null,
+      firmware: this.firmware || null,
+      battery: this.battery,
+      control: this.control?.mode || 'camera',
+      calibrating: this.calibrating ? { step: this.calibrating.step, label: this.calibrating.label } : null,
       flashControl: this.flashControl(),
       flashFired: this.flashFired ?? null, // dernière photo : true = flash parti, false = non, null = pas encore de photo
       flashFiredAt: this.flashFiredAt || null,
+      flashStray: !!this.flashWarn, // flash levé alors que la borne ne le veut pas : à rabattre à la main
       flash: this.opts.flash || 'off',
       sceneLuma: this.sceneLuma,
       lastCaptureError: this.lastCaptureError || null,
@@ -486,6 +740,9 @@ export class Gphoto2Camera extends BaseCamera {
 
   async shutdown() {
     this.opts.liveview = false;
+    clearInterval(this.batteryTimer);
+    clearTimeout(this.controlTimer);
+    if (this.statusRead) await this.statusRead;
     clearTimeout(this.idleTimer);
     clearTimeout(this.pendingTimer);
     await this.disarm().catch(() => {});

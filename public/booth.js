@@ -107,6 +107,8 @@ function applyBoot() {
   root.style.setProperty('--on-secondary', readableOn(c.secondary, c.background, c.text, c.onPrimary, '#ffffff', '#000000'));
   root.style.setProperty('--on-surface', readableOn(c.surface, c.text, c.background, c.secondary, '#ffffff', '#000000'));
   document.body.dataset.font = theme.font || 'system';
+  document.body.dataset.cursor = ['idle', 'hide'].includes(booth.cursor) ? booth.cursor : 'show';
+  nudgeCursor();
   document.body.style.backgroundImage = theme.backgroundImage ? `url("${theme.backgroundImage}")` : '';
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', theme.colors.background);
   document.title = booth.name;
@@ -117,7 +119,8 @@ function applyBoot() {
   state.primaryColor = theme.colors.primary;
 
   const t = (id, key) => { const el = $(id); if (el) el.textContent = texts[key] || ''; };
-  showWelcome(); renderPaperBadge(); t('#txtChooseTemplate', 'chooseTemplate'); t('#txtGetReady', 'getReady');
+  showWelcome(); renderPaperBadge(); renderBatteryBadge();
+  $('#flashBadge').classList.toggle('hidden', !state.boot.camera?.flashStray); t('#txtChooseTemplate', 'chooseTemplate'); t('#txtGetReady', 'getReady');
   t('#btnStart', 'start'); t('#txtReview', 'review'); t('#btnRetake', 'retake'); t('#btnKeep', 'keep');
   t('#txtCopies', 'copies'); t('#btnPrint', 'print'); t('#btnNoPrint', 'noPrint'); t('#txtPrinting', 'printing');
   t('#txtThanks', 'thanks'); t('#btnFinish', 'finish');
@@ -143,6 +146,14 @@ async function renderIdleGallery() {
   delete btn.dataset.deckThumb;
 }
 
+/** Curseur « masqué quand la souris ne bouge pas » : il réapparaît au mouvement, disparaît 3 s après. */
+function nudgeCursor() {
+  document.body.classList.remove('cursor-idle');
+  clearTimeout(nudgeCursor.t);
+  if (document.body.dataset.cursor === 'idle') nudgeCursor.t = setTimeout(() => document.body.classList.add('cursor-idle'), 3000);
+}
+window.addEventListener('mousemove', nudgeCursor, { passive: true });
+
 /**
  * Écran tactile ? Ce que le navigateur annonce au chargement, corrigé par le premier vrai toucher
  * (certains écrans tactiles se déclarent comme une souris). Sert à ne pas inviter à toucher un écran
@@ -164,6 +175,16 @@ async function renderWifiQr() {
   if (!wifi) return;
   $('#wifiQrImg').src = wifi.dataUrl;
   $('#wifiSsid').textContent = wifi.ssid;
+}
+
+/** Pastille pour l'opérateur quand la batterie du boîtier est à 25 % ou moins (rouge sous 10 %). */
+function renderBatteryBadge() {
+  const b = state.boot?.camera?.battery;
+  const el = $('#batteryBadge');
+  const low = Number.isFinite(b?.percent) && b.percent <= 25;
+  el.classList.toggle('hidden', !low);
+  el.classList.toggle('empty', low && b.percent < 10);
+  if (low) el.textContent = `Batterie boîtier : ${b.level}`;
 }
 
 /** Pastille discrète pour l'opérateur, en bas à droite, quand le papier est bas (seuil de l'admin) ou épuisé. */
@@ -1279,6 +1300,8 @@ function connectWs() {
     try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'deck') { onDeckPress(msg.id); return; }
     if (msg.type === 'sessions' && state.screen === 'idle') renderIdleGallery(); // photo supprimée depuis l'admin
+    if (msg.type === 'flashStray') { if (state.boot) { state.boot.camera.flashStray = msg.stray; $('#flashBadge').classList.toggle('hidden', !msg.stray); } return; }
+    if (msg.type === 'battery') { if (state.boot) { state.boot.camera.battery = msg.battery; renderBatteryBadge(); } return; }
     if (msg.type === 'deckInfo') { // Stream Deck branché ou débranché : la galerie se met à sa taille
       state.deck = msg;
       if (state.screen === 'gallery') renderGalleryGrid();

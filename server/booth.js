@@ -47,14 +47,20 @@ export class Booth {
     this.onJob = (job) => this.onPrinterJob(job);
     printer.on('job', this.onJob);
     this.onLive = (streaming) => this.broadcast({ type: 'live', streaming });
+    this.onBattery = (battery) => this.broadcast({ type: 'battery', battery });
+    this.onFlashStray = (stray) => this.broadcast({ type: 'flashStray', stray });
     camera.onLive = this.onLive;
+    camera.onBattery = this.onBattery;
+    camera.onFlashStray = this.onFlashStray;
   }
 
   /** Bascule de matériel à chaud (voir devices.js). */
   setCamera(camera) {
-    if (this.camera) this.camera.onLive = null;
+    if (this.camera) { this.camera.onLive = null; this.camera.onBattery = null; this.camera.onFlashStray = null; }
     this.camera = camera;
     camera.onLive = this.onLive;
+    camera.onBattery = this.onBattery;
+    camera.onFlashStray = this.onFlashStray;
   }
 
   setPrinter(printer) {
@@ -82,7 +88,7 @@ export class Booth {
       adminOpen: !String(cfg.admin.pin ?? ''), // code admin vide : accès direct (tests)
       texts: cfg.texts,
       limits,
-      camera: { mode: this.camera.mode, driver: this.camera.name, streaming: this.camera.streaming(), armLeadMs: this.camera.armLeadMs() },
+      camera: { mode: this.camera.mode, driver: this.camera.name, streaming: this.camera.streaming(), armLeadMs: this.camera.armLeadMs(), battery: this.camera.battery || null, flashStray: !!this.camera.flashStray },
       printer: { driver: this.printer.name, available: this.printer.available !== false },
       templates: {
         guestCanChoose: cfg.templates.guestCanChoose,
@@ -127,6 +133,7 @@ export class Booth {
   // ---------- Sessions ----------
 
   async createSession(templateId) {
+    if (this.camera.calibrating) throw new HttpError(409, 'CAMERA_CALIBRATING', 'Réglage de l\'appareil en cours, un instant…');
     const cfg = this.cfg();
     const enabled = this.templates.enabled(cfg).map((t) => t.id);
     if (!enabled.length) throw new HttpError(409, 'NO_TEMPLATE', 'Aucun template activé');
@@ -172,6 +179,13 @@ export class Booth {
   }
 
   /** Session pas encore validée par l'invité (ni « Je la garde », ni impression) et sans photo en route. */
+  /** Un invité est-il en pleine séance (session commencée il y a moins de 10 min, pas encore terminée) ? */
+  guestActive() {
+    const recent = Date.now() - 10 * 60 * 1000;
+    return this.store.sessionsOfEvent(this.store.data.activeEventId)
+      .some((s) => ['shooting', 'review'].includes(s.status) && new Date(s.createdAt).getTime() > recent);
+  }
+
   isUnvalidated(s) {
     return ['shooting', 'review'].includes(s.status) && !s.kept && !this.armed.has(s.id) && !this.capturing.has(s.id);
   }

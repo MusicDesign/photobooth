@@ -90,11 +90,12 @@ export class Devices extends EventEmitter {
     const r = await this.resolveCamera(c);
     const key = JSON.stringify({ driver: r.driver, gphoto2: r.driver === 'gphoto2' ? c.gphoto2 : null });
     this.state.camera = { requested: c.driver, driver: r.driver, reason: r.reason, checkedAt: new Date().toISOString() };
-    if (this.camera && key === this.cameraKey) return;
+    if (this.camera && key === this.cameraKey) { this.camera.setControl?.(c.control); return; } // réglages de prise de vue : à chaud
     if (this.camera?.busy) return; // photo en cours : on rebasculera au prochain passage
     let next;
     try {
       next = createCamera({ ...c, driver: r.driver });
+      next.setControl?.(c.control); // appliqué à la détection du boîtier
       await next.init();
     } catch (e) {
       // Pilote injoignable (ex. gphoto2 non installé) : la borne démarre quand même sur le repli.
