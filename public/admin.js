@@ -299,7 +299,7 @@ function templatesSection() {
       <canvas class="tpl-preview" data-tpl="${esc(t.id)}" width="${Math.round(t.width * (160 / Math.max(t.width, t.height)))}" height="${Math.round(t.height * (160 / Math.max(t.width, t.height)))}"></canvas>
       <div class="tpl-meta">
         <strong>${esc(t.name)}</strong> <code>${esc(t.id)}</code><br>
-        ${t.format && S.formats[t.format] ? esc(S.formats[t.format].name) : `${t.width} × ${t.height} px`} · ${t.shots} photo${t.shots > 1 ? 's' : ''} · ${t.layers.length} calque${t.layers.length > 1 ? 's' : ''}<br><br>
+        ${t.kind === 'gif' ? `<span class="badge">GIF animé</span> ${cfg.gifEnabled ? '' : '<span class="badge warn">GIF désactivés</span> '}` : ''}${t.format && S.formats[t.format] ? esc(S.formats[t.format].name) : `${t.width} × ${t.height} px`} · ${t.kind === 'gif' ? `${t.shots} poses` : `${t.shots} photo${t.shots > 1 ? 's' : ''}`} · ${t.layers.length} calque${t.layers.length > 1 ? 's' : ''}<br><br>
         <div class="row">
           <a class="btn secondary small" href="#editor=${encodeURIComponent(t.id)}">Modifier</a>
           <label class="inline"><input type="checkbox" data-enable="${esc(t.id)}" ${cfg.enabled.includes(t.id) ? 'checked' : ''}> Activé</label>
@@ -315,6 +315,7 @@ function templatesSection() {
     <h3>Nouveau template</h3>
     <div class="row">
       <label style="flex:1;min-width:220px">Nom <input name="name" required placeholder="Mariage Julie & Marc"></label>
+      <label>Type <select name="kind"><option value="photo">Photo (tirage)</option><option value="gif">GIF animé (numérique)</option></select></label>
       <label>Format <select name="format">${formatOptions(cfg.defaultFormat || S.defaultFormat)}</select></label>
       <button class="btn primary" type="submit">Créer et ouvrir l'éditeur</button>
     </div>
@@ -328,6 +329,8 @@ function templatesSection() {
       <span class="sep"></span>
       <label class="inline">Format par défaut <select id="defaultFormat">${formatOptions(cfg.defaultFormat || S.defaultFormat)}</select></label>
     </div>
+    <label class="inline"><input id="gifEnabled" type="checkbox" ${cfg.gifEnabled ? 'checked' : ''}> Proposer les GIF animés aux invités</label>
+    <small>Numérique uniquement : un GIF n'est jamais imprimé. L'invité le récupère par QR code, ou le retrouve dans la galerie de la borne. Les templates de type GIF apparaissent parmi les cadres.</small>
   </div>
   ${cards || '<p class="sub">Aucun template. Créez-en un ci-dessus.</p>'}`;
 }
@@ -651,16 +654,41 @@ function startCalibCountdown() {
   }, 1000);
 }
 
-function openLightbox(url) {
+/** Photo en grand par-dessus l'admin (calibrage, sessions). Pas de nouvelle fenêtre : sur la borne en plein écran, elle ne se fermerait pas. */
+// list : [{ url, alt }] pour passer d'une photo à l'autre (flèches à l'écran ou ← →), index = celle ouverte.
+function openLightbox(url, alt = 'Photo de test', list = null, index = 0) {
+  const items = list?.length ? list : [{ url, alt }];
+  let i = Math.max(0, Math.min(items.length - 1, index));
   const lb = document.createElement('div');
   lb.id = 'calibLightbox';
   lb.className = 'co-lightbox';
-  lb.innerHTML = `<img src="${esc(url)}" alt="Photo de test"><button class="btn" type="button">Fermer</button>`;
-  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  const nav = items.length > 1;
+  lb.innerHTML = `<img alt="">
+    ${nav ? '<button class="lb-arrow prev" type="button" aria-label="Photo précédente">‹</button><button class="lb-arrow next" type="button" aria-label="Photo suivante">›</button>' : ''}
+    <div class="lb-bar">${nav ? '<span class="lb-count"></span>' : ''}<button class="btn" type="button">Fermer</button></div>`;
+  const img = lb.querySelector('img');
+  const show = () => {
+    img.src = items[i].url;
+    img.alt = items[i].alt || '';
+    if (!nav) return;
+    lb.querySelector('.lb-count').textContent = `${i + 1} / ${items.length}`;
+    lb.querySelector('.prev').disabled = i === 0;
+    lb.querySelector('.next').disabled = i === items.length - 1;
+  };
+  const go = (d) => { i = Math.max(0, Math.min(items.length - 1, i + d)); show(); };
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); close(); }
+    else if (nav && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); go(e.key === 'ArrowLeft' ? -1 : 1); }
+  };
   const close = () => { lb.remove(); document.removeEventListener('keydown', onKey, true); };
-  lb.addEventListener('click', close); // clic n'importe où (ou Échap) : fermé
+  lb.addEventListener('click', (e) => {
+    const arrow = e.target.closest('.lb-arrow');
+    if (arrow) { if (!arrow.disabled) go(arrow.classList.contains('prev') ? -1 : 1); return; }
+    close(); // clic ailleurs (ou Échap) : fermé
+  });
   document.addEventListener('keydown', onKey, true);
   document.body.appendChild(lb);
+  show();
 }
 
 function keepCalibration(profile, reason) {
@@ -745,7 +773,7 @@ function sessions() {
       <td><span class="badge ${s.status === 'done' ? 'ok' : s.status === 'error' ? 'err' : ''}">${esc(s.status)}</span>${s.error ? `<br><small>${esc(s.error)}</small>` : ''}</td>
       <td>${s.copies}</td>
       <td>${S.events.length > 1 ? `<select class="small" data-move="${esc(s.id)}" title="Déplacer vers un autre événement">${moveOptions(s)}</select>` : ''}</td>
-      <td class="actions">${s.final ? `<button class="btn small secondary" data-reprint="${esc(s.id)}">Réimprimer</button> <a class="btn small" href="/g/${esc(s.id)}" target="_blank">Galerie</a> ` : ''}<button class="btn small danger" data-del-session="${esc(s.id)}" ${s.status === 'printing' ? 'disabled title="Impression en cours"' : ''}>Supprimer</button></td>
+      <td class="actions">${s.final ? `${s.gif ? '' : `<button class="btn small secondary" data-reprint="${esc(s.id)}">Réimprimer</button> `}<button class="btn small" type="button" data-view="${esc(s.final.url)}" data-alt="${s.gif ? 'GIF' : 'Photo'} ${esc(s.id)}">Voir</button> ` : ''}<button class="btn small danger" data-del-session="${esc(s.id)}" ${s.status === 'printing' ? 'disabled title="Impression en cours"' : ''}>Supprimer</button></td>
     </tr>`).join('');
 
   const exp = (content, label, n) => n
@@ -816,8 +844,8 @@ function sharing() {
       </div>
       <div>
         <h3>Adresses</h3>
-        <label>URL de base (vide = détection automatique : <code>${esc(S.shareBaseUrl)}</code>) <input name="shareBaseUrl" value="${esc(cfg.share.baseUrl)}" placeholder="http://photobooth.local:3000"></label>
-        <small>Borne en hotspot Wi-Fi : mettez ici l'adresse que les invités atteignent.</small>
+        <label>URL de base (vide = détection automatique) <input name="shareBaseUrl" value="${esc(cfg.share.baseUrl)}" placeholder="http://photobooth.local:3000"></label>
+        <small>Adresse des QR codes : <code>${esc(S.shareBaseUrl)}</code>. Borne en hotspot Wi-Fi : mettez ici l'adresse que les invités atteignent. Sans http:// ni port, la borne les ajoute.</small>
         <label>Adresse publique (facultative) <input name="publicUrl" value="${esc(cfg.share.publicUrl || '')}" placeholder="https://photobooth.domain.fr"></label>
         <small>Remplie : les QR codes de photo y mènent. Hors du Wi-Fi de la borne, la page distante (<code>npm run remote</code>) invite l'invité à s'y connecter, puis affiche sa photo. Voir TUTORIEL.md, étape 10.8.</small>
       </div>
@@ -902,10 +930,11 @@ function galleryCard() {
 
 // ---------- Éditeur de template (calques) ----------
 
-const E = { tpl: null, selected: null, dirty: false, samplesOn: true, scale: 1, dpr: 1, assets: new Map(), samples: [], drag: null, onResize: null };
+const E = { tpl: null, selected: null, dirty: false, samplesOn: true, scale: 1, dpr: 1, assets: new Map(), samples: [], drag: null, onResize: null, gifFrame: 0, gifTimer: 0 };
+const editingGif = () => E.tpl?.kind === 'gif';
 
 const LAYER_LABEL = { photo: 'Photo', text: 'Texte', image: 'Image', rect: 'Forme' };
-const layerTitle = (l) => l.name || (l.type === 'photo' ? `Photo ${l.shot + 1}` : l.type === 'text' ? `Texte « ${String(l.text || '').split('\n')[0].slice(0, 18)} »` : LAYER_LABEL[l.type]);
+const layerTitle = (l) => l.name || (l.type === 'photo' ? (editingGif() ? 'Photo (pose en cours)' : `Photo ${l.shot + 1}`) : l.type === 'text' ? `Texte « ${String(l.text || '').split('\n')[0].slice(0, 18)} »` : LAYER_LABEL[l.type]);
 const editorId = () => decodeURIComponent(location.hash.replace(/^#editor=/, ''));
 const selectedLayer = () => E.tpl?.layers.find((l) => l.id === E.selected) || null;
 
@@ -925,7 +954,7 @@ function editorSection() {
     <div class="editor-top">
       <button class="btn" id="edBack">← Templates</button>
       <input id="edName" class="ed-name" value="${esc(E.tpl.name)}" title="Nom du template">
-      <span class="badge">${esc(fmt)} · ${t.width}×${t.height} px</span>
+      <span class="badge">${t.kind === 'gif' ? 'GIF animé · ' : ''}${esc(fmt)} · ${t.width}×${t.height} px</span>
       <label class="inline">Fond <input type="color" id="edBg" value="${esc(E.tpl.background)}"></label>
       <span class="sep"></span>
       <span class="muted">Ajouter</span>
@@ -942,6 +971,7 @@ function editorSection() {
     <div class="editor-body">
       <div class="editor-canvas-wrap" id="edWrap"><canvas id="edCanvas" tabindex="0"></canvas></div>
       <aside class="editor-side">
+        ${t.kind === 'gif' ? gifFields() : ''}
         <h3>Calques <small>(le premier est au-dessus)</small></h3>
         <ul id="edLayers" class="layer-list"></ul>
         <h3>Propriétés</h3>
@@ -950,6 +980,30 @@ function editorSection() {
     </div>
     <p class="muted small">Glisser = déplacer · tirer un coin = redimensionner (Maj conserve les proportions) · flèches = 1 px (Maj = 10) · Suppr = supprimer · poignée ronde = rotation (Maj = pas de 15°). Les calques peuvent dépasser du tirage ; ils se collent aux bords et au centre (Alt maintenu : sans aimant).</p>
   </div>`;
+}
+
+/** Réglages d'un template GIF : poses, vitesse, aller-retour, décompte entre les poses. */
+function gifFields() {
+  const g = E.tpl.gif;
+  return `
+        <h3>Animation</h3>
+        <div class="props gif-props">
+          <div class="row2">
+            <label>Poses <input type="number" data-g="frames" min="2" max="10" value="${g.frames}"></label>
+            <label>Vitesse (ms par image) <input type="number" data-g="frameMs" min="100" max="2000" step="50" value="${g.frameMs}"></label>
+          </div>
+          <label>Décompte entre deux poses (s) <input type="number" data-g="poseSec" min="1" max="10" value="${g.poseSec}"></label>
+          <label class="inline"><input type="checkbox" data-g="boomerang" ${g.boomerang ? 'checked' : ''}> Aller-retour (1 2 3 4 3 2…)</label>
+          <small class="muted">Chaque pose s'affiche dans les calques photo ; le reste (cadre, textes, logo) est identique sur toutes les images. La première pose garde le décompte normal. Un GIF n'est jamais imprimé.</small>
+        </div>`;
+}
+
+/** Aperçu animé de l'éditeur : les photos d'exemple défilent à la vitesse du GIF. */
+function startGifPreview() {
+  clearInterval(E.gifTimer);
+  E.gifTimer = 0;
+  if (!editingGif()) return;
+  E.gifTimer = setInterval(() => { E.gifFrame++; if (E.samplesOn && !E.drag) renderEditor(); }, E.tpl.gif.frameMs);
 }
 
 function markDirty() {
@@ -975,7 +1029,8 @@ function renderEditor() {
   const cv = $('#edCanvas');
   if (!cv || !E.tpl) return;
   const ctx = cv.getContext('2d');
-  const photos = E.samplesOn ? photosFromSamples({ shots: Math.max(...E.tpl.layers.filter((l) => l.type === 'photo').map((l) => l.shot), -1) + 1 }, E.samples) : {};
+  let photos = E.samplesOn ? photosFromSamples({ shots: Math.max(...E.tpl.layers.filter((l) => l.type === 'photo').map((l) => l.shot), -1) + 1 }, E.samples) : {};
+  if (editingGif() && E.samplesOn && E.samples.length) photos = { 0: E.samples[E.gifFrame % E.samples.length] }; // pose après pose
   renderTemplate(ctx, E.tpl, { scale: E.scale * E.dpr, photos, cutoutPhotos: cutoutsFromSamples(photos), assets: E.assets, placeholder: true });
   // Repères du magnétisme (bord ou centre du tirage atteint)
   if (E.guides?.length) {
@@ -1176,7 +1231,7 @@ function renderProps() {
   if (l.type === 'photo') {
     const cut = l.cutout || 'none';
     const cutOpts = { none: 'Aucun', ai: 'IA (sans fond particulier)', green: 'Fond vert', blue: 'Fond bleu' };
-    specific = `<label>Photo affichée <select data-p="shot" data-num>${shots}</select></label>${n('radius', 'Coins arrondis (px)', 0, 2000)}
+    specific = `${editingGif() ? '<small class="muted">GIF : ce calque montre la pose en cours.</small>' : `<label>Photo affichée <select data-p="shot" data-num>${shots}</select></label>`}${n('radius', 'Coins arrondis (px)', 0, 2000)}
       <small class="muted">Plusieurs calques peuvent afficher la même photo (bande dupliquée).</small>
       <label>Détourage <select data-p="cutout" id="pCutout">${Object.entries(cutOpts).map(([k, v]) => `<option value="${k}" ${cut === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       ${cut === 'ai' ? `
@@ -1496,7 +1551,7 @@ function addLayer(type) {
   if (type === 'photo') {
     const used = new Set(E.tpl.layers.filter((x) => x.type === 'photo').map((x) => x.shot));
     let shot = 0;
-    while (used.has(shot)) shot++;
+    while (used.has(shot) && !editingGif()) shot++; // GIF : tous les calques photo montrent la pose en cours
     const w = Math.round(W * 0.4), h = Math.round(w * 2 / 3);
     l = { type, shot, name: '', x: Math.round((W - w) / 2), y: Math.round((H - h) / 2), width: w, height: h, radius: 0, opacity: 1, visible: true };
   } else if (type === 'text') {
@@ -1547,7 +1602,7 @@ async function onImageFile(e) {
 
 async function saveTemplate() {
   try {
-    const t = await api(`/api/admin/templates/${encodeURIComponent(E.tpl.id)}`, { method: 'PUT', body: { name: E.tpl.name, background: E.tpl.background, layers: E.tpl.layers } });
+    const t = await api(`/api/admin/templates/${encodeURIComponent(E.tpl.id)}`, { method: 'PUT', body: { name: E.tpl.name, background: E.tpl.background, layers: E.tpl.layers, gif: E.tpl.gif || undefined } });
     E.tpl = { ...E.tpl, ...t };
     const i = S.templates.findIndex((x) => x.id === t.id);
     if (i >= 0) S.templates[i] = t;
@@ -1579,6 +1634,13 @@ function bindEditor() {
   document.querySelectorAll('[data-add]').forEach((b) => b.onclick = () => addLayer(b.dataset.add));
   $('#edImageFile').onchange = onImageFile;
   $('#edSave').onclick = saveTemplate;
+  document.querySelectorAll('[data-g]').forEach((el) => el.addEventListener('change', () => {
+    const k = el.dataset.g;
+    E.tpl.gif[k] = el.type === 'checkbox' ? el.checked : Number(el.value);
+    markDirty();
+    if (k === 'frameMs') startGifPreview();
+  }));
+  startGifPreview();
   cv.addEventListener('pointerdown', onPointerDown);
   cv.addEventListener('pointermove', onPointerMove);
   cv.addEventListener('pointerup', onPointerUp);
@@ -1590,6 +1652,8 @@ function bindEditor() {
 function unbindEditor() {
   if (E.onResize) window.removeEventListener('resize', E.onResize);
   E.onResize = null;
+  clearInterval(E.gifTimer);
+  E.gifTimer = 0;
   E.drag = null;
 }
 
@@ -1721,9 +1785,9 @@ function bindSection(sec) {
     const saveTemplates = () => {
       const enabled = [...document.querySelectorAll('[data-enable]')].filter((c) => c.checked).map((c) => c.dataset.enable);
       const def = document.querySelector('input[name=defaultTpl]:checked')?.value || enabled[0] || '';
-      saveConfig({ templates: { enabled, default: def, guestCanChoose: $('#guestCanChoose').checked, defaultFormat: $('#defaultFormat').value } }, 'Templates enregistrés');
+      saveConfig({ templates: { enabled, default: def, guestCanChoose: $('#guestCanChoose').checked, defaultFormat: $('#defaultFormat').value, gifEnabled: $('#gifEnabled').checked } }, 'Templates enregistrés');
     };
-    document.querySelectorAll('[data-enable], input[name=defaultTpl], #guestCanChoose, #defaultFormat').forEach((el) => el.addEventListener('change', saveTemplates));
+    document.querySelectorAll('[data-enable], input[name=defaultTpl], #guestCanChoose, #defaultFormat, #gifEnabled').forEach((el) => el.addEventListener('change', saveTemplates));
     document.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm(`Supprimer le template « ${b.dataset.del} » ?`)) return;
       try { await api(`/api/admin/templates/${encodeURIComponent(b.dataset.del)}`, { method: 'DELETE' }); toast('Template supprimé'); refresh(); } catch (e) { toast(e.message, true); }
@@ -1744,6 +1808,9 @@ function bindSection(sec) {
   if (sec === 'editor') bindEditor();
 
   if (sec === 'sessions') {
+    const views = [...document.querySelectorAll('[data-view]')]; // les photos de la liste, dans l'ordre affiché
+    const viewList = views.map((b) => ({ url: b.dataset.view, alt: b.dataset.alt }));
+    views.forEach((b, k) => b.addEventListener('click', () => openLightbox(null, null, viewList, k)));
     document.querySelectorAll('[data-reprint]').forEach((b) => b.addEventListener('click', async () => {
       const copies = Number(prompt('Nombre de copies à réimprimer ?', '1'));
       if (!copies) return;

@@ -40,6 +40,9 @@ export function apiRouter({ booth }) {
     res.json(await booth.addShot(req.params.id, index, req.file?.buffer || null));
   });
 
+  /** GIF : toutes les poses sont reprises. */
+  r.post('/session/:id/restart', (req, res) => res.json(booth.restartShots(req.params.id)));
+
   r.post('/session/:id/compose', async (req, res) => {
     res.json(await booth.composeSession(req.params.id));
   });

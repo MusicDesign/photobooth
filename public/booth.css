@@ -96,6 +96,10 @@ body[data-font="serif"] { font-family: Georgia, "Times New Roman", serif; }
 .template-card:focus-visible, .retake-thumb:focus-visible { outline: 5px solid var(--accent); outline-offset: 6px; }
 .template-card canvas { border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); background: repeating-conic-gradient(#e9e9e9 0 25%, #fff 0 50%) 0 0 / 20px 20px; }
 .template-name { font-weight: 800; font-size: 22px; color: var(--on-surface); }
+/* Pastille « GIF » : cadres animés et GIF de la galerie */
+.template-card.is-gif, .gallery-thumb { position: relative; }
+.gif-tag { position: absolute; top: 26px; left: 26px; background: rgba(0, 0, 0, 0.62); color: #fff; font-weight: 800; font-size: 16px; letter-spacing: 0.06em; padding: 6px 10px; border-radius: 8px; pointer-events: none; }
+.gallery-thumb .gif-tag { top: 16px; left: 16px; font-size: 13px; padding: 4px 8px; }
 
 /* Prise de vue */
 .capture-layout, .review-layout { display: flex; align-items: center; justify-content: center; gap: 56px; width: 100%; height: 100%; }

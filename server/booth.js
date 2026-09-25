@@ -5,7 +5,24 @@ import { SESSIONS_DIR, PUBLIC_DIR } from './paths.js';
 import { HttpError, newId, lanIp } from './util.js';
 import { wifiStatus } from './network.js';
 import { samplePhotos } from './samples.js';
-import { compose, thumbnail, normalizeShot } from './compositor.js';
+import { compose, composeGif, thumbnail, normalizeShot } from './compositor.js';
+
+/**
+ * Adresse saisie dans l'admin, complétée pour que le QR code ouvre bien une page : sans schéma, le téléphone
+ * y voit du texte et lance une recherche. « macbook.local » → « http://macbook.local:3000 » (port de la borne
+ * si aucun n'est donné). Une adresse qui commence par http(s):// est gardée telle quelle.
+ */
+export function completeUrl(raw, { scheme = 'http', port = null } = {}) {
+  let s = String(raw ?? '').trim().replace(/\/+$/, '');
+  if (!s) return '';
+  const bare = !/^[a-z][a-z0-9+.-]*:\/\//i.test(s); // adresse complète : on la garde telle quelle
+  if (bare) s = `${scheme}://${s}`;
+  try {
+    const u = new URL(s);
+    if (bare && port && !/^[^/]*:\d+/.test(s.slice(scheme.length + 3))) u.port = String(port);
+    return u.toString().replace(/\/+$/, '');
+  } catch { return s; }
+}
 
 /** Version du code de la borne (date de modification des fichiers servis) : la page se recharge si elle change. */
 function clientVersion() {
@@ -124,7 +141,7 @@ export class Booth {
   }
 
   shareBaseUrl() {
-    const configured = this.cfg().share.baseUrl?.trim();
+    const configured = completeUrl(this.cfg().share.baseUrl, { port: this.port });
     return (configured || `http://${wifiStatus().ip || lanIp()}:${this.port}`).replace(/\/$/, ''); // l'IP Wi-Fi : celle que joignent les téléphones
   }
 
@@ -147,6 +164,7 @@ export class Booth {
       createdAt: new Date().toISOString(),
       templateId: template.id,
       status: 'shooting',
+      kind: template.kind, // 'gif' : numérique uniquement, jamais imprimé
       shots: Array(template.shots).fill(null),
       retakes: 0,
       copies: 0,
@@ -332,6 +350,7 @@ export class Booth {
       createdAt: s.createdAt,
       templateId: s.templateId,
       templateName: template?.name || s.templateId,
+      gif: s.kind === 'gif',
       status: s.status,
       shotsExpected: template?.shots ?? s.shots.length,
       shots: s.shots.map((sh, index) => (sh ? { index, url: urlFor(sh.file), takenAt: sh.takenAt } : null)),
@@ -341,7 +360,7 @@ export class Booth {
       copies: s.copies,
       unlocked: s.unlocked,
       maxCopies: s.unlocked ? cfg.limits.operatorMaxCopies : cfg.limits.maxCopiesPerSession,
-      final: s.final ? { url: urlFor(s.final.file), thumbUrl: urlFor(s.final.thumb) } : null,
+      final: s.final ? { url: urlFor(s.final.file), thumbUrl: urlFor(s.final.thumb), gif: s.kind === 'gif' } : null,
       printJobs: s.printJobs,
       error: s.error || null
     };
@@ -416,16 +435,38 @@ export class Booth {
     return { session: v, shot: v.shots[index] };
   }
 
+  /** GIF : « Refaire » reprend toutes les poses (compté comme une reprise). */
+  restartShots(id) {
+    const s = this.load(id);
+    const cfg = this.cfg();
+    if (!['shooting', 'review'].includes(s.status)) throw new HttpError(409, 'SESSION_CLOSED', 'Cette session est terminée');
+    if (cfg.limits.maxRetakesPerSession >= 0 && s.retakes >= cfg.limits.maxRetakesPerSession) throw new HttpError(409, 'RETAKE_LIMIT', 'Nombre de reprises atteint');
+    for (const sh of s.shots) if (sh) { try { fs.unlinkSync(sh.file); } catch { /* déjà supprimé */ } }
+    s.shots = s.shots.map(() => null);
+    s.retakes += 1;
+    s.final = null;
+    s.status = 'shooting';
+    this.store.saveSession(s);
+    return this.view(s);
+  }
+
   async composeSession(id) {
     const s = this.load(id);
     const template = this.templates.get(s.templateId);
     const missing = s.shots.findIndex((sh) => !sh);
     if (missing >= 0) throw new HttpError(409, 'SHOTS_MISSING', `Il manque la photo ${missing + 1}`);
     const dir = this.sessionDir(s.id);
-    const finalFile = path.join(dir, 'final.jpg');
+    const gif = s.kind === 'gif' && template.kind === 'gif';
+    const finalFile = path.join(dir, gif ? 'final.gif' : 'final.jpg');
     const thumbFile = path.join(dir, 'thumb.jpg');
-    await compose(template, s.shots.map((sh) => sh.file), finalFile, { mirror: !!s.mirror });
-    await thumbnail(finalFile, thumbFile);
+    if (gif) {
+      const poster = path.join(dir, 'poster.jpg');
+      await composeGif(template, s.shots.map((sh) => sh.file), finalFile, { mirror: !!s.mirror, posterFile: poster });
+      await thumbnail(poster, thumbFile); // miniature fixe : la galerie reste légère
+    } else {
+      await compose(template, s.shots.map((sh) => sh.file), finalFile, { mirror: !!s.mirror });
+      await thumbnail(finalFile, thumbFile);
+    }
     s.final = { file: finalFile, thumb: thumbFile, composedAt: new Date().toISOString() };
     s.status = 'review';
     this.store.saveSession(s);
@@ -458,6 +499,10 @@ export class Booth {
     const cfg = this.cfg();
     if (s.status !== 'review') throw new HttpError(409, 'NOT_REVIEWED', 'Le montage n\'est pas prêt');
     if (!s.final) throw new HttpError(409, 'NO_FINAL', 'Aucune image finale');
+    if (s.kind === 'gif') { // numérique uniquement : on termine sans tirage
+      if (copies !== 0) throw new HttpError(409, 'GIF_NO_PRINT', 'Un GIF ne s\'imprime pas');
+      return this.sendToPrinter(s, 0, 'guest');
+    }
     // Quota atteint ou imprimante absente : l'invité doit toujours pouvoir terminer sans imprimer.
     const printerOff = this.printer.available === false;
     const min = cfg.limits.allowZeroCopies || printerOff || this.quotaRemaining() === 0 || this.paperLeft() === 0 ? 0 : 1;
@@ -478,6 +523,7 @@ export class Booth {
   async reprint(id, copies) {
     const s = this.load(id);
     if (!s.final) throw new HttpError(409, 'NO_FINAL', 'Aucune image finale pour cette session');
+    if (s.kind === 'gif') throw new HttpError(409, 'GIF_NO_PRINT', 'Un GIF ne s\'imprime pas');
     if (!Number.isInteger(copies) || copies < 1 || copies > 50) throw new HttpError(400, 'COPIES_INVALID', 'Nombre de copies invalide');
     return this.sendToPrinter(s, copies, 'admin');
   }
@@ -490,7 +536,7 @@ export class Booth {
       .filter((s) => s.final && !this.isUnvalidated(s))
       .map((s) => {
         const v = this.view(s);
-        return { id: v.id, createdAt: v.createdAt, url: v.final.url, thumbUrl: v.final.thumbUrl, printing: s.status === 'printing' };
+        return { id: v.id, createdAt: v.createdAt, url: v.final.url, thumbUrl: v.final.thumbUrl, gif: v.gif, printing: s.status === 'printing' };
       });
   }
 
@@ -506,6 +552,7 @@ export class Booth {
     if (!s || s.eventId !== this.store.data.activeEventId || !s.final || this.isUnvalidated(s)) {
       throw new HttpError(404, 'SESSION_NOT_FOUND', 'Photo introuvable dans la galerie');
     }
+    if (s.kind === 'gif') throw new HttpError(409, 'GIF_NO_PRINT', 'Un GIF ne s\'imprime pas');
     const operator = mode === 'operator';
     if (operator && String(pin ?? '') !== String(cfg.limits.operatorPin)) throw new HttpError(403, 'BAD_PIN', 'Code opérateur incorrect');
     const max = operator ? cfg.limits.operatorMaxCopies : cfg.limits.maxCopiesPerSession;
@@ -607,7 +654,7 @@ export class Booth {
 
   /** Lien d'une photo : l'adresse publique si elle est réglée, sinon l'adresse de la borne sur le réseau. */
   photoUrl(id) {
-    const pub = this.cfg().share.publicUrl?.trim().replace(/\/$/, '');
+    const pub = completeUrl(this.cfg().share.publicUrl, { scheme: 'https' });
     return `${pub || this.shareBaseUrl()}/g/${id}`;
   }
 

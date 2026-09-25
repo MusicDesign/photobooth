@@ -115,6 +115,10 @@ async function start() {
     action: 'allow',
     overrideBrowserWindowOptions: { parent: win, modal: true, width: 1000, height: 800, autoHideMenuBar: true }
   }));
+  // Par-dessus la borne en plein écran, la fenêtre n'a pas toujours de bouton de fermeture : Échap la ferme.
+  win.webContents.on('did-create-window', (child) => {
+    child.webContents.on('before-input-event', (e, input) => { if (input.type === 'keyDown' && input.key === 'Escape') child.close(); });
+  });
   // Page plantée : on la recharge plutôt que de laisser un écran noir.
   win.webContents.on('render-process-gone', () => setTimeout(() => win.reload(), 1000));
 

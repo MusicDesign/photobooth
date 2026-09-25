@@ -441,6 +441,44 @@ async function runSteps(app, camera) {
     assert.equal((await put(`/api/admin/templates/${tplA.id}`, { layers: [{ type: 'rect', x: 0, y: 0, width: 10, height: 10 }] }, ADMIN)).data.error, 'NO_PHOTO_LAYER');
   });
 
+  await step('GIF : masqué tant que désactivé, poses, animation, jamais imprimé, refaire toutes les poses', async () => {
+    const g = (await post('/api/admin/templates', { name: 'GIF soirée', kind: 'gif', format: '10x10-carre' }, ADMIN)).data;
+    assert.equal(g.kind, 'gif');
+    assert.deepEqual(g.gif, { frames: 4, frameMs: 500, boomerang: false, poseSec: 2 });
+    assert.ok(!(await j('/api/bootstrap')).data.templates.items.some((t) => t.id === g.id), 'GIF désactivés : pas proposé');
+    assert.equal((await post('/api/session', { templateId: g.id })).status, 400);
+    await put('/api/admin/config', { templates: { gifEnabled: true } }, ADMIN);
+    // Deux calques photo (même pose), 3 poses en aller-retour : 1 2 3 2
+    const layers = [
+      { type: 'photo', shot: 0, x: 0, y: 0, width: 600, height: 1200 },
+      { type: 'photo', shot: 3, x: 600, y: 0, width: 600, height: 1200 },
+      { type: 'text', text: 'GIF', x: 0, y: 0, width: 1200, height: 200, fontSize: 80, color: '#ffffff' }
+    ];
+    const saved = (await put(`/api/admin/templates/${g.id}`, { layers, gif: { frames: 3, frameMs: 300, boomerang: true } }, ADMIN)).data;
+    assert.equal(saved.shots, 3);
+    assert.ok(saved.layers.filter((l) => l.type === 'photo').every((l) => l.shot === 0), 'GIF : tous les calques photo montrent la pose');
+    const s = (await post('/api/session', { templateId: g.id })).data;
+    assert.equal(s.gif, true);
+    assert.equal(s.shotsExpected, 3);
+    for (let i = 0; i < 3; i++) await shot(s.id, i);
+    const c = (await post(`/api/session/${s.id}/compose`, {})).data;
+    assert.ok(c.final.url.endsWith('/final.gif') && c.final.thumbUrl.endsWith('/thumb.jpg') && c.final.gif);
+    const meta = await sharp(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s.id, 'final.gif'), { animated: true }).metadata();
+    // Aller-retour 1 2 3 2 à 300 ms (l'encodeur fusionne les images identiques : la durée totale fait foi)
+    assert.equal(meta.delay.reduce((a, b) => a + b, 0), 1200, `aller-retour : ${meta.delay}`);
+    assert.equal(meta.width, 800, 'GIF réduit à 800 px');
+    // Refaire : toutes les poses, une reprise comptée
+    const r = (await post(`/api/session/${s.id}/restart`, {})).data;
+    assert.ok(r.shots.every((x) => x === null) && r.retakes === 1 && !r.final);
+    for (let i = 0; i < 3; i++) await shot(s.id, i);
+    await post(`/api/session/${s.id}/compose`, {});
+    assert.equal((await post(`/api/session/${s.id}/print`, { copies: 1 })).data.error, 'GIF_NO_PRINT');
+    assert.equal((await post(`/api/session/${s.id}/print`, { copies: 0 })).data.status, 'done');
+    assert.equal((await post(`/api/admin/reprint/${s.id}`, { copies: 1 }, ADMIN)).data.error, 'GIF_NO_PRINT');
+    await put('/api/admin/config', { templates: { gifEnabled: false } }, ADMIN);
+    assert.equal((await j(`/api/admin/templates/${g.id}`, { method: 'DELETE', headers: ADMIN })).status, 200);
+  });
+
   await step('QR code Wi-Fi : désactivé par défaut, format WIFI:, caractères spéciaux échappés', async () => {
     assert.equal((await j('/api/wifi')).data.wifi, null);
     await put('/api/admin/config', { share: { wifi: { enabled: true, ssid: 'Photo;Booth', password: '' } } }, ADMIN);

@@ -21,6 +21,7 @@ function page({ theme, boothName, title = boothName, css = '', body }) {
   img{display:block;width:100%;height:auto;border-radius:12px}
   a.btn{display:inline-block;background:var(--primary);color:var(--on-primary);text-decoration:none;font-weight:700;font-size:18px;padding:16px 28px;border-radius:999px}
   a.link{color:var(--secondary);font-weight:600}
+  .gif-tag{position:absolute;top:10px;left:10px;background:rgba(0,0,0,.6);color:#fff;font:800 12px/1 system-ui,sans-serif;letter-spacing:.06em;padding:5px 7px;border-radius:6px}
   p{opacity:.75;text-align:center;max-width:520px}
   .logo{display:block;width:min(80vw,360px);height:72px;object-fit:contain;object-position:center;color:var(--secondary)}
   ${css}
@@ -48,7 +49,7 @@ export function galleryHtml({ session, theme, boothName, texts, nav = null }) {
   return page({ theme, boothName, css, body: `
   ${nav ? `<div class="nav">${arrow(nav.prev, glyphs.prev, 'Photo précédente')}<span class="count">${nav.index + 1} / ${nav.total}</span>${arrow(nav.next, glyphs.next, 'Photo suivante')}</div>` : ''}
   ${hasFinal ? `
-  <div class="card"><img src="${esc(session.final.url)}" alt="Votre photo"></div>
+  <div class="card"><img src="${esc(session.final.url)}" alt="${session.final.gif ? 'Votre GIF' : 'Votre photo'}"></div>
   <p>${SAVE_TIP}</p>` : `
   <p>La photo n'est pas encore prête, réessayez dans quelques secondes.</p>`}
   ${nav ? `<a class="link" href="/galerie">← ${esc(texts.galleryTitle)}</a>` : ''}
@@ -60,11 +61,11 @@ export function eventGalleryHtml({ items, theme, boothName, texts }) {
   if (!items) return page({ theme, boothName, body: `<p>La galerie n'est pas ouverte pour le moment.</p>` });
   // Grille rangée ligne par ligne (de gauche à droite, les plus récentes en haut) : 2 colonnes sur téléphone, plus sur grand écran
   const css = `.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;align-items:start;width:100%;max-width:960px}
-  .grid a{display:block;background:var(--surface);border-radius:14px;padding:6px;box-shadow:0 4px 16px rgba(0,0,0,.08)}
+  .grid a{position:relative;display:block;background:var(--surface);border-radius:14px;padding:6px;box-shadow:0 4px 16px rgba(0,0,0,.08)}
   .grid img{border-radius:10px}`;
   return page({ theme, boothName, title: `${texts.galleryTitle} · ${boothName}`, css, body: `
   <h1>${esc(texts.galleryTitle)}</h1>
   ${items.length ? `<p>${items.length} photo${items.length > 1 ? 's' : ''}</p>
-  <div class="grid">${items.map((it) => `<a href="/g/${esc(it.id)}"><img src="${esc(it.thumbUrl)}" alt="" loading="lazy"></a>`).join('')}</div>`
+  <div class="grid">${items.map((it) => `<a href="/g/${esc(it.id)}"><img src="${esc(it.thumbUrl)}" alt="" loading="lazy">${it.gif ? '<span class="gif-tag">GIF</span>' : ''}</a>`).join('')}</div>`
     : `<p>${esc(texts.galleryEmpty)}</p>`}` });
 }

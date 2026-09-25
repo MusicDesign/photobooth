@@ -18,6 +18,9 @@ import { personMatte } from './cutout-ai.js';
  *   text  : texte, police, taille, couleur, alignement
  *   rect  : rectangle plein et/ou bordure, coins arrondis
  * Chaque calque a x, y, width, height (pixels du template), opacity, visible.
+ *
+ * kind = 'gif' : GIF animé, uniquement en numérique (jamais imprimé). Plusieurs poses successives, chacune
+ * posée dans les calques photo (tous affichent la pose en cours), puis assemblées en animation (voir gif).
  */
 export const FORMATS = {
   '10x15-paysage': { name: '10x15 cm paysage', width: 1800, height: 1200 },
@@ -37,6 +40,10 @@ export const FONTS = {
   rounded: { name: 'Rounded', css: '"Arial Rounded MT Bold", "Nunito", "Varela Round", sans-serif' }
 };
 export const LAYER_TYPES = ['photo', 'image', 'text', 'rect'];
+
+/** Réglages d'un template GIF : nombre de poses, durée d'une image, aller-retour, décompte entre deux poses. */
+export const GIF_DEFAULTS = { frames: 4, frameMs: 500, boomerang: false, poseSec: 2 };
+export const GIF_MAX_SIDE = 800; // taille du GIF (plus grand côté) : léger à ouvrir sur un téléphone
 
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const SRC = /^(assets\/)?[A-Za-z0-9._-]+\.(png|jpe?g|webp)$/i;
@@ -143,6 +150,15 @@ function legacyLayers(raw) {
   return layers;
 }
 
+function normalizeGif(g = {}) {
+  return {
+    frames: clamp(round(num(g.frames, GIF_DEFAULTS.frames)), 2, 10),
+    frameMs: clamp(round(num(g.frameMs, GIF_DEFAULTS.frameMs)), 100, 2000),
+    boomerang: !!g.boomerang,
+    poseSec: clamp(round(num(g.poseSec, GIF_DEFAULTS.poseSec)), 1, 10)
+  };
+}
+
 function normalize(raw, dir) {
   if (!raw || typeof raw !== 'object') throw new HttpError(400, 'TEMPLATE_INVALID', 'template.json illisible');
   if (!/^[a-z0-9][a-z0-9-_]{0,60}$/i.test(raw.id || '')) throw new HttpError(400, 'TEMPLATE_ID', 'Identifiant invalide');
@@ -150,17 +166,23 @@ function normalize(raw, dir) {
   const width = round(num(raw.width, format ? FORMATS[format].width : 0));
   const height = round(num(raw.height, format ? FORMATS[format].height : 0));
   if (width < 100 || height < 100 || width > 8000 || height > 8000) throw new HttpError(400, 'TEMPLATE_SIZE', 'Dimensions invalides');
-  const layers = normalizeLayers(raw.layers?.length ? raw.layers : legacyLayers({ ...raw, width, height }));
+  const kind = raw.kind === 'gif' ? 'gif' : 'photo';
+  let rawLayers = raw.layers?.length ? raw.layers : legacyLayers({ ...raw, width, height });
+  if (kind === 'gif') rawLayers = rawLayers.map((l) => (l?.type === 'photo' ? { ...l, shot: 0 } : l)); // tous montrent la pose en cours
+  const layers = normalizeLayers(rawLayers);
   const photoLayers = layers.filter((l) => l.type === 'photo');
+  const gif = kind === 'gif' ? normalizeGif(raw.gif) : null;
   return {
     id: raw.id,
     name: String(raw.name || raw.id).slice(0, 80),
+    kind,
+    gif,
     format,
     width,
     height,
     background: color(raw.background, '#ffffff'),
     layers,
-    shots: Math.max(...photoLayers.map((l) => l.shot)) + 1,
+    shots: gif ? gif.frames : Math.max(...photoLayers.map((l) => l.shot)) + 1,
     slots: photoLayers.map((l) => ({ shot: l.shot, x: l.x, y: l.y, width: l.width, height: l.height })),
     dir
   };
@@ -201,10 +223,11 @@ export class Templates {
     return t;
   }
 
-  /** Templates activés, dans l'ordre de la config. */
+  /** Templates activés, dans l'ordre de la config. Les GIF seulement si l'option GIF est active. */
   enabled(config) {
     const ids = config.templates.enabled?.length ? config.templates.enabled : [...this.items.keys()];
-    return ids.filter((id) => this.items.has(id)).map((id) => this.toPublic(this.items.get(id)));
+    return ids.filter((id) => this.items.has(id) && (this.items.get(id).kind !== 'gif' || config.templates.gifEnabled))
+      .map((id) => this.toPublic(this.items.get(id)));
   }
 
   toPublic(t) {
@@ -221,13 +244,14 @@ export class Templates {
   }
 
   write(def) {
-    const { id, name, format, width, height, background, layers } = def;
+    const { id, name, kind, gif, format, width, height, background, layers } = def;
     fs.mkdirSync(def.dir, { recursive: true });
-    fs.writeFileSync(path.join(def.dir, 'template.json'), JSON.stringify({ id, name, format, width, height, background, layers }, null, 2));
+    const out = { id, name, ...(kind === 'gif' ? { kind, gif } : {}), format, width, height, background, layers };
+    fs.writeFileSync(path.join(def.dir, 'template.json'), JSON.stringify(out, null, 2));
   }
 
   /** Nouveau template : un nom suffit. L'id est déduit du nom, la taille du format. */
-  create({ name, format = DEFAULT_FORMAT, background, overlayBuffer = null }) {
+  create({ name, kind = 'photo', format = DEFAULT_FORMAT, background, overlayBuffer = null }) {
     if (!name || !String(name).trim()) throw new HttpError(400, 'NAME_REQUIRED', 'Donnez un nom au template');
     const f = FORMATS[format];
     if (!f) throw new HttpError(400, 'FORMAT', 'Format inconnu');
@@ -241,7 +265,7 @@ export class Templates {
       layers[0] = { ...layers[0], x: 0, y: 0, width: f.width, height: f.height };
       layers.push({ type: 'image', src: 'assets/overlay.png', name: 'PNG importé', x: 0, y: 0, width: f.width, height: f.height });
     }
-    const def = normalize({ id, name: String(name).trim(), format, width: f.width, height: f.height, background: background || '#ffffff', layers }, dir);
+    const def = normalize({ id, name: String(name).trim(), kind, gif: GIF_DEFAULTS, format, width: f.width, height: f.height, background: background || '#ffffff', layers }, dir);
     this.write(def);
     this.reload();
     return this.toPublic(this.get(id));
@@ -253,6 +277,8 @@ export class Templates {
     const def = normalize({
       id,
       name: patch.name ?? cur.name,
+      kind: cur.kind,
+      gif: { ...cur.gif, ...patch.gif },
       format: cur.format,
       width: cur.width,
       height: cur.height,

@@ -197,5 +197,14 @@ label.ctl-mode small { margin: 0 !important; color: var(--muted); }
 .co-foot { display: flex; gap: 12px; justify-content: flex-end; padding-top: 6px; }
 .co-lightbox { position: fixed; inset: 0; z-index: 110; background: rgba(0,0,0,0.92); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; cursor: zoom-out; }
 .co-lightbox img { max-width: 100%; max-height: calc(100vh - 110px); object-fit: contain; border-radius: 8px; }
+.co-lightbox .lb-bar { display: flex; align-items: center; gap: 18px; color: #fff; }
+.co-lightbox .lb-count { font-weight: 700; opacity: 0.8; min-width: 70px; text-align: center; }
+.co-lightbox .lb-arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 64px; height: 64px; border-radius: 50%; border: 0; background: rgba(255,255,255,0.14); color: #fff; font-size: 44px; line-height: 1; padding-bottom: 6px; cursor: pointer; }
+.co-lightbox .lb-arrow:hover:not(:disabled) { background: rgba(255,255,255,0.26); }
+.co-lightbox .lb-arrow:disabled { opacity: 0.25; cursor: default; }
+.co-lightbox .lb-arrow.prev { left: 20px; }
+.co-lightbox .lb-arrow.next { right: 20px; }
+.co-lightbox:has(.lb-arrow) { padding-inline: 104px; } /* les flèches ne recouvrent pas la photo */
 @media (max-width: 900px) { .co-main { flex-direction: column; } .co-side { width: auto; } }
 .co-info { background: rgba(255,255,255,0.08); border-radius: 10px; padding: 10px 14px; color: #d9dce1; max-width: 80ch; }
+.gif-props { margin-bottom: 22px; } /* réglages d'un template GIF, au-dessus des calques */
