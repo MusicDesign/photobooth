@@ -187,7 +187,7 @@ async function runSteps(app, camera) {
     assert.ok(q.dataUrl.startsWith('data:image/png'));
     const page = await fetch(`${base}/g/${s.id}`);
     assert.equal(page.status, 200);
-    assert.ok((await page.text()).includes('Télécharger la photo'));
+    assert.ok(!(await page.text()).includes('Télécharger la photo'));
   });
 
   await step('admin : refus sans PIN, état complet, réimpression, compteurs', async () => {
@@ -513,7 +513,7 @@ async function runSteps(app, camera) {
     assert.ok(grid.includes(`/g/${older}`) && !grid.includes(pending), 'la grille ouvre la page unique /g/:id');
     // Une seule page photo : celle des QR codes, avec la navigation quand la galerie téléphone est ouverte
     const photo = await (await fetch(`${base}/g/${older}`)).text();
-    assert.ok(photo.includes('Télécharger la photo') && photo.includes('href="/galerie"'));
+    assert.ok(!photo.includes('Télécharger la photo') && photo.includes('Photo suivante') && photo.includes('href="/galerie"'));
     assert.ok(photo.includes(`href="/g/${newer}"`), 'flèche vers la photo voisine');
     assert.ok(!(await (await fetch(`${base}/g/${pending}`)).text()).includes('href="/galerie"'), 'photo hors galerie : pas de navigation');
     assert.equal((await fetch(`${base}/galerie/${older}`, { redirect: 'manual' })).headers.get('location'), `/g/${older}`);

@@ -47,14 +47,17 @@ export class Booth {
     this.onJob = (job) => this.onPrinterJob(job);
     printer.on('job', this.onJob);
     this.onLive = (streaming) => this.broadcast({ type: 'live', streaming });
+    this.onFlashStray = (stray) => this.broadcast({ type: 'flashStray', stray });
     camera.onLive = this.onLive;
+    camera.onFlashStray = this.onFlashStray;
   }
 
   /** Bascule de matériel à chaud (voir devices.js). */
   setCamera(camera) {
-    if (this.camera) this.camera.onLive = null;
+    if (this.camera) { this.camera.onLive = null; this.camera.onFlashStray = null; }
     this.camera = camera;
     camera.onLive = this.onLive;
+    camera.onFlashStray = this.onFlashStray;
   }
 
   setPrinter(printer) {
@@ -82,7 +85,7 @@ export class Booth {
       adminOpen: !String(cfg.admin.pin ?? ''), // code admin vide : accès direct (tests)
       texts: cfg.texts,
       limits,
-      camera: { mode: this.camera.mode, driver: this.camera.name, streaming: this.camera.streaming(), armLeadMs: this.camera.armLeadMs() },
+      camera: { mode: this.camera.mode, driver: this.camera.name, streaming: this.camera.streaming(), armLeadMs: this.camera.armLeadMs(), flashStray: !!this.camera.flashStray },
       printer: { driver: this.printer.name, available: this.printer.available !== false },
       templates: {
         guestCanChoose: cfg.templates.guestCanChoose,
@@ -92,6 +95,7 @@ export class Booth {
       theme: this.themes.resolve(cfg),
       counters: this.publicCounters(),
       samples: samplePhotos().map((s) => s.url), // photos d'exemple des cadres proposés
+      sampleCutouts: samplePhotos().map((s) => s.cutoutUrl || null), // et leur version détourée (.png)
       // QR codes de photo seulement en Wi-Fi (share.requireWifi) : sans lui, aucun téléphone ne peut joindre la borne.
       share: { baseUrl: this.shareBaseUrl(), qrOnDone: cfg.share.qrOnDone !== false && wifi },
       gallery: { enabled: !!cfg.gallery.booth, reprint: cfg.gallery.reprint, qr: cfg.gallery.qr !== false && wifi },
@@ -127,6 +131,7 @@ export class Booth {
   // ---------- Sessions ----------
 
   async createSession(templateId) {
+    if (this.camera.calibrating) throw new HttpError(409, 'CAMERA_CALIBRATING', 'Réglage de l\'appareil en cours, un instant…');
     const cfg = this.cfg();
     const enabled = this.templates.enabled(cfg).map((t) => t.id);
     if (!enabled.length) throw new HttpError(409, 'NO_TEMPLATE', 'Aucun template activé');

@@ -4,17 +4,20 @@ import path from 'node:path';
 import express from 'express';
 import multer from 'multer';
 import archiver from 'archiver';
-import { UPLOADS_DIR } from '../paths.js';
+import { UPLOADS_DIR, OUTPUT_DIR } from '../paths.js';
 import { samplePhotos } from '../samples.js';
 import { HttpError, parseCookies } from '../util.js';
 import { CAMERA_DRIVERS, CAMERA_FALLBACKS } from '../camera/index.js';
+import { MANUAL_SETTINGS, MAX_SHOTS } from '../camera/control.js';
 import { PRINTER_DRIVERS, PRINTER_FALLBACKS } from '../printer/index.js';
-import { FORMATS, FONTS, DEFAULT_FORMAT } from '../templates.js';
+import { FORMATS, FONTS, DEFAULT_FORMAT, normalizeLayers } from '../templates.js';
+import { compose } from '../compositor.js';
+import { OUTPUT_DIR as OUT } from '../paths.js';
 
 const EDITABLE_SECTIONS = ['booth', 'camera', 'printer', 'limits', 'templates', 'theme', 'texts', 'admin', 'share', 'gallery'];
 const IMAGE_EXT = { 'image/png': '.png', 'image/svg+xml': '.svg', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
 
-export function adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart }) {
+export function adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart, kioskScreen = () => null }) {
   const r = express.Router();
   const tokens = new Set();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024 } });
@@ -66,6 +69,47 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     shutdown();
   });
 
+  // ---------- Boîtier : réglages de prise de vue et calibrage ----------
+  const camera = () => {
+    if (booth.camera.name !== 'gphoto2' || !booth.camera.readSettings) throw new HttpError(409, 'NO_CAMERA_CONTROL', 'Réglages disponibles seulement avec un boîtier branché (pilote gphoto2)');
+    return booth.camera;
+  };
+  r.get('/camera/settings', async (req, res) => {
+    try { res.json({ settings: await camera().readSettings() }); } catch (e) { throw e instanceof HttpError ? e : new HttpError(409, 'CAMERA_BUSY', e.message); }
+  });
+
+  // Dernier calibrage (et celui en cours) : l'admin l'interroge pendant qu'il tourne.
+  let calibration = null;
+  const calibDir = path.join(OUTPUT_DIR, 'calibration');
+  const urlOf = (file) => `/output/calibration/${path.relative(calibDir, file).split(path.sep).join('/')}`;
+  // settings + flash : de quoi garder n'importe quelle photo de test comme réglage (choix à la main)
+  const shotView = (s) => ({ n: s.n, label: s.label, summary: s.summary, mean: s.mean, clipped: Math.round(s.clipped * 1000) / 10, ok: s.ok, thumb: urlOf(s.thumb), url: urlOf(s.file), settings: s.settings, flash: !!s.flash, score: s.score, best: !!s.best });
+  r.get('/camera/calibration', (req, res) => res.json({ calibration }));
+  r.post('/camera/calibrate', (req, res) => {
+    const cam = camera();
+    if (cam.calibrating) throw new HttpError(409, 'CALIBRATING', 'Calibrage déjà en cours');
+    // Refus seulement si la borne affiche vraiment un écran de séance (admin ouverte sur la borne : aucun invité)
+    const screen = kioskScreen();
+    if (['template', 'capture', 'review', 'copies', 'printing', 'done'].includes(screen)) {
+      throw new HttpError(409, 'GUEST_ACTIVE', 'Un invité est en pleine séance sur la borne : relance le calibrage quand elle est revenue à l\'accueil');
+    }
+    const id = new Date().toISOString().replace(/[:.]/g, '-');
+    // On ne garde que les 3 derniers calibrages sur le disque
+    try { fs.readdirSync(calibDir).sort().slice(0, -2).forEach((d) => fs.rmSync(path.join(calibDir, d), { recursive: true, force: true })); } catch { /* pas encore de dossier */ }
+    calibration = { id, state: 'running', step: 0, label: 'Préparation du boîtier', shots: [], maxShots: MAX_SHOTS };
+    res.json({ calibration });
+    console.log('[booth] calibrage du boîtier lancé depuis l\'admin');
+    cam.calibrateVenue(path.join(calibDir, id), (s) => { calibration = { ...calibration, step: s.step, label: s.label, shots: s.shots.map(shotView) }; }, { evictViewers: true })
+      .then((result) => {
+        calibration = { ...calibration, state: 'done', profile: result.profile, reason: result.reason, shots: result.shots.map(shotView), flashRaised: result.shots.some((s) => s.flashFired) };
+        console.log(`[booth] calibrage terminé : ${result.reason}`);
+      })
+      .catch((e) => {
+        calibration = { ...calibration, state: 'error', error: e.message };
+        console.warn(`[booth] calibrage : ${e.message}`);
+      });
+  });
+
   r.post('/restart', (req, res) => {
     if (!restart) throw new HttpError(409, 'RESTART_UNAVAILABLE', 'Redémarrage non disponible dans ce mode de lancement (serveur lancé dans un terminal)');
     if (booth.printing() && !req.body?.force) throw new HttpError(409, 'PRINTING', 'Une impression est en cours');
@@ -75,6 +119,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
 
   r.get('/state', async (req, res) => {
     const samples = samplePhotos().map((s) => s.url);
+    const sampleCutouts = samplePhotos().map((s) => s.cutoutUrl || null);
     res.json({
       config: config.get(),
       counters: booth.publicCounters(),
@@ -84,6 +129,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       defaultFormat: DEFAULT_FORMAT,
       fonts: Object.fromEntries(Object.entries(FONTS).map(([k, v]) => [k, v.name])),
       samples,
+      sampleCutouts, // même photo détourée (.png), pour les calques avec détourage
       themes: themes.all(),
       theme: themes.resolve(config.get()),
       drivers: { camera: CAMERA_DRIVERS, printer: PRINTER_DRIVERS, cameraFallbacks: CAMERA_FALLBACKS, printerFallbacks: PRINTER_FALLBACKS },
@@ -91,6 +137,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       printer: await booth.printerStatus(),
       devices: devices.status(),
       streamDeck: deck.status(),
+      cameraSettings: MANUAL_SETTINGS, // réglages du mode manuel, dans l'ordre, avec leur libellé
       canShutdown: !!shutdown,
       canRestart: !!restart,
       events: store.listEvents().map((ev) => booth.eventView(ev)),
@@ -137,6 +184,35 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   // ---------- Templates ----------
 
   /** Création : un nom suffit (id et taille déduits). PNG complet optionnel (avancé). */
+  /**
+   * Essai du détourage depuis l'éditeur : monte le template tel qu'il est à l'écran (pas encore enregistré)
+   * avec la dernière photo prise par la borne ou la photo d'exemple, exactement comme la photo finale.
+   */
+  r.post('/templates/test-cutout', async (req, res) => {
+    const { template: raw = {}, id, source = 'last' } = req.body || {};
+    const saved = id && templates.items.get(id);
+    const layers = normalizeLayers(raw.layers);
+    const t = { width: Math.round(raw.width) || saved?.width || 1800, height: Math.round(raw.height) || saved?.height || 1200, background: raw.background || '#ffffff', layers, dir: saved?.dir || '' };
+    let photo = null;
+    if (source === 'last') {
+      const shots = Object.values(store.data.sessions).flatMap((s) => (s.shots || []).filter(Boolean).map((sh) => ({ file: sh.file, at: sh.takenAt || s.createdAt })))
+        .filter((sh) => sh.file && fs.existsSync(sh.file)).sort((a, b) => (a.at < b.at ? 1 : -1));
+      photo = shots[0]?.file;
+      if (!photo) throw new HttpError(404, 'NO_PHOTO', 'Pas encore de photo prise par la borne : essaie avec la photo d\'exemple');
+    } else {
+      photo = samplePhotos()[0]?.file;
+      if (!photo) throw new HttpError(404, 'NO_SAMPLE', 'Aucune photo d\'exemple');
+    }
+    const dir = path.join(OUT, 'cutout-test');
+    fs.mkdirSync(dir, { recursive: true });
+    for (const f of fs.readdirSync(dir)) fs.rmSync(path.join(dir, f), { force: true }); // un seul essai gardé
+    const name = `essai-${Date.now()}.jpg`;
+    const t0 = Date.now();
+    const shots = Math.max(...layers.filter((l) => l.type === 'photo').map((l) => l.shot)) + 1;
+    await compose(t, Array.from({ length: shots }, () => photo), path.join(dir, name));
+    res.json({ url: `/output/cutout-test/${name}`, ms: Date.now() - t0, source: source === 'last' ? 'dernière photo de la borne' : 'photo d\'exemple' });
+  });
+
   r.post('/templates', upload.single('overlay'), (req, res) => {
     const cfg = config.get();
     if (req.file && req.file.mimetype !== 'image/png') throw new HttpError(400, 'FILE_TYPE', 'Le PNG importé doit être un PNG avec transparence');
@@ -161,6 +237,14 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   /** Image ajoutée dans un template (logo, cadre…). */
   r.post('/templates/:id/assets', upload.single('image'), async (req, res) => {
     res.json(await templates.addAsset(req.params.id, req.file));
+  });
+  // Retirer le fond d'une image du template (éditeur) : rend la version transparente à utiliser
+  r.post('/templates/:id/assets/cutout', async (req, res) => {
+    const { src, ...opts } = req.body || {};
+    res.json(await templates.cutoutAsset(req.params.id, src, opts));
+  });
+  r.post('/templates/:id/assets/corner-color', async (req, res) => {
+    res.json({ color: await templates.cornerColor(req.params.id, req.body?.src) });
   });
 
   r.delete('/templates/:id', (req, res) => {

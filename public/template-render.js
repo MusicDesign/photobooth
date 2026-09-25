@@ -22,11 +22,15 @@ export function loadImage(url) {
 }
 
 /** Charge les images des calques "image" dans un cache src → Image. */
+/** Fichier à afficher pour un calque image : sa version sans fond si l'option est active (et calculée). */
+export const imageSrc = (l) => (l.bgRemove && l.bgRemove !== 'none' && l.cutSrc ? l.cutSrc : l.src);
+
 export async function loadAssets(template, cache = new Map()) {
-  const todo = template.layers.filter((l) => l.type === 'image' && !cache.has(l.src));
+  const todo = template.layers.filter((l) => l.type === 'image' && !cache.has(imageSrc(l)));
   await Promise.all(todo.map(async (l) => {
-    const img = await loadImage(l.url || `/templates/${template.id}/${l.src}`);
-    if (img) cache.set(l.src, img);
+    const src = imageSrc(l);
+    const img = await loadImage(src === l.src && l.url ? l.url : `/templates/${template.id}/${src}`);
+    if (img) cache.set(src, img);
   }));
   return cache;
 }
@@ -145,7 +149,8 @@ export function renderTemplate(ctx, template, opts = {}) {
   const {
     scale = 1, photos = {}, live = null, assets = new Map(), placeholder = true,
     mirror = false, highlightShot = null, highlightColor = '#e63946', frameRadius = 0,
-    cutter = null // (src, sw, sh, layer, dest, mirror, isLive) → canvas détouré à dessiner, ou null (voir booth.js)
+    cutter = null, // (src, sw, sh, layer, dest, mirror, isLive) → canvas détouré à dessiner, ou null (voir booth.js)
+    cutoutPhotos = {} // photos d'exemple déjà détourées (PNG), pour les calques avec détourage (aperçus)
   } = opts;
   // Calque détouré : la source passe par le cutter (fond vert / bleu, IA), sinon dessin direct.
   const drawPhoto = (src, sw, sh, l, d, isLive) => {
@@ -186,7 +191,7 @@ export function renderTemplate(ctx, template, opts = {}) {
       ctx.save();
       roundedRectPath(ctx, l.x, l.y, l.width, l.height, l.radius);
       ctx.clip();
-      const img = photos[l.shot];
+      const img = (l.cutout && l.cutout !== 'none' && cutoutPhotos[l.shot]) || photos[l.shot];
       const iw = img ? (img.naturalWidth || img.videoWidth) : 0;
       if (img && iw) {
         drawPhoto(img, iw, img.naturalHeight || img.videoHeight, l, d, false); // photos prises : même sens que le live
@@ -220,7 +225,7 @@ export function renderTemplate(ctx, template, opts = {}) {
         ctx.restore();
       }
     } else if (l.type === 'image') {
-      const img = assets.get(l.src);
+      const img = assets.get(imageSrc(l)) || assets.get(l.src); // sans fond pas encore chargée : l'originale
       if (img && img.naturalWidth) {
         ctx.save();
         roundedRectPath(ctx, l.x, l.y, l.width, l.height, l.radius);

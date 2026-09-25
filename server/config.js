@@ -16,6 +16,7 @@ export const DEFAULTS = {
     mirrorPreview: true,
     lensPosition: 'top',   // où est l'objectif par rapport à l'écran : top | bottom | left | right (sens de la flèche « Regardez l'objectif »)
     showName: true,        // affiche le nom à côté du logo
+    cursor: 'show',        // curseur de la souris sur la borne : show | idle (masqué après 3 s sans mouvement) | hide
     // Télécommande Elgato branchée en USB (sans écran tactile). position : où il est posé par rapport à l'écran,
     // pour la flèche de l'accueil quand l'écran n'est pas tactile (top | bottom | left | right).
     streamDeck: { enabled: true, brightness: 70, position: 'bottom' },
@@ -29,6 +30,9 @@ export const DEFAULTS = {
     // gphoto2 : Canon EOS 2000D en USB
     driver: 'auto',
     fallback: 'browser',
+    // Réglages de prise de vue (admin → Matériel → Boîtier) : camera = le boîtier décide, manual = valeurs de
+    // l'admin, auto = la borne gère (base + exposition trouvée par le calibrage sur place). Voir camera/control.js.
+    control: { mode: 'camera', manual: {}, auto: { profile: null, calibratedAt: null, reason: '' } },
     gphoto2: {
       // Flash intégré : 'off' (jamais levé par la borne), 'on' (levé avant chaque photo), 'auto' (levé si la
       // scène est sombre, d'après la luminosité du live view). Une fois levé, il ne se rabat qu'à la main.

@@ -217,7 +217,8 @@ export class StreamDeckRemote {
         group.forEach((it, i) => put(it, r, start + i));
       };
       // Coins : retour au choix du cadre en bas à gauche (comme les autres retours), QR / imprimer.
-      const corner = { btnCaptureBack: [bottom, 0], btnNoPrint: [bottom, 0], btnPrint: [bottom, cols - 1] };
+      // Calibrage (admin) : lancer en bas à droite, fermer en bas à gauche
+      const corner = { btnCaptureBack: [bottom, 0], btnNoPrint: [bottom, 0], btnPrint: [bottom, cols - 1], coClose: [bottom, 0], coGo: [bottom, cols - 1] };
       const cornered = items.filter((it) => corner[it.id]);
       const rest = items.filter((it) => !corner[it.id]);
       const choices = rest.filter((it) => it.kind === 'choice');
@@ -498,6 +499,7 @@ const ICONS = {
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
   next: '<path d="M5 12h14M12 5l7 7-7 7"/>',
+  play: '<path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.4-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
   power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>',
   key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/>',

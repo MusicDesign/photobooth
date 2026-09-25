@@ -9,7 +9,7 @@ import { ROOT } from './paths.js';
  * Modèle chargé au premier usage puis gardé en mémoire.
  */
 const MODEL = path.join(ROOT, 'server', 'models', 'modnet.onnx');
-const REF = 512; // côté long donné au modèle (multiple de 32)
+const REF = { standard: 512, fine: 1024 }; // côté long donné au modèle (multiple de 32), selon la précision
 
 let loading = null;
 function session() {
@@ -23,10 +23,13 @@ function session() {
   return loading;
 }
 
-/** Masque de personne (octets 0-255, un par pixel) d'une image RGB brute w×h. */
-export async function personMatte(rgb, w, h) {
+/**
+ * Masque de personne (octets 0-255, un par pixel) d'une image RGB brute w×h.
+ * precision 'fine' : modèle en 1024 px (cheveux, détails), plus lent. contour : ±px, élargit / rétrécit la découpe.
+ */
+export async function personMatte(rgb, w, h, { precision = 'standard', contour = 0 } = {}) {
   const { ort, s } = await session();
-  const k = REF / Math.max(w, h);
+  const k = (REF[precision] || REF.standard) / Math.max(w, h);
   const W = Math.max(32, Math.round((w * k) / 32) * 32);
   const H = Math.max(32, Math.round((h * k) / 32) * 32);
   const small = await sharp(rgb, { raw: { width: w, height: h, channels: 3 } }).resize(W, H, { fit: 'fill' }).raw().toBuffer();
@@ -41,5 +44,8 @@ export async function personMatte(rgb, w, h) {
   const bytes = Buffer.alloc(W * H);
   for (let i = 0; i < bytes.length; i++) bytes[i] = Math.max(0, Math.min(255, Math.round(m[i] * 255)));
   // extractChannel : sans lui, sharp peut rendre le masque en 3 canaux (décalage d'une ligne à l'autre)
-  return sharp(bytes, { raw: { width: W, height: H, channels: 1 } }).resize(w, h, { fit: 'fill' }).extractChannel(0).raw().toBuffer();
+  let img = sharp(bytes, { raw: { width: W, height: H, channels: 1 } }).resize(w, h, { fit: 'fill' });
+  const px = Math.round(Math.abs(contour));
+  if (px) img = sharp(await img.extractChannel(0).raw().toBuffer(), { raw: { width: w, height: h, channels: 1 } })[contour > 0 ? 'erode' : 'dilate'](px); // sharp opère sur les zones sombres : erode élargit le blanc (la personne)
+  return img.extractChannel(0).raw().toBuffer();
 }

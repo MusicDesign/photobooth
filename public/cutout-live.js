@@ -7,7 +7,7 @@
  * assez pour l'écran, et léger à 30 images/s.
  */
 import { drawCover } from './template-render.js';
-import { chromaKey, applyMatte } from './cutout.js';
+import { chromaKey, applyMatte, aiMatteRange } from './cutout.js';
 
 const MAX_W = 640;
 const MEDIAPIPE = '/vendor/mediapipe';
@@ -68,7 +68,9 @@ export function createCutter(getScale) {
     if (l.cutout === 'ai') {
       const mask = personMask(canvas);
       if (!mask) return false;
-      applyMatte(px.data, mask, 1, 0.35, 0.75); // bord un peu resserré : le masque de l'aperçu est flou
+      // Mêmes curseurs que la photo finale ; le contour (±px) est approché en décalant le seuil
+      const [lo, hi] = aiMatteRange(l, { contourShift: (l.aiContour || 0) * 0.015 });
+      applyMatte(px.data, mask, 1, lo, hi);
     } else {
       chromaKey(px.data, l.cutout, l.keyTolerance);
     }
@@ -82,7 +84,7 @@ export function createCutter(getScale) {
       if (!c) { c = document.createElement('canvas'); live.set(l.id, c); }
       return work(c, src, sw, sh, l, d, mirror) ? c : null;
     }
-    const key = `${l.id}|${l.cutout}|${l.keyTolerance}|${mirror}|${Math.round(d.w * getScale())}`;
+    const key = `${l.id}|${l.cutout}|${l.keyTolerance}|${l.aiThreshold}|${l.aiSoftness}|${l.aiContour}|${mirror}|${Math.round(d.w * getScale())}`;
     let byKey = stills.get(src);
     if (!byKey) { byKey = new Map(); stills.set(src, byKey); }
     if (byKey.has(key)) return byKey.get(key);

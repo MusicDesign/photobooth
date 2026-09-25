@@ -79,8 +79,9 @@ export class Devices extends EventEmitter {
 
   async resolveCamera(c) {
     if (c.driver !== 'auto') return { driver: c.driver, reason: 'pilote choisi dans l\'admin' };
-    // Le boîtier diffuse déjà : inutile de sonder l'USB (et de le déranger).
-    if (this.camera?.name === 'gphoto2' && this.camera.live) return { driver: 'gphoto2', reason: 'boîtier en cours de diffusion' };
+    // Boîtier en cours d'utilisation (live, photo, réglages, batterie…) : ne pas sonder l'USB. Un
+    // « gphoto2 --auto-detect » lancé pendant une photo la bloque, comme toute commande concurrente.
+    if (this.camera?.name === 'gphoto2' && this.camera.inUse?.()) return { driver: 'gphoto2', reason: 'boîtier en cours d\'utilisation' };
     const d = await detectGphoto2(c.gphoto2);
     if (d.found) return { driver: 'gphoto2', reason: `${d.model} détecté en USB` };
     return { driver: c.fallback || 'browser', reason: `${d.reason} → repli ${c.fallback || 'browser'}` };
@@ -90,11 +91,12 @@ export class Devices extends EventEmitter {
     const r = await this.resolveCamera(c);
     const key = JSON.stringify({ driver: r.driver, gphoto2: r.driver === 'gphoto2' ? c.gphoto2 : null });
     this.state.camera = { requested: c.driver, driver: r.driver, reason: r.reason, checkedAt: new Date().toISOString() };
-    if (this.camera && key === this.cameraKey) return;
+    if (this.camera && key === this.cameraKey) { this.camera.setControl?.(c.control); return; } // réglages de prise de vue : à chaud
     if (this.camera?.busy) return; // photo en cours : on rebasculera au prochain passage
     let next;
     try {
       next = createCamera({ ...c, driver: r.driver });
+      next.setControl?.(c.control); // appliqué à la détection du boîtier
       await next.init();
     } catch (e) {
       // Pilote injoignable (ex. gphoto2 non installé) : la borne démarre quand même sur le repli.

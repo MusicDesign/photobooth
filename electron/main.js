@@ -36,9 +36,29 @@ function useUserData() {
   }
 }
 
+/**
+ * Lancer la borne remet tout à zéro : un autre serveur de borne encore lancé (terminal, instance précédente)
+ * est arrêté proprement (SIGINT : il rend caméra et Stream Deck), puis on attend qu'il libère le port.
+ * Les commandes gphoto2 restantes et le boîtier sont remis à zéro par le pilote caméra.
+ */
+async function stopOtherServers(port) {
+  const { execFileSync } = await import('node:child_process');
+  const pids = () => {
+    try { return execFileSync('pgrep', ['-f', 'node .*server/index\\.js']).toString().split('\n').map(Number).filter((p) => p && p !== process.pid); } catch { return []; }
+  };
+  const found = pids();
+  if (!found.length) return;
+  console.log(`[app] remise à zéro : arrêt de ${found.length} autre(s) serveur(s) de borne (${found.join(', ')})`);
+  for (const pid of found) { try { process.kill(pid, 'SIGINT'); } catch { /* déjà parti */ } }
+  for (let i = 0; i < 40 && pids().length; i++) await new Promise((r) => setTimeout(r, 200));
+  for (const pid of pids()) { try { process.kill(pid, 'SIGTERM'); } catch { /* déjà parti */ } }
+  await new Promise((r) => setTimeout(r, 500));
+}
+
 async function start() {
   if (app.isPackaged) useUserData();
   await app.whenReady();
+  await stopOtherServers(Number(process.env.PORT) || 3000);
 
   // Import après le choix des dossiers : server/paths.js les lit au chargement.
   const { installFileLog } = await import('../server/log.js');

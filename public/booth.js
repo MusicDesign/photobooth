@@ -62,11 +62,14 @@ function clearAllTimers() {
   for (const k of Object.keys(state.timers)) clearTimer(k);
 }
 
+// Minuterie à part : clearAllTimers (retour à l'accueil) ne doit pas l'annuler, sinon le message reste affiché
+let toastTimer = null;
 function toast(msg, ms = 3500) {
   const t = $('#toast');
   t.textContent = msg;
   t.classList.remove('hidden');
-  setTimer('toast', () => t.classList.add('hidden'), ms);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
 }
 
 // ---------- Thème, logo, textes ----------
@@ -106,7 +109,13 @@ function applyBoot() {
   // Texte lisible quelle que soit la combinaison choisie dans l'admin.
   root.style.setProperty('--on-secondary', readableOn(c.secondary, c.background, c.text, c.onPrimary, '#ffffff', '#000000'));
   root.style.setProperty('--on-surface', readableOn(c.surface, c.text, c.background, c.secondary, '#ffffff', '#000000'));
+  // Couleur principale réservée aux boutons d'action (--primary). Ailleurs (décompte, contours, compteurs,
+  // barres…) : --accent, la couleur principale sur un thème clair, du blanc sur un thème sombre.
+  const dark = contrast(c.background, '#000000') < contrast(c.background, '#ffffff');
+  root.style.setProperty('--accent', dark ? '#ffffff' : c.primary);
   document.body.dataset.font = theme.font || 'system';
+  document.body.dataset.cursor = ['idle', 'hide'].includes(booth.cursor) ? booth.cursor : 'show';
+  nudgeCursor();
   document.body.style.backgroundImage = theme.backgroundImage ? `url("${theme.backgroundImage}")` : '';
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', theme.colors.background);
   document.title = booth.name;
@@ -114,10 +123,11 @@ function applyBoot() {
   $('#favicon')?.setAttribute('href', theme.logo); // l'onglet suit le logo, même changé en direct
   const shownName = booth.showName === false ? '' : booth.name;
   $('#boothName').textContent = shownName;
-  state.primaryColor = theme.colors.primary;
+  state.primaryColor = getComputedStyle(root).getPropertyValue('--accent').trim() || theme.colors.primary; // liseré de l'aperçu
 
   const t = (id, key) => { const el = $(id); if (el) el.textContent = texts[key] || ''; };
-  showWelcome(); renderPaperBadge(); t('#txtChooseTemplate', 'chooseTemplate'); t('#txtGetReady', 'getReady');
+  showWelcome(); renderPaperBadge();
+  $('#flashBadge').classList.toggle('hidden', !state.boot.camera?.flashStray); t('#txtChooseTemplate', 'chooseTemplate'); t('#txtGetReady', 'getReady');
   t('#btnStart', 'start'); t('#txtReview', 'review'); t('#btnRetake', 'retake'); t('#btnKeep', 'keep');
   t('#txtCopies', 'copies'); t('#btnPrint', 'print'); t('#btnNoPrint', 'noPrint'); t('#txtPrinting', 'printing');
   t('#txtThanks', 'thanks'); t('#btnFinish', 'finish');
@@ -142,6 +152,14 @@ async function renderIdleGallery() {
   $('#galleryCount').textContent = `${items.length} photo${items.length > 1 ? 's' : ''} ›`;
   delete btn.dataset.deckThumb;
 }
+
+/** Curseur « masqué quand la souris ne bouge pas » : il réapparaît au mouvement, disparaît 3 s après. */
+function nudgeCursor() {
+  document.body.classList.remove('cursor-idle');
+  clearTimeout(nudgeCursor.t);
+  if (document.body.dataset.cursor === 'idle') nudgeCursor.t = setTimeout(() => document.body.classList.add('cursor-idle'), 3000);
+}
+window.addEventListener('mousemove', nudgeCursor, { passive: true });
 
 /**
  * Écran tactile ? Ce que le navigateur annonce au chargement, corrigé par le premier vrai toucher
@@ -431,13 +449,15 @@ function stopRenderLoop() {
 // template-photo.jpg, -2, -3 (voir server/samples.js). La photo N du cadre prend l'exemple N, en boucle.
 const samplePhotos = new Map(); // url → Image
 function loadSamplePhotos() {
-  for (const url of state.boot.samples || []) {
-    if (samplePhotos.has(url)) continue;
+  (state.boot.samples || []).forEach((url, i) => {
+    if (samplePhotos.has(url)) return;
     const img = new Image();
     img.onload = () => renderTemplateGrid();
     img.src = url;
+    const cut = state.boot.sampleCutouts?.[i]; // même photo détourée (.png), pour les calques avec détourage
+    if (cut) { img.cutout = new Image(); img.cutout.onload = () => renderTemplateGrid(); img.cutout.src = cut; }
     samplePhotos.set(url, img);
-  }
+  });
 }
 
 function renderTemplateGrid() {
@@ -454,8 +474,9 @@ function renderTemplateGrid() {
     cv.height = Math.round(t.height * scale);
     const ctx = cv.getContext('2d');
     const photos = ready.length ? Object.fromEntries(Array.from({ length: t.shots }, (_, i) => [i, ready[i % ready.length]])) : {};
-    renderTemplate(ctx, t, { scale, photos, placeholder: true });
-    loadAssets(t).then((assets) => renderTemplate(ctx, t, { scale, photos, assets, placeholder: true }));
+    const cutoutPhotos = Object.fromEntries(Object.entries(photos).filter(([, img]) => img.cutout?.complete && img.cutout.naturalWidth).map(([k, img]) => [k, img.cutout]));
+    renderTemplate(ctx, t, { scale, photos, cutoutPhotos, placeholder: true });
+    loadAssets(t).then((assets) => renderTemplate(ctx, t, { scale, photos, cutoutPhotos, assets, placeholder: true }));
     const label = document.createElement('div');
     label.className = 'template-name';
     label.textContent = t.name;
@@ -1151,7 +1172,7 @@ function deckItems() {
   const cd = $('#countdown');
   if (root.id === 'screen-capture' && visible(cd) && cd.textContent) {
     const page = deckStyle(document.body).page;
-    items.push({ id: 'countdown', label: cd.textContent, kind: 'display', display: true, style: { bg: page, fg: solid(getComputedStyle(document.documentElement).getPropertyValue('--primary').trim(), page), border: null } });
+    items.push({ id: 'countdown', label: cd.textContent, kind: 'display', display: true, style: { bg: page, fg: solid(getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(), page), border: null } });
   }
   let n = 0;
   for (const el of root.querySelectorAll('button, #copiesValue, #photoCopies')) {
@@ -1165,7 +1186,7 @@ function deckItems() {
       // Écran de fin : secondes avant le retour automatique à l'accueil, à la place du bouton « Terminer »
       const left = Math.max(0, Math.ceil((state.doneReturnAt - Date.now()) / 1000));
       const page = deckStyle(document.body).page;
-      items.push({ id: 'doneCountdown', label: String(left), kind: 'display', display: true, style: { bg: page, fg: solid(getComputedStyle(document.documentElement).getPropertyValue('--primary').trim(), page), border: null } });
+      items.push({ id: 'doneCountdown', label: String(left), kind: 'display', display: true, style: { bg: page, fg: solid(getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(), page), border: null } });
       continue;
     }
     if (!el.dataset.deck) el.dataset.deck = el.id || `deck-${Date.now().toString(36)}-${n++}`;
@@ -1279,6 +1300,7 @@ function connectWs() {
     try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'deck') { onDeckPress(msg.id); return; }
     if (msg.type === 'sessions' && state.screen === 'idle') renderIdleGallery(); // photo supprimée depuis l'admin
+    if (msg.type === 'flashStray') { if (state.boot) { state.boot.camera.flashStray = msg.stray; $('#flashBadge').classList.toggle('hidden', !msg.stray); } return; }
     if (msg.type === 'deckInfo') { // Stream Deck branché ou débranché : la galerie se met à sa taille
       state.deck = msg;
       if (state.screen === 'gallery') renderGalleryGrid();
