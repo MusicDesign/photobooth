@@ -71,10 +71,15 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
       try { msg = JSON.parse(raw); } catch { return; }
       if (msg?.type === 'ui') {
         if (boothSocket !== ws) { boothSocket = ws; toBooth({ type: 'deckInfo', ...deck.galleryInfo() }); }
+        boothScreen = typeof msg.screen === 'string' ? msg.screen : null;
         deck.setUi(msg);
       }
     });
+    ws.on('close', () => { if (boothSocket === ws) boothScreen = null; });
   });
+  // Écran affiché sur la borne (envoyé en continu pour le Stream Deck) : « admin… » quand l'admin l'a remplacé
+  let boothScreen = null;
+  const kioskScreen = () => (boothSocket?.readyState === 1 ? boothScreen : null);
   if (process.env.BOOTH_STREAMDECK !== 'off') await deck.start();
 
   config.on('change', () => {
@@ -109,7 +114,7 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   const shutdown = stopThen(onShutdown, 'arrêt');
   const restart = stopThen(onRestart, 'redémarrage');
 
-  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart }));
+  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart, kioskScreen }));
   app.use('/api', apiRouter({ booth }));
 
   // Page d'une photo (tous les QR codes y mènent). Galerie téléphone ouverte : navigation entre les photos.

@@ -79,8 +79,9 @@ export class Devices extends EventEmitter {
 
   async resolveCamera(c) {
     if (c.driver !== 'auto') return { driver: c.driver, reason: 'pilote choisi dans l\'admin' };
-    // Le boîtier diffuse déjà : inutile de sonder l'USB (et de le déranger).
-    if (this.camera?.name === 'gphoto2' && this.camera.live) return { driver: 'gphoto2', reason: 'boîtier en cours de diffusion' };
+    // Boîtier en cours d'utilisation (live, photo, réglages, batterie…) : ne pas sonder l'USB. Un
+    // « gphoto2 --auto-detect » lancé pendant une photo la bloque, comme toute commande concurrente.
+    if (this.camera?.name === 'gphoto2' && this.camera.inUse?.()) return { driver: 'gphoto2', reason: 'boîtier en cours d\'utilisation' };
     const d = await detectGphoto2(c.gphoto2);
     if (d.found) return { driver: 'gphoto2', reason: `${d.model} détecté en USB` };
     return { driver: c.fallback || 'browser', reason: `${d.reason} → repli ${c.fallback || 'browser'}` };

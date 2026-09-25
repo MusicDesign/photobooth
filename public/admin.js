@@ -106,7 +106,7 @@ function dashboard() {
   <div class="grid-2" style="margin-top:22px">
     <div class="card">
       <h3>Matériel</h3>
-      <p>Caméra <code>${esc(S.camera.driver)}</code> <span class="badge ${S.camera.ok ? 'ok' : 'err'}">${S.camera.ok ? 'OK' : 'problème'}</span>${S.camera.battery ? ` <span class="badge ${S.camera.battery.percent <= 25 ? 'warn' : 'ok'}" title="Lue à ${new Date(S.camera.battery.at).toLocaleTimeString('fr-FR')}, quand le boîtier est au repos">batterie ${esc(S.camera.battery.level)}</span>` : ''}${S.camera.standby ? ' <small>live view en veille, obturateur fermé</small>' : ''}${S.camera.driver === 'gphoto2' ? `<br><small>Flash : ${flashSummary()}</small>` : ''}${S.devices.camera.requested === 'auto' ? `<br><small>auto · ${esc(S.devices.camera.reason)}</small>` : ''}${S.camera.lastError ? `<br><small>${esc(S.camera.lastError)}</small>` : ''}${S.camera.lastCaptureError ? `<br><small><b>Dernier échec de photo</b> (${new Date(S.camera.lastCaptureError.at).toLocaleTimeString('fr-FR')}) : ${esc(S.camera.lastCaptureError.message)}</small>` : ''}</p>
+      <p>Caméra <code>${esc(S.camera.driver)}</code> <span class="badge ${S.camera.ok ? 'ok' : 'err'}">${S.camera.ok ? 'OK' : 'problème'}</span>${S.camera.standby ? ' <small>live view en veille, obturateur fermé</small>' : ''}${S.camera.driver === 'gphoto2' ? `<br><small>Flash : ${flashSummary()}</small>` : ''}${S.devices.camera.requested === 'auto' ? `<br><small>auto · ${esc(S.devices.camera.reason)}</small>` : ''}${S.camera.lastError ? `<br><small>${esc(S.camera.lastError)}</small>` : ''}${S.camera.lastCaptureError ? `<br><small><b>Dernier échec de photo</b> (${new Date(S.camera.lastCaptureError.at).toLocaleTimeString('fr-FR')}) : ${esc(S.camera.lastCaptureError.message)}</small>` : ''}</p>
       <p>Imprimante <code>${esc(S.printer.driver)}</code> ${S.printer.driver === 'none' ? '<span class="badge">aucune</span>' : `<span class="badge ${S.printer.ok ? 'ok' : 'err'}">${S.printer.ok ? 'OK' : 'problème'}</span>`}${S.devices.printer.requested === 'auto' ? `<br><small>auto · ${esc(S.devices.printer.reason)}</small>` : ''}<br><small>${esc(S.printer.message)}</small></p>
       ${S.devices.network ? `<p>Wi-Fi <span class="badge ${S.devices.network.wifi ? 'ok' : 'err'}">${S.devices.network.wifi ? 'connecté' : 'absent'}</span><br><small>${S.devices.network.wifi ? `${esc(S.devices.network.iface)} · ${esc(S.devices.network.ip)}` : S.config.share.requireWifi === false ? 'QR codes affichés quand même (réglage <a href="#sharing">Partage</a>)' : 'QR codes des photos masqués'}</small></p>` : ''}
       <p>Stream Deck ${deckState()}</p>
@@ -474,7 +474,7 @@ function autoPanel(ctl) {
     : '<p class="sub">Pas encore de calibrage : la borne utilise 1/125 s · f/5.6 · ISO automatique, sans flash.</p>';
   const last = c?.state === 'done' ? `<p><small>Dernier calibrage : ${c.shots.length} photo${c.shots.length > 1 ? 's' : ''} · proposition ${c.profile ? profileLine(c.profile) : 'aucune'}</small> <button class="btn small" type="button" id="calibSeeLast">Voir les photos</button></p>` : '';
   return `${current}
-    <p class="sub">Le calibrage s'ouvre en plein écran : cadrage avec l'aperçu, décompte pour se placer, puis une série sans flash et une série avec flash (2 à ${MAX_CALIB_SHOTS} photos, moins de 30 s). La borne compare et choisit. Les photos de test n'apparaissent pas dans la galerie.</p>
+    <p class="sub">Le calibrage s'ouvre en plein écran : cadrage avec l'aperçu, décompte pour se placer, puis une série sans flash et une série avec flash (${MAX_CALIB_SHOTS} photos, 25 s environ). La borne note chaque photo et garde la meilleure. Les photos de test n'apparaissent pas dans la galerie.</p>
     <div class="row"><button class="btn ${a.profile ? '' : 'primary'}" type="button" id="calibStart">${a.profile ? 'Recalibrer' : 'Lancer le calibrage'}</button>
     ${a.profile && ctl.mode !== 'auto' ? '<button class="btn primary" type="button" id="ctlUseAuto">Utiliser ce réglage</button>' : ''}</div>
     ${last}`;
@@ -488,7 +488,7 @@ function bindAutoPanel() {
 
 // ---------- Calibrage plein écran : cadrage → décompte → photos → résultats ----------
 
-const MAX_CALIB_SHOTS = 7; // au plus 3 sans flash + 4 avec (server/camera/control.js)
+const MAX_CALIB_SHOTS = 6; // toujours 2 sans flash + 4 avec (server/camera/control.js)
 const CAL = { stage: null, countdown: 10, timer: null };
 const CALIB_DELAYS = [5, 10, 15, 20]; // secondes de décompte proposées avant les photos
 
@@ -551,7 +551,7 @@ function renderCalibration() {
           </ol>
           ${S.camera.flashFired || S.camera.flashStray ? '<div class="alert">La dernière photo a été prise avec le flash : il est sûrement levé. <b>Rabats-le avant de lancer</b>, sinon il partira sur toutes les photos de test (la borne le relèvera elle-même s\'il en faut).</div>' : ''}
           <label>Décompte avant les photos <select id="coDelay">${CALIB_DELAYS.map((n) => `<option value="${n}" ${n === CAL.countdown ? 'selected' : ''}>${n} secondes</option>`).join('')}</select></label>
-          <p class="co-note">2 séries : sans flash puis avec flash, 2 à ${MAX_CALIB_SHOTS} photos, moins de 30 s au total. À la fin, rabats le flash si le réglage choisi est sans flash.</p>
+          <p class="co-note">${MAX_CALIB_SHOTS} photos, 25 s environ : 2 sans flash, puis 4 avec flash (ISO 200 à 1600). À la fin, rabats le flash si le réglage choisi est sans flash.</p>
           <button class="btn primary co-go" type="button" id="coGo">Lancer le calibrage</button>
         </aside>
       </div>`;
@@ -564,26 +564,26 @@ function renderCalibration() {
     $('#coCancel').onclick = () => { clearInterval(CAL.timer); CAL.stage = 'preview'; renderCalibration(); };
   } else if (CAL.stage === 'running') {
     const done = c?.shots?.length || 0;
-    const pct = Math.min(95, Math.round((Math.max(done, (c?.step || 1) - 0.5) / MAX_CALIB_SHOTS) * 100));
+    const pct = Math.min(100, Math.round((Math.max(done, (c?.step || 1) - 0.5) / MAX_CALIB_SHOTS) * 100));
     ov.innerHTML = `${head('Ne bougez pas', 'Photos de test en cours : la borne cherche le bon réglage pour ce lieu.')}
       <div class="co-main co-center">
         <div class="co-progress"><div style="width:${pct}%"></div></div>
-        <p class="co-step">Photo ${c?.step || 1} · ${esc(c?.label || 'préparation')}<br><small>jusqu'à ${MAX_CALIB_SHOTS} photos, souvent moins : l'écran l'indique dès que c'est fini</small></p>
+        <p class="co-step">Photo ${c?.step || 1} sur ${MAX_CALIB_SHOTS} · ${esc(c?.label || 'préparation')}<br><small>ne bouge pas jusqu'à la fin de la série</small></p>
         <div class="co-strip">${(c?.shots || []).map((sh) => `<img src="${esc(sh.thumb)}" alt="">`).join('')}</div>
       </div>`;
   } else if (CAL.stage === 'results') {
     const pick = c?.profile;
-    const isPick = (sh) => pick && sh.flash === !!pick.flash && ['shutterspeed', 'aperture', 'iso'].every((k) => sh.settings?.[k] === pick.settings?.[k]);
+    const isPick = (sh) => sh.best ?? (pick && sh.flash === !!pick.flash && ['shutterspeed', 'aperture', 'iso'].every((k) => sh.settings?.[k] === pick.settings?.[k]));
     const cards = (c?.shots || []).map((sh) => `
       <figure class="co-shot ${isPick(sh) ? 'picked' : ''}">
         <button type="button" class="co-thumb" data-open="${esc(sh.url)}" aria-label="Agrandir la photo ${sh.n}"><img src="${esc(sh.thumb)}" alt=""></button>
         ${isPick(sh) ? '<span class="co-ribbon">Choix de la borne</span>' : ''}
         <figcaption><b>${esc(sh.label)}</b><span>${esc(sh.summary)}</span>
-          <span>luminosité ${sh.mean}/255${sh.clipped > 2 ? ` · ${sh.clipped} % brûlé` : ''} · <span class="badge ${sh.ok ? 'ok' : ''}">${sh.ok ? 'dans la cible' : 'hors cible'}</span></span>
+          <span>luminosité ${sh.mean}/255${sh.clipped > 2 ? ` · ${sh.clipped} % brûlé` : ''} · <span class="badge ${sh.ok ? 'ok' : ''}">${sh.ok ? 'dans la cible' : 'hors cible'}</span>${sh.score != null ? ` · note ${sh.score}` : ''}</span>
           ${isPick(sh) ? '' : `<button class="btn small" type="button" id="coPick-${sh.n}" data-pick="${sh.n}">Choisir ce réglage</button>`}
         </figcaption>
       </figure>`).join('');
-    ov.innerHTML = `${head('Résultat du calibrage', esc(c?.reason || ''))}
+    ov.innerHTML = `${head('Résultat du calibrage', `${esc(c?.reason || '')}<br><small>Note : écart à la luminosité idéale, zones brûlées et bruit (ISO) ; plus elle est basse, mieux c'est.</small>`)}
       ${flashAdvice(c, pick)}
       <div class="co-shots">${cards || '<p>Aucune photo.</p>'}</div>
       <footer class="co-foot">

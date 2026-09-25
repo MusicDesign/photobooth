@@ -50,7 +50,7 @@ export const AUTO_BASE = {
 /** Exposition de départ si aucun calibrage n'a été fait. */
 export const AUTO_DEFAULT = { flash: false, settings: { shutterspeed: '1/125', aperture: '5.6', iso: 'Auto' } };
 
-export const MAX_SHOTS = 7;       // au plus 3 photos sans flash + 4 avec (annoncé à l'écran pendant le calibrage)
+export const MAX_SHOTS = 6;       // 2 photos sans flash + 4 avec, toujours (annoncé à l'écran pendant le calibrage)
 const TARGET = 118;                 // luminosité moyenne visée (0-255) : lumineuse sans être délavée
 const OK_MIN = 92, OK_MAX = 152;    // fourchette acceptée
 const MAX_CLIP = 0.02;              // 2 % de pixels brûlés au plus
@@ -99,15 +99,25 @@ export async function measurePhoto(file) {
 
 const fmtExposure = (t) => (t == null ? '?' : t >= 1 ? `${t} s` : `1/${Math.round(1 / t)} s`);
 const describe = (m) => `${fmtExposure(m.exposure)} · f/${m.fnumber ?? '?'} · ISO ${m.iso ?? '?'}${m.flashFired ? ' · flash' : ''}`;
-const quality = (m) => Math.abs(m.mean - TARGET) + (m.clipped > MAX_CLIP ? 200 * m.clipped : 0);
 const good = (m) => m.mean >= OK_MIN && m.mean <= OK_MAX && m.clipped <= MAX_CLIP;
 
+/** Note d'une photo (plus petite = meilleure) : écart à la luminosité visée, zones brûlées, puis bruit (ISO). */
+export function score(m) {
+  const iso = Number(m.iso) || 100;
+  return Math.round(Math.abs(m.mean - TARGET) + (m.clipped > MAX_CLIP ? 300 * m.clipped : 50 * m.clipped) + 4 * Math.log2(iso / 100));
+}
+
+/** Séries complètes, toujours les mêmes : on compare tout avant de choisir (MAX_SHOTS photos). */
+const NO_FLASH_SERIES = [{ shutterspeed: '1/125', aperture: '5.6', iso: 'Auto' }, { shutterspeed: '1/125', aperture: '8', iso: 'Auto' }];
+const FLASH_SERIES = ['200', '400', '800', '1600'].map((iso) => ({ shutterspeed: '1/60', aperture: '5.6', iso }));
+const NO_FLASH_BONUS = 15; // à qualité proche, la lumière du lieu l'emporte (rendu plus doux, pas d'éblouissement)
+
 /**
- * Calibrage sur place : photos de test à l'endroit de la borne, pour trouver l'exposition du lieu.
- *   1. sans flash (1/125 s, f/5.6, ISO auto) : trop clair, on ferme le diaphragme ;
- *   2. puis avec flash, toujours (la borne le lève elle-même) : 1/60 s, f/5.6, ISO ajusté (400, puis
- *      800 / 1600 ou 200 / 100, puis diaphragme) ;
- *   3. choix : sans flash si la luminosité est bonne et l'ISO raisonnable, sinon le meilleur avec flash.
+ * Calibrage sur place, complet : photos de test à l'endroit de la borne, pour trouver l'exposition du lieu.
+ *   1. sans flash : ISO auto à f/5.6 puis f/8 ;
+ *   2. avec flash (la borne le lève elle-même) : 1/60 s, f/5.6, ISO 200, 400, 800 et 1600 ;
+ *   3. choix : la meilleure note (voir score) ; sans flash seulement si l'ISO reste raisonnable, et gagnant
+ *      à qualité proche.
  * cam : { write(values), shoot(file), raiseFlash(), flashControl } fournis par le pilote.
  * Rend { profile, shots, reason } ; profile null si rien d'acceptable.
  */
@@ -115,7 +125,7 @@ export async function calibrate(cam, { dir, onStep = () => {} }) {
   fs.mkdirSync(dir, { recursive: true });
   const shots = [];
   let n = 0;
-  const shoot = async (label, settings) => {
+  const shoot = async (label, settings, flash) => {
     await cam.write(settings);
     const file = path.join(dir, `test-${++n}.jpg`);
     onStep({ step: n, label, settings });
@@ -124,8 +134,8 @@ export async function calibrate(cam, { dir, onStep = () => {} }) {
     await sharp(file).resize(360, 360, { fit: 'inside' }).jpeg({ quality: 80 }).toFile(thumb);
     const m = await measurePhoto(file);
     // Flash levé à la main : il est parti même sur une photo prévue sans flash
-    if (m.flashFired && /^Sans flash/.test(label)) label = label.replace(/^Sans flash/, 'Flash levé à la main');
-    const shot = { n, label, settings, file, thumb, ...m, summary: describe(m), ok: good(m) };
+    if (m.flashFired && !flash) label = label.replace(/^Sans flash/, 'Flash levé à la main');
+    const shot = { n, label, settings, file, thumb, ...m, summary: describe(m), ok: good(m), score: score(m), flash: flash || !!m.flashFired };
     shots.push(shot);
     onStep({ step: n, label, settings, shot });
     return shot;
@@ -133,50 +143,39 @@ export async function calibrate(cam, { dir, onStep = () => {} }) {
 
   await cam.write(AUTO_BASE);
 
-  // 1. Lumière ambiante
-  let ambient = null;
-  let flashUp = false;
-  let s = { shutterspeed: '1/125', aperture: '5.6', iso: 'Auto' };
-  for (const aperture of ['5.6', '8', '11']) {
-    s = { ...s, aperture };
-    const shot = await shoot(`Sans flash, f/${aperture}`, s);
-    if (shot.flashFired) { flashUp = true; break; } // flash levé à la main : pas de test sans flash possible
-    ambient = shot;
-    if (shot.mean <= OK_MAX && shot.clipped <= MAX_CLIP) break; // pas trop clair : inutile de fermer davantage
-  }
-  const ambientOk = !!ambient && good(ambient) && (ambient.iso ?? 0) <= MAX_AMBIENT_ISO;
-  const noFlashProfile = ambient ? { flash: false, settings: { ...s } } : null;
-  const why = flashUp ? 'Flash levé à la main dès le départ : pas de test sans flash possible.'
-    : ambientOk ? `Sans flash : ${ambient.summary}, luminosité ${ambient.mean}/255.`
-    : ambient && (ambient.iso ?? 0) > MAX_AMBIENT_ISO ? `Sans flash, il faudrait ISO ${ambient.iso} : trop de bruit.`
-    : ambient ? `Sans flash, luminosité ${ambient.mean}/255 : hors de la fourchette.` : '';
+  // 1. Sans flash
+  for (const s of NO_FLASH_SERIES) await shoot(`Sans flash, f/${s.aperture}`, s, false);
+  const flashUp = shots.some((sh) => sh.flashFired);
 
-  // 2. Avec flash, toujours (série complète : sans flash d'abord, puis la borne lève le flash elle-même,
-  //    personne n'a à le rabattre entre deux photos)
-  if (!cam.flashControl && !flashUp) {
-    return { profile: noFlashProfile, shots, reason: `${why} Ce boîtier ne lève pas son flash par USB : réglage sans flash, à corriger à la main si besoin.` };
+  // 2. Avec flash
+  let flashSilent = false;
+  if (cam.flashControl || flashUp) {
+    await cam.raiseFlash();
+    for (const s of FLASH_SERIES) await shoot(`Avec flash, ISO ${s.iso}`, s, true);
+    // Aucune photo de la série n'a flashé (EXIF) : flash rabattu, ou émission de l'éclair coupée dans le menu
+    flashSilent = shots.filter((sh) => sh.flash && !sh.flashFired).length === FLASH_SERIES.length;
+    if (flashSilent) for (const sh of shots) if (sh.flash && !sh.flashFired) { sh.flash = false; sh.label = sh.label.replace('Avec flash', 'Flash non parti'); sh.ok = false; }
   }
-  await cam.raiseFlash();
-  const isos = ['100', '200', '400', '800', '1600'];
-  let iso = 2; // 400
-  let aperture = '5.6';
-  const tried = [];
-  for (let i = 0; i < 4; i++) {
-    const fs_ = { shutterspeed: '1/60', aperture, iso: isos[iso] };
-    const shot = await shoot(`Avec flash, ISO ${isos[iso]}, f/${aperture}`, fs_);
-    tried.push({ shot, settings: fs_ });
-    if (good(shot)) break;
-    if (shot.mean < OK_MIN && iso < isos.length - 1) iso++;
-    else if (shot.mean > OK_MAX && iso > 0) iso--;
-    else if (shot.mean > OK_MAX && aperture !== '11') aperture = aperture === '5.6' ? '8' : '11';
-    else break;
-  }
-  const best = tried.reduce((a, b) => (quality(b.shot) < quality(a.shot) ? b : a));
-  const withFlash = `Avec flash : ${best.shot.summary}, luminosité ${best.shot.mean}/255${best.shot.ok ? '' : ' (au plus près de la cible)'}.`;
 
-  // 3. Choix : la lumière naturelle si elle suffit (rendu plus doux), sinon le flash
-  if (ambientOk) {
-    return { profile: noFlashProfile, shots, reason: `${why} ${withFlash} Choix : sans flash, la lumière du lieu suffit (rabats le flash à la fin).` };
-  }
-  return { profile: { flash: true, settings: { ...best.settings } }, shots, reason: `${why} ${withFlash} Choix : avec flash.` };
+  // 3. Choix
+  const byScore = (a, b) => a.score - b.score;
+  const ambient = shots.filter((sh) => !sh.flash && sh.ok && (sh.iso ?? 0) <= MAX_AMBIENT_ISO).sort(byScore)[0];
+  const flashed = shots.filter((sh) => sh.flash).sort(byScore)[0];
+  let best;
+  if (ambient && (!flashed || ambient.score <= flashed.score + NO_FLASH_BONUS)) best = ambient;
+  else best = flashed || shots.slice().sort(byScore)[0];
+  const silentNote = flashSilent ? ' Le flash n\'est parti sur aucune photo de la série avec flash : vérifie qu\'il est levé et que « Émission de l\'éclair » est activée dans le menu Contrôle du flash du boîtier, puis recommence.' : '';
+  if (flashSilent && !ambient) return { profile: null, shots, reason: `Pas de réglage fiable.${silentNote}` };
+  if (!best) return { profile: null, shots, reason: 'Aucune photo exploitable.' };
+  best.best = true;
+  const ambientNote = flashUp ? 'Flash levé à la main dès le départ : pas de vraie photo sans flash.'
+    : ambient ? `Meilleure sans flash : ${ambient.summary}, luminosité ${ambient.mean}/255 (note ${ambient.score}).`
+    : `Sans flash : ${shots.filter((sh) => !sh.flash).map((sh) => `ISO ${sh.iso ?? '?'}, luminosité ${sh.mean}`).join(' ; ')}, pas assez bon.`;
+  const flashNote = flashed ? ` Meilleure avec flash : ${flashed.summary}, luminosité ${flashed.mean}/255 (note ${flashed.score}).` : '';
+  const pick = best.flash ? 'avec flash' : 'sans flash, la lumière du lieu suffit (rabats le flash à la fin)';
+  return {
+    profile: { flash: !!best.flash, settings: { ...best.settings } },
+    shots,
+    reason: `${ambientNote}${flashNote} Choix : ${pick}${best.ok ? '' : ', au plus près de la cible'}.${silentNote}`
+  };
 }

@@ -15,7 +15,7 @@ import { FORMATS, FONTS, DEFAULT_FORMAT } from '../templates.js';
 const EDITABLE_SECTIONS = ['booth', 'camera', 'printer', 'limits', 'templates', 'theme', 'texts', 'admin', 'share', 'gallery'];
 const IMAGE_EXT = { 'image/png': '.png', 'image/svg+xml': '.svg', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
 
-export function adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart }) {
+export function adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart, kioskScreen = () => null }) {
   const r = express.Router();
   const tokens = new Set();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024 } });
@@ -81,12 +81,16 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   const calibDir = path.join(OUTPUT_DIR, 'calibration');
   const urlOf = (file) => `/output/calibration/${path.relative(calibDir, file).split(path.sep).join('/')}`;
   // settings + flash : de quoi garder n'importe quelle photo de test comme réglage (choix à la main)
-  const shotView = (s) => ({ n: s.n, label: s.label, summary: s.summary, mean: s.mean, clipped: Math.round(s.clipped * 1000) / 10, ok: s.ok, thumb: urlOf(s.thumb), url: urlOf(s.file), settings: s.settings, flash: /flash/i.test(s.label) || !!s.flashFired });
+  const shotView = (s) => ({ n: s.n, label: s.label, summary: s.summary, mean: s.mean, clipped: Math.round(s.clipped * 1000) / 10, ok: s.ok, thumb: urlOf(s.thumb), url: urlOf(s.file), settings: s.settings, flash: !!s.flash, score: s.score, best: !!s.best });
   r.get('/camera/calibration', (req, res) => res.json({ calibration }));
   r.post('/camera/calibrate', (req, res) => {
     const cam = camera();
     if (cam.calibrating) throw new HttpError(409, 'CALIBRATING', 'Calibrage déjà en cours');
-    if (booth.guestActive()) throw new HttpError(409, 'GUEST_ACTIVE', 'Un invité est en pleine séance : relance le calibrage quand la borne est revenue à l\'accueil');
+    // Refus seulement si la borne affiche vraiment un écran de séance (admin ouverte sur la borne : aucun invité)
+    const screen = kioskScreen();
+    if (['template', 'capture', 'review', 'copies', 'printing', 'done'].includes(screen)) {
+      throw new HttpError(409, 'GUEST_ACTIVE', 'Un invité est en pleine séance sur la borne : relance le calibrage quand elle est revenue à l\'accueil');
+    }
     const id = new Date().toISOString().replace(/[:.]/g, '-');
     // On ne garde que les 3 derniers calibrages sur le disque
     try { fs.readdirSync(calibDir).sort().slice(0, -2).forEach((d) => fs.rmSync(path.join(calibDir, d), { recursive: true, force: true })); } catch { /* pas encore de dossier */ }

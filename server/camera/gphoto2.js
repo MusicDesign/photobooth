@@ -96,12 +96,7 @@ export class Gphoto2Camera extends BaseCamera {
     this.failing = false; // dernier lancement du live en échec (appareil absent, occupé…)
     this.starting = false;
     this.idleTimer = null;
-    this.battery = null;      // { level: '75%', percent: 75, at } : lu au repos, voir maybeReadBattery()
     this.statusRead = null;   // lecture d'état en cours (promesse) : photo et live l'attendent
-    this.idleSince = null;
-    this.batteryAt = 0;
-    this.batteryTimer = setInterval(() => this.maybeReadBattery(), 10000);
-    this.batteryTimer.unref?.();
     this.control = { mode: 'camera' }; // réglages de prise de vue imposés depuis l'admin (voir control.js)
     this.applied = {};                 // valeurs déjà poussées au boîtier depuis sa détection
     this.calibrating = null;           // calibrage en cours : { step, label, shots }
@@ -113,6 +108,7 @@ export class Gphoto2Camera extends BaseCamera {
     this.lastFlashError = null;
     this.noFrameExits = 0; // lancements consécutifs du live terminés sans aucune image
     this.arming = null;   // promesse du pré-armement en cours (arrêt du live + lancement de la commande)
+    this.procs = new Set(); // commandes gphoto2 en cours (voir run), arrêtées à la fermeture
     this.pending = null;  // { file, promise, kill } : déclenchement programmé, en cours ou terminé, pas encore consommé
     this.pendingTimer = null;
     this.capturing = false;
@@ -125,21 +121,57 @@ export class Gphoto2Camera extends BaseCamera {
     } catch {
       throw new Error('gphoto2 introuvable. Installer : sudo dnf install gphoto2 (Fedora), sudo apt install gphoto2 (Ubuntu) ou brew install gphoto2 (Mac).');
     }
-    // Un live view orphelin (serveur tué brutalement) garderait l'obturateur ouvert et l'appareil réservé.
+    // Démarrage = remise à zéro : commandes restées d'une exécution précédente arrêtées, démon photo de
+    // macOS libéré, puis connexion USB du boîtier réinitialisée (sort le 2000D d'un « Device Busy » persistant).
     await this.killOrphans();
     if (process.platform === 'darwin') {
       // macOS accapare l'appareil avec son propre démon PTP.
       try { await execFileP('killall', ['ptpcamerad']); } catch { /* pas lancé */ }
     }
+    await this.resetUsb();
     await this.probe();
   }
 
+  /**
+   * Commandes gphoto2 restées d'une exécution précédente (app fermée pendant une photo, serveur tué) : elles
+   * gardent le boîtier réservé et la borne ne peut plus rien faire (« Could not claim the USB device »).
+   * Arrêt en douceur, SIGTERM si elles résistent, puis déclencheur relâché.
+   */
   async killOrphans() {
+    const alive = async () => { try { await execFileP('pgrep', ['-x', 'gphoto2']); return true; } catch { return false; } };
+    if (!(await alive())) return;
+    await execFileP('pkill', ['-INT', '-x', 'gphoto2']).catch(() => {});
+    for (let i = 0; i < 15 && (await alive()); i++) await sleep(200);
+    if (await alive()) { await execFileP('pkill', ['-TERM', '-x', 'gphoto2']).catch(() => {}); await sleep(1000); }
+    console.warn('[gphoto2] commande gphoto2 orpheline arrêtée (exécution précédente) : déclencheur relâché');
+    await this.recover().catch(() => {});
+  }
+
+  /** Le boîtier est-il occupé (live, photo programmée ou en cours, réglages, lecture d'état, commande) ? */
+  inUse() {
+    return !!(this.live || this.busy || this.starting || this.stopping || this.arming || this.pending
+      || this.capturing || this.statusRead || this.calibrating || this.procs.size);
+  }
+
+  /** Réinitialise la connexion USB du boîtier (gphoto2 --reset), puis relâche le déclencheur. Jamais bloquant. */
+  async resetUsb() {
     try {
-      await execFileP('pkill', ['-INT', '-f', 'gphoto2 --capture-movie']);
-      console.warn('[gphoto2] live view orphelin arrêté');
-      await sleep(1500);
-    } catch { /* aucun orphelin : pkill renvoie 1 */ }
+      await execFileP('gphoto2', ['--reset'], { timeout: 10000 });
+      await sleep(2000); // le boîtier se réannonce sur l'USB
+      console.log('[gphoto2] connexion USB du boîtier réinitialisée');
+      await this.recover().catch(() => {});
+    } catch { /* pas de boîtier branché : rien à réinitialiser */ }
+  }
+
+  /** Arrête toutes les commandes gphoto2 en cours (fermeture) : SIGINT, puis SIGTERM 3 s plus tard. */
+  async stopAllCommands() {
+    if (!this.procs.size) return false;
+    const jobs = [...this.procs];
+    console.log(`[gphoto2] arrêt de ${jobs.length} commande(s) en cours : ${jobs.map((j) => j.cmd.replace(/^LANG=C LC_ALL=C /, '').split(' --')[0] + ' --' + (j.cmd.split(' --')[1] || '')).join(' ; ')}`);
+    for (const j of jobs) j.kill('SIGINT');
+    for (let i = 0; i < 15 && jobs.some((j) => !j.exited()); i++) await sleep(200);
+    for (const j of jobs) if (!j.exited()) j.kill('SIGTERM');
+    return true;
   }
 
   /** Vérifie la présence du boîtier sans le réserver, pour le tableau de bord, puis le prépare. */
@@ -161,21 +193,20 @@ export class Gphoto2Camera extends BaseCamera {
   }
 
   /**
-   * Lit l'état du boîtier en une seule commande gphoto2 : firmware (à la détection, décide si le flash se lève
-   * par USB sur les petits Rebel) et niveau de batterie. Jamais en même temps qu'une autre commande : l'appelant
+   * Lit le firmware à la détection (décide si le flash se lève par USB sur les petits Rebel). La batterie
+   * n'est plus lue : toute commande en plus pendant l'usage a bloqué le 2000D. Jamais en même temps qu'une autre commande : l'appelant
    * s'assure que le boîtier est libre, et un dépassement de délai arrête gphoto2 en douceur (SIGINT), jamais
    * SIGKILL (le 2000D se bloque si on coupe une transaction en cours).
    */
   async readStatus({ firmware = false } = {}) {
-    const keys = [...(firmware ? ['/main/status/deviceversion'] : []), '/main/status/batterylevel'];
+    const keys = firmware ? ['/main/status/deviceversion'] : [];
+    if (!keys.length) return;
     const out = await this.run(`gphoto2 ${keys.map((k) => `--get-config ${k}`).join(' ')}`, 8000, { timeoutSignal: 'SIGINT' }).promise;
     const values = [...out.matchAll(/^Current:\s*(.+)$/gm)].map((m) => m[1].trim());
     if (firmware) {
       this.firmware = values.shift() || this.firmware || null;
       if (this.firmware) console.log(`[gphoto2] ${this.model} · firmware ${this.firmware}${this.flashControl() ? ' · flash pilotable par USB' : ''}`);
     }
-    const level = values.shift();
-    if (level) this.setBattery(level);
   }
 
   async readFirmware() {
@@ -183,44 +214,6 @@ export class Gphoto2Camera extends BaseCamera {
     this.statusRead = this.readStatus({ firmware: true }).catch(() => { /* illisible : règle du modèle */ });
     await this.statusRead;
     this.statusRead = null;
-    this.batteryAt = Date.now();
-  }
-
-  setBattery(level) {
-    const percent = Number.parseInt(level, 10);
-    const prev = this.battery?.level;
-    this.battery = { level, percent: Number.isFinite(percent) ? percent : null, at: new Date().toISOString() };
-    if (prev !== level) {
-      console.log(`[gphoto2] batterie : ${level}`);
-      this.onBattery?.(this.battery);
-    }
-  }
-
-  /**
-   * Batterie relue seulement quand le boîtier est au repos depuis 30 s (ni live, ni photo, ni commande),
-   * au plus toutes les 5 minutes. Pendant la lecture (~0,5 s) le boîtier est marqué occupé : le live
-   * attend, et une photo lancée à ce moment attend la fin de la lecture (voir arm / capture).
-   */
-  async maybeReadBattery() {
-    const idle = this.model && !this.failing && !this.live && !this.busy && !this.starting && !this.stopping
-      && !this.capturing && !this.arming && !this.pending && !this.statusRead;
-    if (!idle) { this.idleSince = null; return; }
-    this.idleSince ??= Date.now();
-    if (Date.now() - this.idleSince < 30000 || Date.now() - this.batteryAt < 5 * 60 * 1000) return;
-    this.busy = true;
-    this.statusRead = this.readStatus().catch((e) => console.warn(`[gphoto2] batterie illisible : ${e.message.split('\n')[0]}`));
-    try {
-      await this.statusRead;
-    } finally {
-      this.statusRead = null;
-      this.batteryAt = Date.now();
-      this.idleSince = null;
-      // Une photo a pu commencer pendant la lecture : elle garde le boîtier « occupé »
-      if (!this.arming && !this.capturing && !this.pending) {
-        this.busy = false;
-        if (this.wanted()) this.startLive(); // un invité a touché l'écran pendant la lecture
-      }
-    }
   }
 
   /** Réglages poussés au boîtier à la détection (arrêt auto…). Un échec est journalisé, jamais bloquant. */
@@ -303,18 +296,35 @@ export class Gphoto2Camera extends BaseCamera {
   }
 
   /** Lance une commande shell avec délai maximal. Retourne { promise, kill } ; la promesse rejette avec la dernière ligne d'erreur. */
-  run(cmd, timeoutMs, { timeoutSignal = 'SIGKILL' } = {}) {
+  /**
+   * Lance une commande gphoto2 (groupe de processus à part). Délai dépassé : arrêt en douceur (SIGINT, gphoto2
+   * referme sa session), puis SIGTERM 3 s plus tard s'il ne répond toujours pas ; jamais SIGKILL d'emblée,
+   * qui coupe une transaction et fige le 2000D. Chaque commande en cours est suivie (this.procs) pour être
+   * arrêtée à la fermeture de l'app : sinon elle survit et garde le boîtier réservé.
+   */
+  run(cmd, timeoutMs, { timeoutSignal = 'SIGINT' } = {}) {
     const p = spawn('sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     let err = '';
     let out = '';
     let killed = false;
+    let exited = false;
     const kill = (sig = 'SIGINT') => { killed = true; try { process.kill(-p.pid, sig); } catch { try { p.kill(sig); } catch { /* déjà parti */ } } };
+    const job = { kill, cmd, exited: () => exited };
+    this.procs.add(job);
     const promise = new Promise((resolve, reject) => {
-      const t = setTimeout(() => { err += `\ngphoto2 n'a pas répondu en ${Math.round(timeoutMs / 1000)} s`; kill(timeoutSignal); }, timeoutMs);
+      let t2 = null;
+      const t = setTimeout(() => {
+        err += `\ngphoto2 n'a pas répondu en ${Math.round(timeoutMs / 1000)} s`;
+        kill(timeoutSignal);
+        t2 = setTimeout(() => { if (!exited) kill('SIGTERM'); }, 3000);
+      }, timeoutMs);
       p.stdout.on('data', (d) => { out += d.toString(); });
       p.stderr.on('data', (d) => { err += d.toString(); });
       p.on('exit', (code) => {
+        exited = true;
+        this.procs.delete(job);
         clearTimeout(t);
+        clearTimeout(t2);
         const lines = err.trim().split('\n').map((l) => l.trim()).filter((l) => l && !/^UNKNOWN|^\*\*\*|^Pour obtenir|^Ces messages|^l'intention|^diffusion|^en anglais|^env LANG|^For debugging|^These debug|^intend to send|^mailing list|^please run|^Please make sure/i.test(l));
         const last = lines.slice(-3).join(' | ');
         if (code === 0) resolve(out);
@@ -401,7 +411,7 @@ export class Gphoto2Camera extends BaseCamera {
     }
     this.busy = true; // posé sans attente depuis le test : aucune autre commande ne peut s'intercaler
     let release;
-    this.statusRead = new Promise((r) => { release = r; }); // photo et lecture de batterie attendent la fin
+    this.statusRead = new Promise((r) => { release = r; }); // les photos attendent la fin
     try {
       if (this.live) await this.stopLive();
       return await fn();
@@ -620,7 +630,7 @@ export class Gphoto2Camera extends BaseCamera {
     const t0 = Date.now();
     this.busy = true; // bloque la relance du live et la bascule de pilote
     this.arming = (async () => {
-      if (this.statusRead) await this.statusRead; // lecture de batterie en cours : elle finit d'abord
+      if (this.statusRead) await this.statusRead; // lecture ou réglage en cours : il finit d'abord
       const tStop = Date.now();
       await this.stopLive(false); // l'ouverture de la liaison gphoto2 sert de pause de stabilisation
       const stopMs = Date.now() - tStop;
@@ -682,7 +692,7 @@ export class Gphoto2Camera extends BaseCamera {
         return destFile;
       }
       // Sans pré-armement : on coupe le live maintenant et tout se fait à « 0 » (mise au point comprise).
-      if (this.statusRead) await this.statusRead; // lecture de batterie en cours : elle finit d'abord
+      if (this.statusRead) await this.statusRead; // lecture ou réglage en cours : il finit d'abord
       this.busy = true;
       await this.stopLive();
       await this.raiseFlash();
@@ -722,7 +732,6 @@ export class Gphoto2Camera extends BaseCamera {
       standby: this.opts.liveview && !this.live && !this.starting && !this.failing,
       model: this.model || null,
       firmware: this.firmware || null,
-      battery: this.battery,
       control: this.control?.mode || 'camera',
       calibrating: this.calibrating ? { step: this.calibrating.step, label: this.calibrating.label } : null,
       flashControl: this.flashControl(),
@@ -740,8 +749,9 @@ export class Gphoto2Camera extends BaseCamera {
 
   async shutdown() {
     this.opts.liveview = false;
-    clearInterval(this.batteryTimer);
     clearTimeout(this.controlTimer);
+    // Photo en cours (déjà réclamée par la borne, donc hors de disarm) : arrêtée ici, puis déclencheur relâché
+    if (await this.stopAllCommands()) { await sleep(1200); await this.recover().catch(() => {}); } // le boîtier se libère d'abord
     if (this.statusRead) await this.statusRead;
     clearTimeout(this.idleTimer);
     clearTimeout(this.pendingTimer);
