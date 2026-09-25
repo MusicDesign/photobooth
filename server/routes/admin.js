@@ -79,12 +79,22 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   });
 
   // Dernier calibrage (et celui en cours) : l'admin l'interroge pendant qu'il tourne.
+  // Photos de test : sur le disque tant que l'écran du calibrage est ouvert, supprimées quand on le quitte
+  // (réglage gardé, fermeture, nouvel essai), voir /camera/calibration/discard.
   let calibration = null;
   const calibDir = path.join(OUTPUT_DIR, 'calibration');
+  const wipeCalibDir = () => fs.rmSync(calibDir, { recursive: true, force: true });
+  wipeCalibDir(); // restes d'une version précédente ou d'un arrêt en plein calibrage
   const urlOf = (file) => `/output/calibration/${path.relative(calibDir, file).split(path.sep).join('/')}`;
   // settings + flash : de quoi garder n'importe quelle photo de test comme réglage (choix à la main)
   const shotView = (s) => ({ n: s.n, label: s.label, summary: s.summary, mean: s.mean, clipped: Math.round(s.clipped * 1000) / 10, ok: s.ok, thumb: urlOf(s.thumb), url: urlOf(s.file), settings: s.settings, flash: !!s.flash, score: s.score, best: !!s.best });
   r.get('/camera/calibration', (req, res) => res.json({ calibration }));
+  /** Écran du calibrage quitté : plus aucune photo de test. En plein calibrage, ce sera fait à la fin. */
+  r.post('/camera/calibration/discard', (req, res) => {
+    if (calibration?.state === 'running') calibration.discard = true;
+    else { calibration = null; wipeCalibDir(); }
+    res.json({ ok: true });
+  });
   r.post('/camera/calibrate', (req, res) => {
     const cam = camera();
     if (cam.calibrating) throw new HttpError(409, 'CALIBRATING', 'Calibrage déjà en cours');
@@ -94,8 +104,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       throw new HttpError(409, 'GUEST_ACTIVE', 'Un invité est en pleine séance sur la borne : relance le calibrage quand elle est revenue à l\'accueil');
     }
     const id = new Date().toISOString().replace(/[:.]/g, '-');
-    // On ne garde que les 3 derniers calibrages sur le disque
-    try { fs.readdirSync(calibDir).sort().slice(0, -2).forEach((d) => fs.rmSync(path.join(calibDir, d), { recursive: true, force: true })); } catch { /* pas encore de dossier */ }
+    wipeCalibDir(); // nouvel essai : les photos du précédent disparaissent
     calibration = { id, state: 'running', step: 0, label: 'Préparation du boîtier', shots: [], maxShots: MAX_SHOTS };
     res.json({ calibration });
     console.log('[booth] calibrage du boîtier lancé depuis l\'admin');
@@ -107,7 +116,8 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       .catch((e) => {
         calibration = { ...calibration, state: 'error', error: e.message };
         console.warn(`[booth] calibrage : ${e.message}`);
-      });
+      })
+      .finally(() => { if (calibration?.discard) { calibration = null; wipeCalibDir(); } }); // écran quitté pendant le calibrage
   });
 
   r.post('/restart', (req, res) => {
