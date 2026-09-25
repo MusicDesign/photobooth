@@ -10,7 +10,9 @@ import { HttpError, parseCookies } from '../util.js';
 import { CAMERA_DRIVERS, CAMERA_FALLBACKS } from '../camera/index.js';
 import { MANUAL_SETTINGS, MAX_SHOTS } from '../camera/control.js';
 import { PRINTER_DRIVERS, PRINTER_FALLBACKS } from '../printer/index.js';
-import { FORMATS, FONTS, DEFAULT_FORMAT } from '../templates.js';
+import { FORMATS, FONTS, DEFAULT_FORMAT, normalizeLayers } from '../templates.js';
+import { compose } from '../compositor.js';
+import { OUTPUT_DIR as OUT } from '../paths.js';
 
 const EDITABLE_SECTIONS = ['booth', 'camera', 'printer', 'limits', 'templates', 'theme', 'texts', 'admin', 'share', 'gallery'];
 const IMAGE_EXT = { 'image/png': '.png', 'image/svg+xml': '.svg', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
@@ -117,6 +119,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
 
   r.get('/state', async (req, res) => {
     const samples = samplePhotos().map((s) => s.url);
+    const sampleCutouts = samplePhotos().map((s) => s.cutoutUrl || null);
     res.json({
       config: config.get(),
       counters: booth.publicCounters(),
@@ -126,6 +129,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       defaultFormat: DEFAULT_FORMAT,
       fonts: Object.fromEntries(Object.entries(FONTS).map(([k, v]) => [k, v.name])),
       samples,
+      sampleCutouts, // même photo détourée (.png), pour les calques avec détourage
       themes: themes.all(),
       theme: themes.resolve(config.get()),
       drivers: { camera: CAMERA_DRIVERS, printer: PRINTER_DRIVERS, cameraFallbacks: CAMERA_FALLBACKS, printerFallbacks: PRINTER_FALLBACKS },
@@ -180,6 +184,35 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   // ---------- Templates ----------
 
   /** Création : un nom suffit (id et taille déduits). PNG complet optionnel (avancé). */
+  /**
+   * Essai du détourage depuis l'éditeur : monte le template tel qu'il est à l'écran (pas encore enregistré)
+   * avec la dernière photo prise par la borne ou la photo d'exemple, exactement comme la photo finale.
+   */
+  r.post('/templates/test-cutout', async (req, res) => {
+    const { template: raw = {}, id, source = 'last' } = req.body || {};
+    const saved = id && templates.items.get(id);
+    const layers = normalizeLayers(raw.layers);
+    const t = { width: Math.round(raw.width) || saved?.width || 1800, height: Math.round(raw.height) || saved?.height || 1200, background: raw.background || '#ffffff', layers, dir: saved?.dir || '' };
+    let photo = null;
+    if (source === 'last') {
+      const shots = Object.values(store.data.sessions).flatMap((s) => (s.shots || []).filter(Boolean).map((sh) => ({ file: sh.file, at: sh.takenAt || s.createdAt })))
+        .filter((sh) => sh.file && fs.existsSync(sh.file)).sort((a, b) => (a.at < b.at ? 1 : -1));
+      photo = shots[0]?.file;
+      if (!photo) throw new HttpError(404, 'NO_PHOTO', 'Pas encore de photo prise par la borne : essaie avec la photo d\'exemple');
+    } else {
+      photo = samplePhotos()[0]?.file;
+      if (!photo) throw new HttpError(404, 'NO_SAMPLE', 'Aucune photo d\'exemple');
+    }
+    const dir = path.join(OUT, 'cutout-test');
+    fs.mkdirSync(dir, { recursive: true });
+    for (const f of fs.readdirSync(dir)) fs.rmSync(path.join(dir, f), { force: true }); // un seul essai gardé
+    const name = `essai-${Date.now()}.jpg`;
+    const t0 = Date.now();
+    const shots = Math.max(...layers.filter((l) => l.type === 'photo').map((l) => l.shot)) + 1;
+    await compose(t, Array.from({ length: shots }, () => photo), path.join(dir, name));
+    res.json({ url: `/output/cutout-test/${name}`, ms: Date.now() - t0, source: source === 'last' ? 'dernière photo de la borne' : 'photo d\'exemple' });
+  });
+
   r.post('/templates', upload.single('overlay'), (req, res) => {
     const cfg = config.get();
     if (req.file && req.file.mimetype !== 'image/png') throw new HttpError(400, 'FILE_TYPE', 'Le PNG importé doit être un PNG avec transparence');
@@ -204,6 +237,14 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   /** Image ajoutée dans un template (logo, cadre…). */
   r.post('/templates/:id/assets', upload.single('image'), async (req, res) => {
     res.json(await templates.addAsset(req.params.id, req.file));
+  });
+  // Retirer le fond d'une image du template (éditeur) : rend la version transparente à utiliser
+  r.post('/templates/:id/assets/cutout', async (req, res) => {
+    const { src, ...opts } = req.body || {};
+    res.json(await templates.cutoutAsset(req.params.id, src, opts));
+  });
+  r.post('/templates/:id/assets/corner-color', async (req, res) => {
+    res.json({ color: await templates.cornerColor(req.params.id, req.body?.src) });
   });
 
   r.delete('/templates/:id', (req, res) => {

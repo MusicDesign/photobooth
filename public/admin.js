@@ -49,8 +49,16 @@ function syncFavicon() {
 const sampleCache = {};
 async function sampleImages() {
   const urls = S.samples || [];
-  await Promise.all(urls.map(async (u, i) => { if (!sampleCache[i]) sampleCache[i] = await loadImage(u); }));
+  const cuts = S.sampleCutouts || [];
+  await Promise.all(urls.map(async (u, i) => {
+    if (!sampleCache[i]) sampleCache[i] = await loadImage(u);
+    if (sampleCache[i] && cuts[i] && !sampleCache[i].cutout) sampleCache[i].cutout = await loadImage(cuts[i]).catch(() => null); // version détourée
+  }));
   return urls.map((_, i) => sampleCache[i]).filter(Boolean);
+}
+/** Photos détourées correspondantes (même photo N), pour les calques avec « Détourage ». */
+function cutoutsFromSamples(photos) {
+  return Object.fromEntries(Object.entries(photos).filter(([, img]) => img?.cutout).map(([k, img]) => [k, img.cutout]));
 }
 function photosFromSamples(template, samples) {
   const photos = {};
@@ -564,11 +572,11 @@ function renderCalibration() {
     $('#coCancel').onclick = () => { clearInterval(CAL.timer); CAL.stage = 'preview'; renderCalibration(); };
   } else if (CAL.stage === 'running') {
     const done = c?.shots?.length || 0;
-    const pct = Math.min(100, Math.round((Math.max(done, (c?.step || 1) - 0.5) / MAX_CALIB_SHOTS) * 100));
+    const pct = Math.min(100, Math.round((Math.max(done, (c?.step || 1) - 0.5) / Math.max(MAX_CALIB_SHOTS, c?.step || 1)) * 100));
     ov.innerHTML = `${head('Ne bougez pas', 'Photos de test en cours : la borne cherche le bon réglage pour ce lieu.')}
       <div class="co-main co-center">
         <div class="co-progress"><div style="width:${pct}%"></div></div>
-        <p class="co-step">Photo ${c?.step || 1} sur ${MAX_CALIB_SHOTS} · ${esc(c?.label || 'préparation')}<br><small>ne bouge pas jusqu'à la fin de la série</small></p>
+        <p class="co-step">Photo ${c?.step || 1} sur ${Math.max(MAX_CALIB_SHOTS, c?.step || 1)} · ${esc(c?.label || 'préparation')}<br><small>ne bouge pas jusqu'à la fin de la série${(c?.step || 0) > MAX_CALIB_SHOTS ? ' (une photo refaite : le flash n\'était pas parti)' : ''}</small></p>
         <div class="co-strip">${(c?.shots || []).map((sh) => `<img src="${esc(sh.thumb)}" alt="">`).join('')}</div>
       </div>`;
   } else if (CAL.stage === 'results') {
@@ -648,7 +656,10 @@ function openLightbox(url) {
   lb.id = 'calibLightbox';
   lb.className = 'co-lightbox';
   lb.innerHTML = `<img src="${esc(url)}" alt="Photo de test"><button class="btn" type="button">Fermer</button>`;
-  lb.addEventListener('click', () => lb.remove()); // clic n'importe où (ou Échap) : fermé
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  const close = () => { lb.remove(); document.removeEventListener('keydown', onKey, true); };
+  lb.addEventListener('click', close); // clic n'importe où (ou Échap) : fermé
+  document.addEventListener('keydown', onKey, true);
   document.body.appendChild(lb);
 }
 
@@ -937,7 +948,7 @@ function editorSection() {
         <div id="edProps" class="props"><p class="muted">Sélectionnez un calque sur l'aperçu ou dans la liste.</p></div>
       </aside>
     </div>
-    <p class="muted small">Glisser = déplacer · tirer un coin = redimensionner (Maj conserve les proportions) · flèches = 1 px (Maj = 10) · Suppr = supprimer · poignée ronde = rotation (Maj = pas de 15°). Les calques restent dans le cadre du tirage.</p>
+    <p class="muted small">Glisser = déplacer · tirer un coin = redimensionner (Maj conserve les proportions) · flèches = 1 px (Maj = 10) · Suppr = supprimer · poignée ronde = rotation (Maj = pas de 15°). Les calques peuvent dépasser du tirage ; ils se collent aux bords et au centre (Alt maintenu : sans aimant).</p>
   </div>`;
 }
 
@@ -965,7 +976,22 @@ function renderEditor() {
   if (!cv || !E.tpl) return;
   const ctx = cv.getContext('2d');
   const photos = E.samplesOn ? photosFromSamples({ shots: Math.max(...E.tpl.layers.filter((l) => l.type === 'photo').map((l) => l.shot), -1) + 1 }, E.samples) : {};
-  renderTemplate(ctx, E.tpl, { scale: E.scale * E.dpr, photos, assets: E.assets, placeholder: true });
+  renderTemplate(ctx, E.tpl, { scale: E.scale * E.dpr, photos, cutoutPhotos: cutoutsFromSamples(photos), assets: E.assets, placeholder: true });
+  // Repères du magnétisme (bord ou centre du tirage atteint)
+  if (E.guides?.length) {
+    ctx.save();
+    ctx.setTransform(E.dpr, 0, 0, E.dpr, 0, 0);
+    ctx.strokeStyle = '#e0218a';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 4]);
+    for (const g of E.guides) {
+      ctx.beginPath();
+      if (g.axis === 'x') { ctx.moveTo(g.pos * E.scale, 0); ctx.lineTo(g.pos * E.scale, E.tpl.height * E.scale); }
+      else { ctx.moveTo(0, g.pos * E.scale); ctx.lineTo(E.tpl.width * E.scale, g.pos * E.scale); }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
   const l = selectedLayer();
   if (!l) return;
   // Cadre de sélection, poignées d'angle et poignée de rotation, en pixels écran.
@@ -1063,18 +1089,53 @@ function removeLayer(id) {
 }
 
 /** Un calque ne peut pas sortir du template : position bornée, taille plafonnée. */
+/** Valeurs entières et taille minimale. Un calque peut dépasser du tirage (la partie hors cadre n'est pas imprimée). */
 function clampLayer(l) {
-  const W = E.tpl.width, H = E.tpl.height;
-  l.width = Math.max(1, Math.min(Math.round(l.width), W));
-  l.height = Math.max(1, Math.min(Math.round(l.height), H));
+  l.width = Math.max(1, Math.round(l.width));
+  l.height = Math.max(1, Math.round(l.height));
+  l.x = Math.round(l.x);
+  l.y = Math.round(l.y);
+}
+
+// ---------- Magnétisme : bords et centres du tirage (Alt maintenu : désactivé) ----------
+
+const SNAP_PX = 8; // distance d'attraction, en pixels écran
+/** Demi-largeur / demi-hauteur de l'encombrement d'un calque, rotation comprise. */
+function halfBox(l) {
   const a = (l.rotation || 0) * DEG;
-  const bw = (Math.abs(l.width * Math.cos(a)) + Math.abs(l.height * Math.sin(a))) / 2;
-  const bh = (Math.abs(l.width * Math.sin(a)) + Math.abs(l.height * Math.cos(a))) / 2;
-  let cx = l.x + l.width / 2, cy = l.y + l.height / 2;
-  cx = bw * 2 > W ? W / 2 : Math.min(W - bw, Math.max(bw, cx));
-  cy = bh * 2 > H ? H / 2 : Math.min(H - bh, Math.max(bh, cy));
+  return { hw: (Math.abs(l.width * Math.cos(a)) + Math.abs(l.height * Math.sin(a))) / 2, hh: (Math.abs(l.width * Math.sin(a)) + Math.abs(l.height * Math.cos(a))) / 2 };
+}
+/** Colle un calque déplacé aux bords et centres du tirage ; renvoie les lignes de repère à afficher. */
+function snapMove(l) {
+  const W = E.tpl.width, H = E.tpl.height, tol = SNAP_PX / E.scale;
+  const { hw, hh } = halfBox(l);
+  const guides = [];
+  const axis = (center, half, size, key) => {
+    let best = null;
+    for (const target of [0, size / 2, size]) {
+      for (const [edge, offset] of [[center - half, -half], [center, 0], [center + half, half]]) {
+        const d = target - edge;
+        if (Math.abs(d) <= tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, target };
+      }
+    }
+    if (!best) return center;
+    guides.push({ axis: key, pos: best.target });
+    return center + best.d;
+  };
+  const cx = axis(l.x + l.width / 2, hw, W, 'x');
+  const cy = axis(l.y + l.height / 2, hh, H, 'y');
   l.x = Math.round(cx - l.width / 2);
   l.y = Math.round(cy - l.height / 2);
+  return guides;
+}
+/** Colle le coin tiré (redimensionnement) aux bords et centres du tirage. */
+function snapPoint(x, y, guides) {
+  const W = E.tpl.width, H = E.tpl.height, tol = SNAP_PX / E.scale;
+  const near = (v, size, key) => {
+    for (const t of [0, size / 2, size]) if (Math.abs(v - t) <= tol) { guides.push({ axis: key, pos: t }); return t; }
+    return v;
+  };
+  return { x: near(x, W, 'x'), y: near(y, H, 'y') };
 }
 
 const DEG = Math.PI / 180;
@@ -1118,9 +1179,16 @@ function renderProps() {
     specific = `<label>Photo affichée <select data-p="shot" data-num>${shots}</select></label>${n('radius', 'Coins arrondis (px)', 0, 2000)}
       <small class="muted">Plusieurs calques peuvent afficher la même photo (bande dupliquée).</small>
       <label>Détourage <select data-p="cutout" id="pCutout">${Object.entries(cutOpts).map(([k, v]) => `<option value="${k}" ${cut === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+      ${cut === 'ai' ? `
+      <label>Seuil <input type="range" data-p="aiThreshold" min="0" max="100" step="1" value="${l.aiThreshold ?? 50}"><small>Plus haut : retire plus de fond. Plus bas : garde plus de la personne (bras, cheveux).</small></label>
+      <label>Douceur des bords <input type="range" data-p="aiSoftness" min="0" max="100" step="1" value="${l.aiSoftness ?? 50}"><small>À gauche : découpe nette. À droite : bord fondu.</small></label>
+      <label>Contour (px) <input type="number" data-p="aiContour" min="-10" max="10" step="1" value="${l.aiContour ?? 0}"><small>Négatif : resserre la découpe (enlève un halo du fond). Positif : l'élargit.</small></label>
+      <label>Précision <select data-p="aiPrecision"><option value="standard" ${l.aiPrecision !== 'fine' ? 'selected' : ''}>Standard</option><option value="fine" ${l.aiPrecision === 'fine' ? 'selected' : ''}>Fine (cheveux, détails ; montage plus lent)</option></select></label>
+      <div class="row"><button class="btn small secondary" type="button" id="pCutTestLast">Tester sur la dernière photo</button><button class="btn small" type="button" id="pCutTestSample">Tester sur la photo d'exemple</button></div>
+      <small class="muted">Le test fait le vrai montage de la photo finale avec les réglages affichés, même non enregistrés.</small>` : ''}
       ${cut === 'green' || cut === 'blue' ? `<label>Tolérance <input type="range" data-p="keyTolerance" min="0" max="100" step="1" value="${l.keyTolerance ?? 50}"></label>
       <small class="muted">Plus haut : retire aussi les zones du fond plus sombres (ombres, plis). Trop haut : le sujet s'efface là où il ressemble au fond.</small>` : ''}
-      ${cut !== 'none' ? `<small class="muted">Le fond retiré laisse voir les calques placés <b>sous</b> cette photo dans la liste (image, couleur…).${cut === 'ai' ? ' L\'aperçu en direct est un peu moins précis sur les bords que la photo finale.' : ''} L'aperçu de l'éditeur montre la photo sans détourage.</small>` : ''}`;
+      ${cut !== 'none' ? `<small class="muted">Le fond retiré laisse voir les calques placés <b>sous</b> cette photo dans la liste (image, couleur…).${cut === 'ai' ? ' L\'aperçu en direct est un peu moins précis sur les bords que la photo finale.' : ''} L'aperçu de l'éditeur utilise la photo d'exemple déjà détourée (template-photo.png, s'il existe).</small>` : ''}`;
   } else if (l.type === 'text') {
     specific = `
       <label>Texte <textarea data-p="text" rows="3">${esc(l.text)}</textarea></label>
@@ -1151,7 +1219,8 @@ function renderProps() {
     specific = `${n('radius', 'Coins arrondis (px)', 0, 5000)}
       <div class="row"><button class="btn small" id="pImgReplace" type="button">Remplacer l'image</button>
       ${img ? `<button class="btn small" id="pImgRatio" type="button">Rétablir les proportions</button>` : ''}</div>
-      <small class="muted">${esc(l.src)}${img ? ` · ${img.naturalWidth}×${img.naturalHeight}` : ''}</small>`;
+      <small class="muted">${esc(l.src)}${img ? ` · ${img.naturalWidth}×${img.naturalHeight}` : ''}</small>
+      ${imageBgFields(l)}`;
   }
   box.innerHTML = `
     <div class="props-head"><span class="ltype ${l.type}">${LAYER_LABEL[l.type]}</span><input data-p="name" placeholder="${esc(layerTitle(l))}" value="${esc(l.name)}" title="Nom du calque"></div>
@@ -1177,11 +1246,94 @@ function renderProps() {
     el.addEventListener('change', apply);
   });
   $('#pCutout')?.addEventListener('change', () => renderProps()); // affiche / masque la tolérance
+  bindImageBg(box, l);
+  const cutTest = async (source, btn) => {
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Montage en cours…';
+    try {
+      const r = await api('/api/admin/templates/test-cutout', { method: 'POST', body: { id: E.tpl.id, source, template: { width: E.tpl.width, height: E.tpl.height, background: E.tpl.background, layers: E.tpl.layers } } });
+      openLightbox(r.url);
+      toast(`Essai sur la ${r.source} (${(r.ms / 1000).toFixed(1)} s)`);
+    } catch (e) { toast(e.message, true); }
+    btn.disabled = false; btn.textContent = label;
+  };
+  $('#pCutTestLast')?.addEventListener('click', (e) => cutTest('last', e.target));
+  $('#pCutTestSample')?.addEventListener('click', (e) => cutTest('sample', e.target));
   $('#pRotReset')?.addEventListener('click', () => { l.rotation = 0; clampLayer(l); markDirty(); renderProps(); renderEditor(); });
   $('#pFillNone')?.addEventListener('change', (e) => { l.fill = e.target.checked ? 'none' : '#000000'; markDirty(); renderProps(); renderEditor(); });
   $('#pStrokeNone')?.addEventListener('change', (e) => { l.stroke = e.target.checked ? 'none' : '#000000'; if (!e.target.checked && !l.strokeWidth) l.strokeWidth = 8; markDirty(); renderProps(); renderEditor(); });
   $('#pImgReplace')?.addEventListener('click', () => { E.replaceTarget = l.id; $('#edImageFile').click(); });
   $('#pImgRatio')?.addEventListener('click', () => { const img = E.assets.get(l.src); if (img) { l.height = Math.round(l.width * img.naturalHeight / img.naturalWidth); clampLayer(l); markDirty(); renderProps(); renderEditor(); } });
+}
+
+// ---------- Calque image : retirer le fond (version transparente calculée par le serveur) ----------
+
+function imageBgFields(l) {
+  const mode = l.bgRemove || 'none';
+  const opts = { none: 'Aucun', color: 'Fond uni (logo, dessin…)', ai: 'Personne (IA)' };
+  let fields = '';
+  if (mode === 'color') {
+    fields = `
+      <div class="row"><label>Couleur du fond <input type="color" data-bgp="bgColor" value="${esc(l.bgColor || '#ffffff')}"></label>
+      <button class="btn small" type="button" id="pBgCorner">Couleur des coins</button></div>
+      <label>Tolérance <input type="range" data-bgp="bgTolerance" min="0" max="100" step="1" value="${l.bgTolerance ?? 30}"><small>Plus haut : retire aussi les nuances proches (ombres, dégradés).</small></label>
+      <label class="inline"><input type="checkbox" data-bgp="bgContiguous" ${l.bgContiguous !== false ? 'checked' : ''}> Seulement le fond autour (garde cette couleur à l'intérieur)</label>`;
+  } else if (mode === 'ai') {
+    fields = `
+      <label>Seuil <input type="range" data-bgp="aiThreshold" min="0" max="100" step="1" value="${l.aiThreshold ?? 50}"></label>
+      <label>Douceur des bords <input type="range" data-bgp="aiSoftness" min="0" max="100" step="1" value="${l.aiSoftness ?? 50}"></label>
+      <label>Contour (px) <input type="number" data-bgp="aiContour" min="-10" max="10" step="1" value="${l.aiContour ?? 0}"></label>
+      <label>Précision <select data-bgp="aiPrecision"><option value="standard" ${l.aiPrecision !== 'fine' ? 'selected' : ''}>Standard</option><option value="fine" ${l.aiPrecision === 'fine' ? 'selected' : ''}>Fine</option></select></label>
+      <small class="muted">Le modèle reconnaît les personnes. Pour un objet, un logo ou du texte, prends « Fond uni ».</small>`;
+  }
+  return `<label>Retirer le fond <select data-bgp="bgRemove" id="pBgMode">${Object.entries(opts).map(([k, v]) => `<option value="${k}" ${mode === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+    ${fields}${mode !== 'none' ? '<small class="muted" id="pBgStatus">' + (l.cutSrc ? 'Fond retiré, visible dans l\'aperçu.' : 'Calcul…') + '</small>' : ''}`;
+}
+
+/** Calcule (serveur) la version sans fond du calque image avec ses réglages, puis met l'aperçu à jour. */
+let bgTimer = null;
+function scheduleImageCutout(l) {
+  clearTimeout(bgTimer);
+  if (!l.bgRemove || l.bgRemove === 'none') { markDirty(); renderEditor(); return; }
+  bgTimer = setTimeout(async () => {
+    const status = $('#pBgStatus');
+    if (status) status.textContent = 'Calcul…';
+    try {
+      const r = await api(`/api/admin/templates/${encodeURIComponent(E.tpl.id)}/assets/cutout`, { method: 'POST', body: {
+        src: l.src, mode: l.bgRemove, bgColor: l.bgColor, bgTolerance: l.bgTolerance, bgContiguous: l.bgContiguous !== false,
+        aiThreshold: l.aiThreshold, aiSoftness: l.aiSoftness, aiContour: l.aiContour, aiPrecision: l.aiPrecision
+      } });
+      const img = await loadImage(r.url);
+      if (img) E.assets.set(r.cutSrc, img);
+      l.cutSrc = r.cutSrc;
+      markDirty();
+      renderEditor();
+      const st = $('#pBgStatus');
+      if (st && selectedLayer() === l) st.textContent = 'Fond retiré, visible dans l\'aperçu.';
+    } catch (e) {
+      toast(e.message, true);
+      const st = $('#pBgStatus');
+      if (st) st.textContent = `Échec : ${e.message}`;
+    }
+  }, 350);
+}
+
+function bindImageBg(box, l) {
+  if (l.type !== 'image') return;
+  box.querySelectorAll('[data-bgp]').forEach((el) => el.addEventListener(el.type === 'range' ? 'input' : 'change', () => {
+    const k = el.dataset.bgp;
+    l[k] = el.type === 'checkbox' ? el.checked : el.type === 'range' || el.type === 'number' ? Number(el.value) : el.value;
+    if (k === 'bgRemove') { l.cutSrc = null; renderProps(); }
+    scheduleImageCutout(l);
+  }));
+  $('#pBgCorner')?.addEventListener('click', async () => {
+    try {
+      l.bgColor = (await api(`/api/admin/templates/${encodeURIComponent(E.tpl.id)}/assets/corner-color`, { method: 'POST', body: { src: l.src } })).color;
+      const input = box.querySelector('[data-bgp=bgColor]');
+      if (input) input.value = l.bgColor;
+      scheduleImageCutout(l);
+    } catch (e) { toast(e.message, true); }
+  });
 }
 
 /** Met à jour x/y/l/h dans le panneau pendant un glisser sans tout reconstruire. */
@@ -1264,9 +1416,11 @@ function onPointerMove(e) {
   const d = E.drag;
   const o = d.orig;
   const W = E.tpl.width, H = E.tpl.height;
+  E.guides = [];
   if (d.kind === 'move') {
     l.x = o.x + Math.round(tx - d.startX);
     l.y = o.y + Math.round(ty - d.startY);
+    if (!e.altKey) E.guides = snapMove(l);
   } else if (d.kind === 'rotate') {
     const c = { x: o.x + o.width / 2, y: o.y + o.height / 2 };
     let deg = Math.atan2(ty - c.y, tx - c.x) / DEG + 90;
@@ -1286,7 +1440,8 @@ function onPointerMove(e) {
     const c = { x: o.x + o.width / 2, y: o.y + o.height / 2 };
     const fOff = rot((-dirX * o.width) / 2, (-dirY * o.height) / 2);
     const F = { x: c.x + fOff.x, y: c.y + fOff.y };
-    const mx = Math.max(0, Math.min(W, tx)), my = Math.max(0, Math.min(H, ty)); // la souris ne sort pas du tirage
+    const snapped = e.altKey || o.rotation ? { x: tx, y: ty } : snapPoint(tx, ty, E.guides); // calque droit : coin aimanté
+    const mx = snapped.x, my = snapped.y;
     const dl = unrot(mx - F.x, my - F.y);
     let w = Math.max(10, dl.x * dirX), h = Math.max(10, dl.y * dirY);
     if (e.shiftKey) {
@@ -1309,6 +1464,8 @@ function onPointerMove(e) {
 function onPointerUp() {
   if (E.drag) {
     E.drag = null;
+    E.guides = [];
+    renderEditor();
     renderProps();
   }
 }
@@ -1371,6 +1528,8 @@ async function onImageFile(e) {
     if (target) {
       target.src = a.src;
       target.url = a.url;
+      target.cutSrc = null; // nouvelle image : fond à retirer de nouveau
+      if (target.bgRemove && target.bgRemove !== 'none') scheduleImageCutout(target);
     } else {
       const maxW = E.tpl.width * 0.5, maxH = E.tpl.height * 0.5;
       const r = Math.min(maxW / a.width, maxH / a.height, 1);
@@ -1476,8 +1635,9 @@ async function renderTemplateCards() {
     if (!t) continue;
     const scale = cv.width / t.width;
     const ctx = cv.getContext('2d');
-    renderTemplate(ctx, t, { scale, photos: photosFromSamples(t, samples), placeholder: true });
-    loadAssets(t).then((assets) => renderTemplate(ctx, t, { scale, photos: photosFromSamples(t, samples), assets, placeholder: true }));
+    const photos = photosFromSamples(t, samples);
+    renderTemplate(ctx, t, { scale, photos, cutoutPhotos: cutoutsFromSamples(photos), placeholder: true });
+    loadAssets(t).then((assets) => renderTemplate(ctx, t, { scale, photos, cutoutPhotos: cutoutsFromSamples(photos), assets, placeholder: true }));
   }
 }
 

@@ -449,13 +449,15 @@ function stopRenderLoop() {
 // template-photo.jpg, -2, -3 (voir server/samples.js). La photo N du cadre prend l'exemple N, en boucle.
 const samplePhotos = new Map(); // url → Image
 function loadSamplePhotos() {
-  for (const url of state.boot.samples || []) {
-    if (samplePhotos.has(url)) continue;
+  (state.boot.samples || []).forEach((url, i) => {
+    if (samplePhotos.has(url)) return;
     const img = new Image();
     img.onload = () => renderTemplateGrid();
     img.src = url;
+    const cut = state.boot.sampleCutouts?.[i]; // même photo détourée (.png), pour les calques avec détourage
+    if (cut) { img.cutout = new Image(); img.cutout.onload = () => renderTemplateGrid(); img.cutout.src = cut; }
     samplePhotos.set(url, img);
-  }
+  });
 }
 
 function renderTemplateGrid() {
@@ -472,8 +474,9 @@ function renderTemplateGrid() {
     cv.height = Math.round(t.height * scale);
     const ctx = cv.getContext('2d');
     const photos = ready.length ? Object.fromEntries(Array.from({ length: t.shots }, (_, i) => [i, ready[i % ready.length]])) : {};
-    renderTemplate(ctx, t, { scale, photos, placeholder: true });
-    loadAssets(t).then((assets) => renderTemplate(ctx, t, { scale, photos, assets, placeholder: true }));
+    const cutoutPhotos = Object.fromEntries(Object.entries(photos).filter(([, img]) => img.cutout?.complete && img.cutout.naturalWidth).map(([k, img]) => [k, img.cutout]));
+    renderTemplate(ctx, t, { scale, photos, cutoutPhotos, placeholder: true });
+    loadAssets(t).then((assets) => renderTemplate(ctx, t, { scale, photos, cutoutPhotos, assets, placeholder: true }));
     const label = document.createElement('div');
     label.className = 'template-name';
     label.textContent = t.name;

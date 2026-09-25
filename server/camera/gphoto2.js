@@ -519,7 +519,8 @@ export class Gphoto2Camera extends BaseCamera {
                 .catch(async (e) => { await this.recover(); throw e; });
               if (!fs.existsSync(file)) throw new Error('le boîtier n\'a pas rendu de photo');
             },
-            raiseFlash: () => this.gp('--set-config popupflash=1', 8000).catch(() => {})
+            // Lever le flash (sans effet s'il l'est déjà) ; un refus est journalisé, la photo le révélera (EXIF)
+            raiseFlash: () => this.gp('--set-config popupflash=1', 8000).catch((e) => console.warn(`[gphoto2] calibrage : levée du flash refusée (${e.message.split('\n')[0]})`))
           }, {
             dir,
             onStep: (s) => {

@@ -95,6 +95,7 @@ export class Booth {
       theme: this.themes.resolve(cfg),
       counters: this.publicCounters(),
       samples: samplePhotos().map((s) => s.url), // photos d'exemple des cadres proposés
+      sampleCutouts: samplePhotos().map((s) => s.cutoutUrl || null), // et leur version détourée (.png)
       // QR codes de photo seulement en Wi-Fi (share.requireWifi) : sans lui, aucun téléphone ne peut joindre la borne.
       share: { baseUrl: this.shareBaseUrl(), qrOnDone: cfg.share.qrOnDone !== false && wifi },
       gallery: { enabled: !!cfg.gallery.booth, reprint: cfg.gallery.reprint, qr: cfg.gallery.qr !== false && wifi },

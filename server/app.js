@@ -13,7 +13,7 @@ import { StreamDeckRemote } from './streamdeck.js';
 import { apiRouter } from './routes/api.js';
 import { adminRouter } from './routes/admin.js';
 import { galleryHtml, eventGalleryHtml } from './gallery.js';
-import { HttpError } from './util.js';
+import { HttpError, isLocalRequest } from './util.js';
 import { ROOT, OUTPUT_DIR, PUBLIC_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, UPLOADS_DIR, SAMPLES_DIR } from './paths.js';
 
 /**
@@ -65,11 +65,12 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
     onPress: (id) => toBooth({ type: 'deck', id }),
     onInfo: (info) => toBooth({ type: 'deckInfo', ...info })
   });
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
+    const local = isLocalRequest(req); // seule la borne décrit son écran au Stream Deck
     ws.on('message', (raw) => {
       let msg;
       try { msg = JSON.parse(raw); } catch { return; }
-      if (msg?.type === 'ui') {
+      if (msg?.type === 'ui' && local) {
         if (boothSocket !== ws) { boothSocket = ws; toBooth({ type: 'deckInfo', ...deck.galleryInfo() }); }
         boothScreen = typeof msg.screen === 'string' ? msg.screen : null;
         deck.setUi(msg);
@@ -90,6 +91,12 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   app.disable('x-powered-by');
   app.use(express.json({ limit: '2mb' }));
   // Favicon = le logo défini dans Apparence (toutes les pages, y compris celles des téléphones)
+  // L'écran de la borne est réservé à la machine de la borne : un téléphone qui ouvrait l'accueil devenait une
+  // deuxième borne (Stream Deck repris, live view réveillé, séances en parallèle) et la faisait planter.
+  app.get(['/', '/index.html'], (req, res, next) => {
+    if (isLocalRequest(req)) return next();
+    res.redirect(302, '/galerie'); // autre appareil : la galerie de la soirée (ou sa page « fermée » si désactivée)
+  });
   app.get('/favicon.ico', (req, res) => res.redirect(302, themes.resolve(config.get()).logo || '/assets/logo-default.svg'));
   app.use(express.static(PUBLIC_DIR, { index: 'index.html' }));
   app.use('/output', express.static(OUTPUT_DIR, { maxAge: '1h' }));
@@ -115,6 +122,12 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   const restart = stopThen(onRestart, 'redémarrage');
 
   app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart, kioskScreen }));
+  // API de l'écran de la borne : seulement depuis la borne (les téléphones n'ont besoin que de ping et de la galerie)
+  const PHONE_API = [/^\/ping$/, /^\/gallery$/];
+  app.use('/api', (req, res, next) => {
+    if (req.path.startsWith('/admin') || isLocalRequest(req) || (req.method === 'GET' && PHONE_API.some((re) => re.test(req.path)))) return next();
+    res.status(403).json({ error: 'BOOTH_ONLY', message: 'Réservé à l\'écran de la borne' });
+  });
   app.use('/api', apiRouter({ booth }));
 
   // Page d'une photo (tous les QR codes y mènent). Galerie téléphone ouverte : navigation entre les photos.

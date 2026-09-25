@@ -1,7 +1,7 @@
 import path from 'node:path';
 import sharp from 'sharp';
 import { FONTS } from './templates.js';
-import { chromaKey, applyMatte } from '../public/cutout.js';
+import { chromaKey, applyMatte, aiMatteRange } from '../public/cutout.js';
 import { personMatte } from './cutout-ai.js';
 
 /**
@@ -83,7 +83,8 @@ async function cutout(img, l) {
   if (l.cutout === 'ai') {
     const rgb = Buffer.alloc(info.width * info.height * 3);
     for (let i = 0, j = 0; i < data.length; i += 4, j += 3) { rgb[j] = data[i]; rgb[j + 1] = data[i + 1]; rgb[j + 2] = data[i + 2]; }
-    applyMatte(data, await personMatte(rgb, info.width, info.height), 255);
+    const [lo, hi] = aiMatteRange(l);
+    applyMatte(data, await personMatte(rgb, info.width, info.height, { precision: l.aiPrecision, contour: l.aiContour }), 255, lo, hi);
   } else {
     chromaKey(data, l.cutout, l.keyTolerance);
   }
@@ -106,7 +107,8 @@ async function renderLayer(l, { template, shotFiles, mirror }) {
       return placeLayer(buf, l, W, H);
     }
     case 'image': {
-      let buf = await sharp(path.join(template.dir, l.src)).resize(l.width, l.height, { fit: 'fill' }).png().toBuffer();
+      const src = l.bgRemove && l.bgRemove !== 'none' && l.cutSrc ? l.cutSrc : l.src; // version sans fond si demandée
+      let buf = await sharp(path.join(template.dir, src)).resize(l.width, l.height, { fit: 'fill' }).png().toBuffer();
       buf = await roundCorners(buf, l.width, l.height, l.radius);
       buf = await withOpacity(buf, l.opacity);
       return placeLayer(buf, l, W, H);

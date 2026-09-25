@@ -150,8 +150,21 @@ export async function calibrate(cam, { dir, onStep = () => {} }) {
   // 2. Avec flash
   let flashSilent = false;
   if (cam.flashControl || flashUp) {
-    await cam.raiseFlash();
-    for (const s of FLASH_SERIES) await shoot(`Avec flash, ISO ${s.iso}`, s, true);
+    let retried = false;
+    for (const s of FLASH_SERIES) {
+      // Avant chaque photo : le flash a pu être rabattu entre deux photos, ou l'ordre arriver trop tôt
+      await cam.raiseFlash();
+      const shot = await shoot(`Avec flash, ISO ${s.iso}`, s, true);
+      if (!shot.flashFired && !retried) {
+        // Pas parti : on laisse le boîtier finir, on relève le flash et on refait cette photo (une fois par série)
+        retried = true;
+        await new Promise((r) => setTimeout(r, 800));
+        await cam.raiseFlash();
+        await new Promise((r) => setTimeout(r, 600)); // charge du flash
+        shots.splice(shots.indexOf(shot), 1);
+        await shoot(`Avec flash, ISO ${s.iso} (flash relevé)`, s, true);
+      }
+    }
     // Aucune photo de la série n'a flashé (EXIF) : flash rabattu, ou émission de l'éclair coupée dans le menu
     flashSilent = shots.filter((sh) => sh.flash && !sh.flashFired).length === FLASH_SERIES.length;
     if (flashSilent) for (const sh of shots) if (sh.flash && !sh.flashFired) { sh.flash = false; sh.label = sh.label.replace('Avec flash', 'Flash non parti'); sh.ok = false; }

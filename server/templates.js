@@ -1,9 +1,11 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
 import { TEMPLATES_DIR } from './paths.js';
 import { HttpError, readJson } from './util.js';
-import { CUTOUT_MODES, DEFAULT_TOLERANCE } from '../public/cutout.js';
+import { CUTOUT_MODES, DEFAULT_TOLERANCE, AI_DEFAULTS, aiMatteRange, applyMatte, removeColor } from '../public/cutout.js';
+import { personMatte } from './cutout-ai.js';
 
 /**
  * Un template = un dossier data/templates/<id>/ avec template.json et un
@@ -73,11 +75,28 @@ export function normalizeLayer(raw, i) {
       return {
         ...base, shot: clamp(round(num(raw.shot, 0)), 0, 19), radius,
         cutout: CUTOUT_MODES.includes(raw.cutout) ? raw.cutout : 'none', // détourage, voir public/cutout.js
-        keyTolerance: clamp(round(num(raw.keyTolerance, DEFAULT_TOLERANCE)), 0, 100)
+        keyTolerance: clamp(round(num(raw.keyTolerance, DEFAULT_TOLERANCE)), 0, 100),
+        // Curseurs du détourage IA (voir public/cutout.js)
+        aiThreshold: clamp(round(num(raw.aiThreshold, AI_DEFAULTS.aiThreshold)), 0, 100),
+        aiSoftness: clamp(round(num(raw.aiSoftness, AI_DEFAULTS.aiSoftness)), 0, 100),
+        aiContour: clamp(round(num(raw.aiContour, AI_DEFAULTS.aiContour)), -10, 10),
+        aiPrecision: raw.aiPrecision === 'fine' ? 'fine' : 'standard'
       };
     case 'image':
       if (!SRC.test(raw.src || '')) throw new HttpError(400, 'LAYER_SRC', `Calque ${i + 1} : fichier image manquant`);
-      return { ...base, src: raw.src, radius };
+      return {
+        ...base, src: raw.src, radius,
+        // Retirer le fond d'une image importée : version transparente calculée une fois (cutSrc), voir cutoutAsset
+        bgRemove: ['color', 'ai'].includes(raw.bgRemove) ? raw.bgRemove : 'none',
+        bgColor: /^#[0-9a-f]{6}$/i.test(raw.bgColor || '') ? raw.bgColor : '#ffffff',
+        bgTolerance: clamp(round(num(raw.bgTolerance, 30)), 0, 100),
+        bgContiguous: raw.bgContiguous !== false,
+        aiThreshold: clamp(round(num(raw.aiThreshold, AI_DEFAULTS.aiThreshold)), 0, 100),
+        aiSoftness: clamp(round(num(raw.aiSoftness, AI_DEFAULTS.aiSoftness)), 0, 100),
+        aiContour: clamp(round(num(raw.aiContour, AI_DEFAULTS.aiContour)), -10, 10),
+        aiPrecision: raw.aiPrecision === 'fine' ? 'fine' : 'standard',
+        cutSrc: SRC.test(raw.cutSrc || '') ? raw.cutSrc : null
+      };
     case 'text':
       return {
         ...base,
@@ -257,6 +276,43 @@ export class Templates {
     fs.writeFileSync(path.join(t.dir, 'assets', name), file.buffer);
     const meta = await sharp(file.buffer).metadata();
     return { src: `assets/${name}`, url: `/templates/${id}/assets/${name}`, width: meta.width, height: meta.height };
+  }
+
+  /**
+   * Version sans fond d'une image du template (fond uni ou personne par IA), écrite à côté de l'originale :
+   * assets/<nom>-sansfond-<réglages>.png. Calculée une fois, puis utilisée par l'aperçu et la photo finale.
+   */
+  async cutoutAsset(id, src, o = {}) {
+    const t = this.get(id);
+    if (!SRC.test(src || '')) throw new HttpError(400, 'LAYER_SRC', 'Image inconnue');
+    const file = path.join(t.dir, src);
+    if (!fs.existsSync(file)) throw new HttpError(404, 'ASSET_MISSING', 'Image introuvable dans le template');
+    const { data, info } = await sharp(file).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    if (o.mode === 'ai') {
+      const rgb = Buffer.alloc(info.width * info.height * 3);
+      for (let i = 0, j = 0; i < data.length; i += 4, j += 3) { rgb[j] = data[i]; rgb[j + 1] = data[i + 1]; rgb[j + 2] = data[i + 2]; }
+      const [lo, hi] = aiMatteRange(o);
+      applyMatte(data, await personMatte(rgb, info.width, info.height, { precision: o.aiPrecision, contour: o.aiContour }), 255, lo, hi);
+    } else {
+      removeColor(data, info.width, info.height, { color: o.bgColor, tolerance: o.bgTolerance, contiguous: o.bgContiguous !== false });
+    }
+    const key = crypto.createHash('sha1').update(JSON.stringify([src, o.mode, o.bgColor, o.bgTolerance, o.bgContiguous, o.aiThreshold, o.aiSoftness, o.aiContour, o.aiPrecision])).digest('hex').slice(0, 8);
+    const base = path.basename(src).replace(/\.[a-z]+$/i, '').replace(/-sansfond-[0-9a-f]{8}$/, '');
+    const cutSrc = `assets/${base}-sansfond-${key}.png`;
+    fs.mkdirSync(path.join(t.dir, 'assets'), { recursive: true });
+    await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toFile(path.join(t.dir, cutSrc));
+    return { cutSrc, url: `/templates/${id}/${cutSrc}` };
+  }
+
+  /** Couleur des coins d'une image (médiane) : proposée comme couleur de fond à retirer. */
+  async cornerColor(id, src) {
+    const t = this.get(id);
+    if (!SRC.test(src || '')) throw new HttpError(400, 'LAYER_SRC', 'Image inconnue');
+    const { data, info } = await sharp(path.join(t.dir, src)).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const at = (x, y) => [0, 1, 2].map((c) => data[(y * info.width + x) * 3 + c]);
+    const pts = [at(0, 0), at(info.width - 1, 0), at(0, info.height - 1), at(info.width - 1, info.height - 1)];
+    const med = [0, 1, 2].map((c) => pts.map((p) => p[c]).sort((a, b) => a - b)[1]);
+    return `#${med.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
   }
 
   remove(id) {
