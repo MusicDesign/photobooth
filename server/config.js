@@ -80,7 +80,8 @@ export const DEFAULTS = {
     guestCanChoose: true,
     enabled: ['classic-10x15', 'strip-3'],
     default: 'classic-10x15',
-    defaultFormat: '10x15-paysage'
+    defaultFormat: '10x15-paysage',
+    gifEnabled: false         // templates GIF proposés aux invités (numérique uniquement)
   },
   theme: {
     active: 'default-light',  // id d'un thème de data/themes ou "custom"
@@ -116,6 +117,10 @@ export const DEFAULTS = {
     printing: 'Impression en cours…',
     thanks: 'Merci ! Scannez le QR code pour récupérer votre photo.',
     thanksNoQr: 'Merci et bonne soirée !', // écran de fin quand le QR code est désactivé
+    thanksGif: 'Merci ! Scannez le QR code pour récupérer votre GIF.',
+    reviewGif: 'On le garde ?', // relecture d'un GIF (review / keep sont au féminin, pour la photo)
+    keepGif: 'Je le garde',
+    gifInGallery: 'Merci ! Votre GIF vous attend dans la galerie de la borne.', // GIF sans QR code (pas de Wi-Fi)
     quotaReached: 'Les impressions sont terminées pour ce soir, mais votre photo vous attend en ligne !',
     paperEmpty: 'Plus de papier pour le moment, mais votre photo vous attend en ligne !', // stock à 0 (admin)
     printerUnavailable: "L'imprimante n'est pas disponible, mais votre photo vous attend en ligne !",

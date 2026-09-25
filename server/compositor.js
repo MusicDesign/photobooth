@@ -1,6 +1,6 @@
 import path from 'node:path';
 import sharp from 'sharp';
-import { FONTS } from './templates.js';
+import { FONTS, GIF_MAX_SIDE } from './templates.js';
 import { chromaKey, applyMatte, aiMatteRange } from '../public/cutout.js';
 import { personMatte } from './cutout-ai.js';
 
@@ -122,17 +122,40 @@ async function renderLayer(l, { template, shotFiles, mirror }) {
   }
 }
 
-export async function compose(template, shotFiles, outFile, { mirror = false } = {}) {
+/** Tous les calques assemblés sur le fond (sharp prêt à écrire). */
+async function render(template, shotFiles, mirror) {
   const layers = [];
   for (const l of template.layers) {
     if (l.visible === false) continue;
     const placed = await renderLayer(l, { template, shotFiles, mirror });
     if (placed) layers.push(placed);
   }
-  await sharp({ create: { width: template.width, height: template.height, channels: 3, background: template.background || '#ffffff' } })
-    .composite(layers)
-    .jpeg({ quality: 92, chromaSubsampling: '4:4:4' })
-    .toFile(outFile);
+  return sharp({ create: { width: template.width, height: template.height, channels: 3, background: template.background || '#ffffff' } })
+    .composite(layers);
+}
+
+export async function compose(template, shotFiles, outFile, { mirror = false } = {}) {
+  await (await render(template, shotFiles, mirror)).jpeg({ quality: 92, chromaSubsampling: '4:4:4' }).toFile(outFile);
+  return outFile;
+}
+
+/**
+ * Template GIF : chaque pose montée dans le template (tous les calques photo la montrent), réduite
+ * à GIF_MAX_SIDE, puis assemblée en animation qui boucle. Aller-retour : 1 2 3 4 3 2, puis on recommence.
+ * posterFile : première image en JPEG (miniatures de la galerie).
+ */
+export async function composeGif(template, frameFiles, outFile, { mirror = false, posterFile = null } = {}) {
+  const k = Math.min(1, GIF_MAX_SIDE / Math.max(template.width, template.height));
+  const w = Math.round(template.width * k), h = Math.round(template.height * k);
+  const frames = [];
+  for (const file of frameFiles) {
+    const full = await (await render(template, [file], mirror)).jpeg({ quality: 95 }).toBuffer();
+    frames.push(await sharp(full).resize(w, h).jpeg({ quality: 95 }).toBuffer());
+  }
+  if (posterFile) await sharp(frames[0]).toFile(posterFile);
+  const { frameMs, boomerang } = template.gif;
+  const seq = boomerang && frames.length > 2 ? [...frames, ...frames.slice(1, -1).reverse()] : frames;
+  await sharp(seq, { join: { animated: true } }).gif({ delay: seq.map(() => frameMs), loop: 0, effort: 7, dither: 0.8 }).toFile(outFile);
   return outFile;
 }
 

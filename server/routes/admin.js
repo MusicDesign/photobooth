@@ -218,6 +218,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     if (req.file && req.file.mimetype !== 'image/png') throw new HttpError(400, 'FILE_TYPE', 'Le PNG importé doit être un PNG avec transparence');
     const t = templates.create({
       name: req.body?.name,
+      kind: req.body?.kind === 'gif' ? 'gif' : 'photo',
       format: req.body?.format || cfg.templates.defaultFormat || DEFAULT_FORMAT,
       background: req.body?.background,
       overlayBuffer: req.file?.buffer || null

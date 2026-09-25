@@ -404,6 +404,8 @@ function fitCanvas() {
 // Calques photo détourés (fond vert / bleu, IA) : voir cutout-live.js
 const previewCutter = createCutter(() => state.previewScale);
 const usesAi = (t) => t?.layers?.some((l) => l.type === 'photo' && l.cutout === 'ai');
+// Template GIF : plusieurs poses dans le même emplacement (tous les calques photo montrent la pose en cours)
+const isGif = (t) => t?.kind === 'gif';
 
 function renderPreview() {
   const c = $('#preview');
@@ -411,15 +413,16 @@ function renderPreview() {
   if (!t) return;
   const live = liveSize();
   const shutter = shutterValue(); // fermé tant que la caméra n'envoie rien (webcam comprise), puis s'ouvre
+  const gif = isGif(t); // GIF : l'emplacement montre toujours le live, pose après pose
   renderTemplate(c.getContext('2d'), t, {
     scale: state.previewScale,
-    photos: state.shotImages,
+    photos: gif ? {} : state.shotImages,
     // Toujours un live pour la photo en cours : pas de gris « Photo 1 » pendant que la caméra démarre
-    live: { el: state.live?.el || null, w: live?.w || 0, h: live?.h || 0, shot: state.currentShot, shutter },
+    live: { el: state.live?.el || null, w: live?.w || 0, h: live?.h || 0, shot: gif ? 0 : state.currentShot, shutter },
     mirror: state.session ? !!state.session.mirror : !!state.boot.booth.mirrorPreview,
     assets: state.assets,
     placeholder: true,
-    highlightShot: state.currentShot,
+    highlightShot: gif ? 0 : state.currentShot,
     highlightColor: state.primaryColor,
     frameRadius: state.frameRadius || 0,
     cutter: previewCutter
@@ -460,7 +463,12 @@ function loadSamplePhotos() {
   });
 }
 
+// Cartes GIF animées avec les photos d'exemple, à la vitesse du template (une minuterie par carte)
+let gifCardTimers = [];
+
 function renderTemplateGrid() {
+  gifCardTimers.forEach(clearInterval);
+  gifCardTimers = [];
   loadSamplePhotos();
   const ready = (state.boot.samples || []).map((u) => samplePhotos.get(u)).filter((img) => img?.complete && img.naturalWidth);
   const grid = $('#templateGrid');
@@ -476,11 +484,28 @@ function renderTemplateGrid() {
     const photos = ready.length ? Object.fromEntries(Array.from({ length: t.shots }, (_, i) => [i, ready[i % ready.length]])) : {};
     const cutoutPhotos = Object.fromEntries(Object.entries(photos).filter(([, img]) => img.cutout?.complete && img.cutout.naturalWidth).map(([k, img]) => [k, img.cutout]));
     renderTemplate(ctx, t, { scale, photos, cutoutPhotos, placeholder: true });
-    loadAssets(t).then((assets) => renderTemplate(ctx, t, { scale, photos, cutoutPhotos, assets, placeholder: true }));
+    let cardAssets = null;
+    loadAssets(t).then((assets) => { cardAssets = assets; renderTemplate(ctx, t, { scale, photos, cutoutPhotos, assets, placeholder: true }); });
+    if (isGif(t) && ready.length > 1) {
+      let f = 0;
+      gifCardTimers.push(setInterval(() => {
+        if (state.screen !== 'template') return;
+        const img = ready[++f % ready.length];
+        const cut = img.cutout?.complete && img.cutout.naturalWidth ? { 0: img.cutout } : {};
+        renderTemplate(ctx, t, { scale, photos: { 0: img }, cutoutPhotos: cut, assets: cardAssets || undefined, placeholder: true });
+      }, t.gif.frameMs));
+    }
     const label = document.createElement('div');
     label.className = 'template-name';
     label.textContent = t.name;
     card.append(cv, label);
+    if (isGif(t)) { // pastille sur l'aperçu (div, pas span : le Stream Deck garde le nom du cadre)
+      const tag = document.createElement('div');
+      tag.className = 'gif-tag';
+      tag.textContent = 'GIF';
+      card.classList.add('is-gif');
+      card.append(tag);
+    }
     card.addEventListener('click', () => startSession(t.id));
     grid.appendChild(card);
   }
@@ -546,7 +571,7 @@ function prepareShot(index, manual) {
   hideCountdown();
   resetShutter(); // chaque photo commence obturateur fermé, qui s'ouvre sur le flux
   const total = state.template.shots;
-  $('#shotLabel').textContent = total > 1 ? `Photo ${index + 1} / ${total}` : '';
+  $('#shotLabel').textContent = total > 1 ? `${isGif(state.template) ? 'Pose' : 'Photo'} ${index + 1} / ${total}` : '';
   $('#btnCaptureBack').classList.toggle('hidden', !(manual && canChangeTemplate()));
   fitCanvas(); // l'aperçu se redimensionne selon la place que prend ce bouton
   if (manual) {
@@ -558,7 +583,7 @@ function prepareShot(index, manual) {
   } else {
     $('#btnStart').classList.add('hidden');
     $('#txtGetReady').classList.add('hidden');
-    setTimer('autoNext', () => runCountdown(index), 1500);
+    setTimer('autoNext', () => runCountdown(index), isGif(state.template) ? 400 : 1500); // GIF : les poses s'enchaînent
   }
 }
 
@@ -571,7 +596,8 @@ async function runCountdown(index) {
   if (state.screen !== 'capture') return;
   const cd = $('#countdown');
   cd.classList.remove('hidden');
-  const total = state.boot.limits.countdownSec;
+  // GIF : décompte complet pour la première pose, puis celui du template entre deux poses
+  const total = isGif(state.template) && index > 0 ? state.template.gif.poseSec : state.boot.limits.countdownSec;
   // Pré-armement du boîtier (live coupé, miroir baissé) juste avant la fin du décompte, avec l'avance
   // que demande le pilote (pause de stabilisation + marge) : le déclenchement part pile à « 0 ».
   const lead = state.boot.camera.armLeadMs || 0;
@@ -695,7 +721,10 @@ async function finishShots() {
 
 function showReview() {
   const s = state.session;
+  const { texts } = state.boot;
   $('#finalImg').src = `${s.final.url}?t=${Date.now()}`;
+  $('#txtReview').textContent = (s.gif && texts.reviewGif) || texts.review || '';
+  $('#btnKeep').textContent = (s.gif && texts.keepGif) || texts.keep || '';
   $('#btnRetake').classList.toggle('hidden', s.retakesLeft !== null && s.retakesLeft <= 0); // null = reprises illimitées
   $('#retakeChooser').classList.add('hidden');
   showScreen('review');
@@ -715,6 +744,7 @@ function showReview() {
 
 function onRetakeClick() {
   const s = state.session;
+  if (s.gif) return retakeGif();
   if (s.shotsExpected === 1) return retakeShot(0);
   const ch = $('#retakeChooser');
   ch.innerHTML = '';
@@ -731,6 +761,19 @@ function onRetakeClick() {
     ch.appendChild(b);
   });
   ch.classList.remove('hidden');
+}
+
+/** GIF : toutes les poses sont reprises. */
+async function retakeGif() {
+  clearTimer('reviewTimeout');
+  try {
+    state.session = await api(`/api/session/${state.session.id}/restart`, { method: 'POST' });
+  } catch (e) {
+    toast(e.message, 5000);
+    return;
+  }
+  state.shotImages = {};
+  retakeShot(0);
 }
 
 async function retakeShot(index) {
@@ -753,8 +796,8 @@ function keepPhoto() {
     api(`/api/session/${s.id}/keep`, { method: 'POST' }).catch(() => {});
   }
   const { texts, limits, counters, printer } = state.boot;
-  // Pas d'imprimante détectée : pas d'écran de copies, on passe directement à la fin.
-  if (printer?.available === false) return finishWithoutPrint();
+  // Pas d'imprimante détectée, ou GIF (numérique uniquement) : pas d'écran de copies, directement la fin.
+  if (printer?.available === false || s.gif) return finishWithoutPrint();
   state.maxCopies = s.maxCopies;
   if (!s.unlocked && counters.quotaRemaining !== null) state.maxCopies = Math.min(state.maxCopies, counters.quotaRemaining);
   if (counters.paperRemaining !== null) state.maxCopies = Math.min(state.maxCopies, counters.paperRemaining); // papier : même déverrouillé
@@ -829,12 +872,15 @@ function pollPrint() {
 async function showDone() {
   clearTimer('printPoll');
   // QR code désactivé dans l'admin : rien à scanner, retour direct à l'accueil avec le remerciement en bandeau.
+  const { texts } = state.boot;
+  const gif = !!state.session?.gif;
   if (state.boot.share?.qrOnDone === false) {
     goIdle();
-    toast(state.boot.texts.thanksNoQr || '', 5000);
+    // GIF sans QR : il reste à voir dans la galerie de la borne
+    toast((gif && state.boot.gallery?.enabled ? texts.gifInGallery : texts.thanksNoQr) || '', 5000);
     return;
   }
-  $('#txtThanks').textContent = state.boot.texts.thanks || '';
+  $('#txtThanks').textContent = (gif ? texts.thanksGif || texts.thanks : texts.thanks) || '';
   try {
     const q = await api(`/api/session/${state.session.id}/qr`);
     $('#qrImg').src = q.dataUrl;
@@ -945,7 +991,7 @@ function renderGalleryGrid() {
   (per ? items.slice(start, start + per) : items).forEach((it, k) => {
     const b = document.createElement('button');
     b.className = 'gallery-thumb';
-    b.innerHTML = `<img src="${it.thumbUrl}" alt="" decoding="async"${per ? '' : ' loading="lazy"'}>`;
+    b.innerHTML = `<img src="${it.thumbUrl}" alt="" decoding="async"${per ? '' : ' loading="lazy"'}>${it.gif ? '<div class="gif-tag">GIF</div>' : ''}`;
     b.addEventListener('click', () => showPhoto(start + k));
     grid.appendChild(b);
   });
@@ -1014,10 +1060,10 @@ function renderReprint() {
   const { boot } = state;
   const mode = boot.gallery?.reprint;
   const box = $('#photoPrint');
-  box.classList.toggle('hidden', (mode !== 'operator' && mode !== 'guest') || boot.printer?.available === false);
+  const it = state.gallery.items[state.gallery.index];
+  box.classList.toggle('hidden', (mode !== 'operator' && mode !== 'guest') || boot.printer?.available === false || !!it?.gif); // un GIF ne s'imprime pas
   photoLayout();
   if (box.classList.contains('hidden')) return;
-  const it = state.gallery.items[state.gallery.index];
   const c = boot.counters;
   const max = mode === 'operator' ? boot.limits.operatorMaxCopies : boot.limits.maxCopiesPerSession;
   state.gallery.copies = Math.max(1, Math.min(max, state.gallery.copies));
