@@ -479,21 +479,17 @@ function profileLine(p) {
 
 function autoPanel(ctl) {
   const a = ctl.auto || {};
-  const c = CTL.calibration;
   const current = a.profile
     ? `<p>Réglage en place : <b>${profileLine(a.profile)}</b><br><small>Calibré le ${new Date(a.calibratedAt).toLocaleString('fr-FR')} · ${esc(a.reason || '')}</small></p>`
     : '<p class="sub">Pas encore de calibrage : la borne utilise 1/125 s · f/5.6 · ISO automatique, sans flash.</p>';
-  const last = c?.state === 'done' ? `<p><small>Dernier calibrage : ${c.shots.length} photo${c.shots.length > 1 ? 's' : ''} · proposition ${c.profile ? profileLine(c.profile) : 'aucune'}</small> <button class="btn small" type="button" id="calibSeeLast">Voir les photos</button></p>` : '';
   return `${current}
-    <p class="sub">Le calibrage s'ouvre en plein écran : cadrage avec l'aperçu, décompte pour se placer, puis une série sans flash et une série avec flash (${MAX_CALIB_SHOTS} photos, 25 s environ). La borne note chaque photo et garde la meilleure. Les photos de test n'apparaissent pas dans la galerie.</p>
+    <p class="sub">Le calibrage s'ouvre en plein écran : cadrage avec l'aperçu, décompte pour se placer, puis une série sans flash et une série avec flash (${MAX_CALIB_SHOTS} photos, 25 s environ). La borne note chaque photo et garde la meilleure. Les photos de test n'apparaissent pas dans la galerie et sont effacées dès qu'on quitte l'écran du calibrage (réglage gardé, fermeture ou nouvel essai).</p>
     <div class="row"><button class="btn ${a.profile ? '' : 'primary'}" type="button" id="calibStart">${a.profile ? 'Recalibrer' : 'Lancer le calibrage'}</button>
-    ${a.profile && ctl.mode !== 'auto' ? '<button class="btn primary" type="button" id="ctlUseAuto">Utiliser ce réglage</button>' : ''}</div>
-    ${last}`;
+    ${a.profile && ctl.mode !== 'auto' ? '<button class="btn primary" type="button" id="ctlUseAuto">Utiliser ce réglage</button>' : ''}</div>`;
 }
 
 function bindAutoPanel() {
   $('#calibStart')?.addEventListener('click', () => openCalibration('preview'));
-  $('#calibSeeLast')?.addEventListener('click', () => openCalibration('results'));
   $('#ctlUseAuto')?.addEventListener('click', () => saveConfig({ camera: { control: { mode: 'auto' } } }, 'Mode auto activé'));
 }
 
@@ -526,7 +522,14 @@ function openCalibration(stage) {
   renderCalibration();
 }
 
+/** Écran du calibrage quitté (réglage gardé, fermé, recommencé) : le serveur efface les photos de test. */
+function discardCalibration() {
+  CTL.calibration = null;
+  api('/api/admin/camera/calibration/discard', { method: 'POST' }).catch(() => {});
+}
+
 function closeCalibration() {
+  if (['running', 'results', 'error'].includes(CAL.stage)) discardCalibration();
   clearInterval(CAL.timer);
   $('#calibOverlay')?.remove();
   document.removeEventListener('keydown', calibKeys);
@@ -608,11 +611,11 @@ function renderCalibration() {
       keepCalibration({ flash: sh.flash, settings: { ...sh.settings } }, `Choisi à la main : ${sh.label} (${sh.summary}, luminosité ${sh.mean}/255).`);
     }));
     $('#coKeep')?.addEventListener('click', () => keepCalibration(pick, c.reason));
-    $('#coAgain').onclick = () => openCalibration('preview');
+    $('#coAgain').onclick = () => { discardCalibration(); openCalibration('preview'); };
   } else if (CAL.stage === 'error') {
     ov.innerHTML = `${head('Calibrage interrompu')}<div class="co-main co-center"><div class="alert">${esc(c?.error || 'Erreur inconnue')}</div>
       <button class="btn primary" type="button" id="coAgain">Recommencer</button></div>`;
-    $('#coAgain').onclick = () => openCalibration('preview');
+    $('#coAgain').onclick = () => { discardCalibration(); openCalibration('preview'); };
   }
   $('#coClose')?.addEventListener('click', closeCalibration);
   // Touches du Stream Deck : tout de suite, puis quand les miniatures des résultats sont chargées
