@@ -398,6 +398,13 @@ async function runSteps(app, camera) {
     assert.equal(tplB.height, 1800);
     assert.equal((await post('/api/admin/templates', { name: '   ' }, ADMIN)).status, 400);
     assert.ok((await j('/api/bootstrap')).data.templates.items.some((t) => t.id === tplA.id), 'le nouveau template doit être activé');
+    // Ordre d'affichage (glissé dans l'admin) : la borne et la liste de l'admin le suivent
+    await put('/api/admin/config', { templates: { order: [tplB.id, tplA.id] } }, ADMIN);
+    const ids = (await j('/api/bootstrap')).data.templates.items.map((t) => t.id);
+    assert.ok(ids.indexOf(tplB.id) < ids.indexOf(tplA.id), `ordre choisi sur la borne : ${ids}`);
+    const adminIds = (await j('/api/admin/state', { headers: ADMIN })).data.templates.map((t) => t.id);
+    assert.deepEqual(adminIds.slice(0, 2), [tplB.id, tplA.id]);
+    await put('/api/admin/config', { templates: { order: [] } }, ADMIN);
   });
 
   await step('templates : calques (photo, forme, texte, image) enregistrés puis imprimés', async () => {
@@ -421,6 +428,13 @@ async function runSteps(app, camera) {
     assert.equal(saved.data.layers.length, 5);
     assert.ok(saved.data.layers[3].url.endsWith(asset.src));
     assert.equal(saved.data.layers[4].rotation, 90);
+    // Miniature du choix du cadre : calculée à l'enregistrement, servie, renouvelée quand le template change
+    assert.equal(saved.data.previews.length, 1);
+    const thumb = await fetch(`${base}${saved.data.previews[0]}`);
+    assert.equal(thumb.status, 200);
+    assert.equal((await sharp(Buffer.from(await thumb.arrayBuffer())).metadata()).width, 720);
+    assert.ok(!saved.data.previews[0].endsWith(tplA.previews?.[0] || 'x'), 'nouvelle miniature après modification');
+    assert.ok((await j('/api/bootstrap')).data.templates.items.find((t) => t.id === tplA.id).previews.length);
 
     const s5 = (await post('/api/session', { templateId: tplA.id })).data;
     await shot(s5.id, 0);
@@ -444,7 +458,7 @@ async function runSteps(app, camera) {
   await step('GIF : masqué tant que désactivé, poses, animation, jamais imprimé, refaire toutes les poses', async () => {
     const g = (await post('/api/admin/templates', { name: 'GIF soirée', kind: 'gif', format: '10x10-carre' }, ADMIN)).data;
     assert.equal(g.kind, 'gif');
-    assert.deepEqual(g.gif, { frames: 4, frameMs: 500, boomerang: false, poseSec: 2 });
+    assert.deepEqual(g.gif, { frames: 3, frameMs: 500, boomerang: false, poseSec: 2 });
     assert.ok(!(await j('/api/bootstrap')).data.templates.items.some((t) => t.id === g.id), 'GIF désactivés : pas proposé');
     assert.equal((await post('/api/session', { templateId: g.id })).status, 400);
     await put('/api/admin/config', { templates: { gifEnabled: true } }, ADMIN);
@@ -477,6 +491,38 @@ async function runSteps(app, camera) {
     assert.equal((await post(`/api/admin/reprint/${s.id}`, { copies: 1 }, ADMIN)).data.error, 'GIF_NO_PRINT');
     await put('/api/admin/config', { templates: { gifEnabled: false } }, ADMIN);
     assert.equal((await j(`/api/admin/templates/${g.id}`, { method: 'DELETE', headers: ADMIN })).status, 200);
+  });
+
+  await step('boomerang : vidéo filmée, aller-retour, jamais imprimé, nouvelle vidéo = reprise', async () => {
+    const b = (await post('/api/admin/templates', { name: 'Boomerang soirée', kind: 'boomerang', format: '10x15-paysage' }, ADMIN)).data;
+    assert.equal(b.kind, 'boomerang');
+    assert.deepEqual(b.boomerang, { durationSec: 2, speed: 2 });
+    assert.equal(b.shots, 1);
+    await put('/api/admin/config', { templates: { gifEnabled: true } }, ADMIN);
+    const saved = (await put(`/api/admin/templates/${b.id}`, { layers: [{ type: 'photo', shot: 2, cutout: 'ai', x: 0, y: 0, width: 1800, height: 1200 }], boomerang: { durationSec: 1 } }, ADMIN)).data;
+    assert.equal(saved.layers[0].shot, 0);
+    assert.equal(saved.layers[0].cutout, 'none', 'pas de détourage IA sur un boomerang');
+    const s = (await post('/api/session', { templateId: b.id })).data;
+    assert.equal(s.gif, true);
+    assert.equal(s.kind, 'boomerang');
+    assert.equal((await post(`/api/session/${s.id}/focus`, {})).status, 200);
+    const clip = await post(`/api/session/${s.id}/clip`, {});
+    if (app.booth.camera.mode === 'browser') { assert.equal(clip.data.error, 'FRAMES_REQUIRED'); return; }
+    assert.equal(clip.status, 200, JSON.stringify(clip.data));
+    const c = (await post(`/api/session/${s.id}/compose`, {})).data;
+    assert.ok(c.final.url.endsWith('/final.gif') && c.final.gif);
+    const meta = await sharp(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s.id, 'final.gif'), { animated: true }).metadata();
+    const n = Math.round(1 * 12.5); // 1 s filmée à 12,5 i/s
+    assert.equal(meta.delay.reduce((a, x) => a + x, 0), (2 * n - 2) * 40, `aller-retour de ${n} images, lecture ×2 (40 ms) : ${meta.delay}`);
+    assert.equal(meta.width, 640, 'boomerang réduit à 640 px');
+    const again = (await post(`/api/session/${s.id}/clip`, {})).data;
+    assert.equal(again.session.retakes, 1, 'nouvelle vidéo comptée comme reprise');
+    await post(`/api/session/${s.id}/compose`, {});
+    assert.equal((await post(`/api/session/${s.id}/print`, { copies: 1 })).data.error, 'GIF_NO_PRINT');
+    assert.equal((await post(`/api/session/${s.id}/print`, { copies: 0 })).data.status, 'done');
+    assert.ok((await j('/api/gallery', { headers: ADMIN })).status !== 500);
+    await put('/api/admin/config', { templates: { gifEnabled: false } }, ADMIN);
+    assert.equal((await j(`/api/admin/templates/${b.id}`, { method: 'DELETE', headers: ADMIN })).status, 200);
   });
 
   await step('QR code Wi-Fi : désactivé par défaut, format WIFI:, caractères spéciaux échappés', async () => {

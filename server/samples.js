@@ -17,7 +17,8 @@ export function samplePhotos() {
     // Version détourée (même nom en .png, fond transparent) : aperçu des calques photo avec « Détourage »
     const own = FILES.map((f) => {
       const png = f.replace(/\.jpe?g$/i, '.png');
-      return { file: path.join(PUBLIC_DIR, 'assets', f), url: `/assets/${f}`, cutoutUrl: fs.existsSync(path.join(PUBLIC_DIR, 'assets', png)) ? `/assets/${png}` : null };
+      const cut = path.join(PUBLIC_DIR, 'assets', png);
+      return { file: path.join(PUBLIC_DIR, 'assets', f), url: `/assets/${f}`, cutoutUrl: fs.existsSync(cut) ? `/assets/${png}` : null, cutoutFile: fs.existsSync(cut) ? cut : null };
     }).filter((s) => fs.existsSync(s.file));
     if (own.length) return own;
   }

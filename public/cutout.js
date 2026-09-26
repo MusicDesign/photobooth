@@ -3,7 +3,7 @@
  * Partagé par la borne (aperçu en direct) et le serveur (photo finale) : même calcul, même résultat.
  *
  *   none  : photo telle quelle
- *   ai    : personnes détourées par un modèle (MediaPipe dans l'aperçu, MODNet sur la photo finale)
+ *   ai    : sujet détouré par un modèle (MediaPipe dans l'aperçu ; BiRefNet ou MODNet sur la photo finale)
  *   green : fond vert retiré
  *   blue  : fond bleu retiré
  *
@@ -17,9 +17,11 @@ export const DEFAULT_TOLERANCE = 50;
  *   aiThreshold 0-100 : plus haut, on retire plus de fond ; plus bas, on garde plus de la personne
  *   aiSoftness  0-100 : bord net (0) ou fondu (100)
  *   aiContour  -10…10 : rétrécit (négatif) ou élargit (positif) la découpe, en pixels de la photo finale
- *   aiPrecision       : 'standard' (modèle en 512 px) ou 'fine' (1024 px, plus lent)
+ *   aiPrecision       : modèle de la photo finale, 'precise' (BiRefNet : tout sujet, bords propres, quelques
+ *                       secondes) ou 'fast' (MODNet : personnes seulement, instantané)
  */
-export const AI_DEFAULTS = { aiThreshold: 50, aiSoftness: 50, aiContour: 0, aiPrecision: 'standard' };
+export const AI_DEFAULTS = { aiThreshold: 50, aiSoftness: 50, aiContour: 0, aiPrecision: 'precise' };
+export const AI_MODELS = ['precise', 'fast'];
 
 /** Seuils [lo, hi] (fraction du masque, 0-1) entre lesquels le bord est progressif, d'après les curseurs. */
 export function aiMatteRange(layer = {}, { contourShift = 0 } = {}) {

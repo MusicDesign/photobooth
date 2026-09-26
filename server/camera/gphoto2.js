@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import sharp from 'sharp';
 import { BaseCamera } from './base.js';
 import { JpegFrameParser, MjpegBroadcaster } from './mjpeg.js';
+import { parseAutoDetect, NOT_A_CAMERA } from './detect.js';
 import { sleep } from '../util.js';
 import { AUTO_BASE, AUTO_DEFAULT, MANUAL_KEYS, calibrate as runCalibration } from './control.js';
 
@@ -80,6 +81,9 @@ export class Gphoto2Camera extends BaseCamera {
       // Relâche le déclencheur à distance (6 = complètement, 5 = à moitié). Un boîtier laissé « bouton enfoncé »
       // par une commande interrompue refuse le live view (« Erreur d'acquisition vidéo ») et les photos.
       recoverCommand: 'gphoto2 --set-config-index eosremoterelease=6 --set-config-index eosremoterelease=5',
+      // Boomerang : mise au point seule (demi-pression, le temps que l'AF accroche, relâchement), live coupé.
+      // Le point reste ensuite en place pendant la vidéo filmée dans l'aperçu.
+      focusCommand: 'gphoto2 --set-config-index eosremoterelease=1 --wait-event=900ms --set-config-index eosremoterelease=5',
       liveview: true,
       settleMs: 800,
       liveIdleMs: 8000, // délai avant de couper le live quand plus aucun écran ne l'affiche
@@ -89,6 +93,7 @@ export class Gphoto2Camera extends BaseCamera {
       ...opts
     };
     this.mjpeg = new MjpegBroadcaster();
+    this.port = null; // voir setPort
     this.live = null;
     this.stopping = false;
     this.busy = false;
@@ -156,7 +161,7 @@ export class Gphoto2Camera extends BaseCamera {
   /** Réinitialise la connexion USB du boîtier (gphoto2 --reset), puis relâche le déclencheur. Jamais bloquant. */
   async resetUsb() {
     try {
-      await execFileP('gphoto2', ['--reset'], { timeout: 10000 });
+      await execFileP('gphoto2', [...(this.port ? ['--port', this.port] : []), '--reset'], { timeout: 10000 });
       await sleep(2000); // le boîtier se réannonce sur l'USB
       console.log('[gphoto2] connexion USB du boîtier réinitialisée');
       await this.recover().catch(() => {});
@@ -178,9 +183,10 @@ export class Gphoto2Camera extends BaseCamera {
   async probe() {
     try {
       const { stdout } = await execFileP('gphoto2', ['--auto-detect']);
-      const line = stdout.split('\n').find((l) => /usb:/i.test(l));
-      const found = !!line;
-      if (found) this.model = line.replace(/\s+usb:.*$/i, '').trim();
+      const all = parseAutoDetect(stdout);
+      const cam = all.find((d) => !NOT_A_CAMERA.test(d.model)); // pas un iPhone branché à côté
+      const found = !!cam;
+      if (found) { this.model = cam.model; this.setPort(all.length > 1 ? cam.port : null); }
       this.failing = !found;
       this.lastError = found ? null : 'Aucun appareil détecté en USB (allumé ? câble ? Wi-Fi du boîtier coupé ?)';
       if (found) await this.readFirmware();
@@ -302,7 +308,21 @@ export class Gphoto2Camera extends BaseCamera {
    * qui coupe une transaction et fige le 2000D. Chaque commande en cours est suivie (this.procs) pour être
    * arrêtée à la fermeture de l'app : sinon elle survit et garde le boîtier réservé.
    */
+  /**
+   * Autre appareil USB branché (iPhone…) : port du boîtier imposé à chaque commande gphoto2, sinon gphoto2
+   * prend le premier de la liste. null : un seul appareil, commandes inchangées.
+   */
+  setPort(port) {
+    if (port === this.port) return;
+    this.port = port || null;
+    console.log(`[gphoto2] ${this.port ? `plusieurs appareils USB : commandes adressées au boîtier (${this.port})` : 'un seul appareil USB'}`);
+  }
+  withPort(cmd) {
+    return this.port ? cmd.replace(/(^|[\s;&|(])gphoto2(?=\s)/g, `$1gphoto2 --port ${this.port}`) : cmd;
+  }
+
   run(cmd, timeoutMs, { timeoutSignal = 'SIGINT' } = {}) {
+    cmd = this.withPort(cmd);
     const p = spawn('sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     let err = '';
     let out = '';
@@ -352,7 +372,7 @@ export class Gphoto2Camera extends BaseCamera {
     });
     // detached : le processus a son propre groupe, que stopLive() tue en entier (shell + gphoto2).
     // Sans ça, tuer le shell laisserait gphoto2 orphelin, obturateur ouvert et appareil réservé.
-    const proc = spawn('sh', ['-c', this.opts.liveviewCommand], { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    const proc = spawn('sh', ['-c', this.withPort(this.opts.liveviewCommand)], { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     this.live = proc;
     const liveStart = Date.now();
     console.log('[gphoto2] live view : démarrage');
@@ -665,6 +685,26 @@ export class Gphoto2Camera extends BaseCamera {
         });
     })().finally(() => { this.arming = null; });
     await this.arming;
+  }
+
+  /**
+   * Boomerang : mise au point avant de filmer dans l'aperçu (l'aperçu ne la fait pas, et une seconde commande
+   * gphoto2 en parallèle bloquerait le boîtier). Live coupé le temps de l'AF, puis relancé (écran branché).
+   */
+  async focus() {
+    const cmd = (this.opts.focusCommand || '').trim();
+    if (!cmd) return;
+    const t0 = Date.now();
+    try {
+      await this.exclusive(async () => {
+        try { await this.sh(cmd, 10000); } catch (e) { await this.recover(); throw e; } // ne jamais laisser le déclencheur enfoncé
+      }, { timeoutMs: 8000 });
+      // Rendu seulement quand l'aperçu renvoie des images : la vidéo peut commencer tout de suite
+      for (const tw = Date.now(); !this.gotFrame && Date.now() - tw < 5000;) await sleep(100);
+      console.log(`[gphoto2] mise au point avant la vidéo : ${Date.now() - t0} ms (aperçu ${this.gotFrame ? 'relancé' : 'pas encore relancé'})`);
+    } catch (e) {
+      console.warn(`[gphoto2] mise au point avant la vidéo : ${e.message}`);
+    }
   }
 
   /** L'invité a annulé pendant le décompte : on interrompt le déclenchement programmé. */

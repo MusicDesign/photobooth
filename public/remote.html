@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<!-- Ajoutée à l'écran d'accueil d'un iPad : plein écran, sans barre Safari -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Borne">
+<title>Écran de la borne</title>
+<style>
+  /* Écrit pour les vieux navigateurs (Safari d'iOS 9) : pas de variables CSS, de grille ni de flex récent */
+  html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #fff; overflow: hidden;
+    font-family: -apple-system, Helvetica, Arial, sans-serif; -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+  #screen { position: absolute; display: none; }
+  .panel { position: absolute; top: 50%; left: 50%; width: 320px; margin-left: -160px; -webkit-transform: translateY(-50%); transform: translateY(-50%); text-align: center; display: none; }
+  .panel h1 { font-size: 22px; font-weight: 700; margin: 0 0 18px; }
+  .panel p { font-size: 15px; color: #aaa; line-height: 1.4; margin: 0 0 16px; }
+  #dots { font-size: 34px; letter-spacing: 12px; height: 44px; margin-bottom: 16px; }
+  .keys { width: 300px; margin: 0 auto; }
+  .keys button { width: 88px; height: 72px; margin: 5px; font-size: 28px; font-weight: 600; color: #fff; background: #2a2d34; border: 0; border-radius: 16px; }
+  .keys button.alt { background: #1b1d22; font-size: 22px; }
+  .keys button.ok { background: #e9c46a; color: #111; }
+  #error { color: #ff8a80; min-height: 20px; }
+  #status { position: absolute; left: 0; right: 0; bottom: 10px; text-align: center; font-size: 13px; color: #888; display: none; }
+</style>
+</head>
+<body>
+  <img id="screen" alt="">
+
+  <div id="login" class="panel">
+    <h1>Écran de la borne</h1>
+    <p>Code admin</p>
+    <div id="dots"></div>
+    <div id="error"></div>
+    <div class="keys">
+      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+      <button data-k="del" class="alt">⌫</button><button data-k="0">0</button><button data-k="ok" class="ok">OK</button>
+    </div>
+  </div>
+
+  <div id="message" class="panel"><h1 id="msgTitle"></h1><p id="msgText"></p></div>
+  <div id="status"></div>
+
+<script>
+/*
+ * Écran déporté de la borne : son image en direct et ses touchers (voir electron/remote-screen.js).
+ * JavaScript ancien exprès (var, XMLHttpRequest, pas de modules) : tourne sur un iPad sous iOS 9.
+ */
+(function () {
+  var screenImg = document.getElementById('screen');
+  var size = null; // taille de la fenêtre de la borne (rapport largeur / hauteur)
+  var pin = '';
+
+  function show(id) {
+    var ids = ['login', 'message'];
+    for (var i = 0; i < ids.length; i++) document.getElementById(ids[i]).style.display = ids[i] === id ? 'block' : 'none';
+    screenImg.style.display = id === 'screen' ? 'block' : 'none';
+  }
+  function message(title, text) {
+    document.getElementById('msgTitle').textContent = title;
+    document.getElementById('msgText').textContent = text || '';
+    show('message');
+  }
+  function status(text) {
+    var el = document.getElementById('status');
+    el.textContent = text || '';
+    el.style.display = text ? 'block' : 'none';
+  }
+
+  function request(method, url, body, done) {
+    var xhr = new XMLHttpRequest();
+    xhr.open(method, url, true);
+    xhr.withCredentials = true;
+    if (body) xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) return;
+      var data = null;
+      try { data = JSON.parse(xhr.responseText); } catch (e) { /* pas de JSON */ }
+      done(xhr.status, data);
+    };
+    xhr.send(body ? JSON.stringify(body) : null);
+  }
+
+  // ---------- Code admin ----------
+
+  function renderDots() {
+    var s = '';
+    for (var i = 0; i < pin.length; i++) s += '•';
+    document.getElementById('dots').textContent = s;
+  }
+  var keys = document.querySelectorAll('.keys button');
+  for (var i = 0; i < keys.length; i++) {
+    keys[i].addEventListener('click', function (e) {
+      var k = e.currentTarget.getAttribute('data-k');
+      document.getElementById('error').textContent = '';
+      if (k === 'del') pin = pin.slice(0, -1);
+      else if (k === 'ok') return login();
+      else if (pin.length < 8) pin += k;
+      renderDots();
+    });
+  }
+  function login() {
+    request('POST', '/api/admin/login', { pin: pin }, function (code, data) {
+      pin = '';
+      renderDots();
+      if (code === 200) return connect();
+      document.getElementById('error').textContent = (data && data.message) || 'Code incorrect';
+    });
+  }
+
+  // ---------- Image de la borne ----------
+
+  function layout() {
+    if (!size) return;
+    var W = window.innerWidth, H = window.innerHeight;
+    var k = Math.min(W / size.width, H / size.height);
+    var w = Math.round(size.width * k), h = Math.round(size.height * k);
+    screenImg.style.width = w + 'px';
+    screenImg.style.height = h + 'px';
+    screenImg.style.left = Math.round((W - w) / 2) + 'px';
+    screenImg.style.top = Math.round((H - h) / 2) + 'px';
+  }
+
+  function connect() {
+    request('GET', '/api/admin/remote/info', null, function (code, data) {
+      if (code === 401) { show('login'); return; }
+      if (code !== 200) {
+        message('Écran indisponible', (data && data.message) || 'La borne ne répond pas. Nouvel essai dans quelques secondes…');
+        setTimeout(connect, 4000);
+        return;
+      }
+      size = data;
+      layout();
+      show('screen');
+      status('');
+      screenImg.src = '/api/admin/remote/stream.mjpeg?t=' + Date.now();
+    });
+  }
+  // Flux coupé (borne redémarrée, Wi-Fi) : on se reconnecte
+  screenImg.addEventListener('error', function () {
+    status('Connexion perdue, reconnexion…');
+    setTimeout(connect, 2000);
+  });
+  window.addEventListener('resize', layout);
+  window.addEventListener('orientationchange', function () { setTimeout(layout, 300); });
+
+  // ---------- Toucher : renvoyé à la borne, dans l'ordre ----------
+
+  var queue = [];
+  var sending = false;
+  function push(ev) {
+    var last = queue[queue.length - 1];
+    if (ev.type === 'move' && last && last.type === 'move') queue[queue.length - 1] = ev; // mouvements regroupés
+    else queue.push(ev);
+    flush();
+  }
+  function flush() {
+    if (sending || !queue.length) return;
+    sending = true;
+    var batch = queue;
+    queue = [];
+    request('POST', '/api/admin/remote/input', { events: batch }, function (code) {
+      sending = false;
+      if (code === 401) { queue = []; show('login'); return; }
+      flush();
+    });
+  }
+  function point(t, type) {
+    var r = screenImg.getBoundingClientRect();
+    return { type: type, x: (t.clientX - r.left) / r.width, y: (t.clientY - r.top) / r.height };
+  }
+
+  var touching = false;
+  screenImg.addEventListener('touchstart', function (e) { e.preventDefault(); touching = true; push(point(e.changedTouches[0], 'down')); }, false);
+  screenImg.addEventListener('touchmove', function (e) { e.preventDefault(); if (touching) push(point(e.changedTouches[0], 'move')); }, false);
+  screenImg.addEventListener('touchend', function (e) { e.preventDefault(); touching = false; push(point(e.changedTouches[0], 'up')); }, false);
+  screenImg.addEventListener('touchcancel', function (e) { touching = false; push(point(e.changedTouches[0], 'up')); }, false);
+  // Souris (essai depuis un ordinateur)
+  var mouseDown = false;
+  screenImg.addEventListener('mousedown', function (e) { e.preventDefault(); mouseDown = true; push(point(e, 'down')); });
+  window.addEventListener('mousemove', function (e) { if (mouseDown) push(point(e, 'move')); });
+  window.addEventListener('mouseup', function (e) { if (!mouseDown) return; mouseDown = false; push(point(e, 'up')); });
+  // Pas de défilement ni de zoom de la page elle-même
+  document.addEventListener('touchmove', function (e) { e.preventDefault(); }, false);
+  document.addEventListener('gesturestart', function (e) { e.preventDefault(); }, false);
+
+  connect();
+})();
+</script>
+</body>
+</html>

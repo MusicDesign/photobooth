@@ -5,7 +5,7 @@ import sharp from 'sharp';
 import { TEMPLATES_DIR } from './paths.js';
 import { HttpError, readJson } from './util.js';
 import { CUTOUT_MODES, DEFAULT_TOLERANCE, AI_DEFAULTS, aiMatteRange, applyMatte, removeColor } from '../public/cutout.js';
-import { personMatte } from './cutout-ai.js';
+import { subjectMatte, adjustContour, cleanEdges, preciseReady } from './cutout-ai.js';
 
 /**
  * Un template = un dossier data/templates/<id>/ avec template.json et un
@@ -21,6 +21,8 @@ import { personMatte } from './cutout-ai.js';
  *
  * kind = 'gif' : GIF animé, uniquement en numérique (jamais imprimé). Plusieurs poses successives, chacune
  * posée dans les calques photo (tous affichent la pose en cours), puis assemblées en animation (voir gif).
+ * kind = 'boomerang' : quelques secondes filmées dans l'aperçu du boîtier, jouées en avant puis en arrière,
+ * en boucle (GIF, numérique uniquement). Les calques photo montrent la vidéo.
  */
 export const FORMATS = {
   '10x15-paysage': { name: '10x15 cm paysage', width: 1800, height: 1200 },
@@ -42,12 +44,30 @@ export const FONTS = {
 export const LAYER_TYPES = ['photo', 'image', 'text', 'rect'];
 
 /** Réglages d'un template GIF : nombre de poses, durée d'une image, aller-retour, décompte entre deux poses. */
-export const GIF_DEFAULTS = { frames: 4, frameMs: 500, boomerang: false, poseSec: 2 };
+export const GIF_DEFAULTS = { frames: 3, frameMs: 500, boomerang: false, poseSec: 2 };
 export const GIF_MAX_SIDE = 800; // taille du GIF (plus grand côté) : léger à ouvrir sur un téléphone
+/** Boomerang : durée filmée (s). Images captées à BOOMERANG_FPS, GIF plus petit (beaucoup d'images). */
+export const BOOMERANG_DEFAULTS = { durationSec: 2, speed: 2 };
+/** Vitesse de lecture → durée d'une image (ms, multiple de 10 comme dans un GIF). ×2 : effet accéléré. */
+export const BOOMERANG_SPEEDS = { 1: 80, 1.5: 50, 2: 40, 3: 30 };
+export const BOOMERANG_FPS = 12.5; // 80 ms par image : un pas exact des GIF (1/100 s)
+export const BOOMERANG_MAX_SIDE = 640;
+/** Types animés : numérique uniquement, jamais imprimés, tous les calques photo montrent la même image. */
+export const ANIMATED_KINDS = ['gif', 'boomerang'];
+export const isAnimatedKind = (kind) => ANIMATED_KINDS.includes(kind);
 
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const SRC = /^(assets\/)?[A-Za-z0-9._-]+\.(png|jpe?g|webp)$/i;
 const ASSET_EXT = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
+
+/** Miniatures déjà calculées (voir template-previews.js) : URLs, dans l'ordre des photos d'exemple. */
+export const PREVIEW_META = 'preview.json';
+function previewUrls(t) {
+  try {
+    const meta = JSON.parse(fs.readFileSync(path.join(t.dir, PREVIEW_META), 'utf8'));
+    return meta.files.filter((f) => fs.existsSync(path.join(t.dir, f))).map((f) => `/templates/${t.id}/${f}`);
+  } catch { return []; }
+}
 
 export function slugify(name) {
   return String(name).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
@@ -87,7 +107,7 @@ export function normalizeLayer(raw, i) {
         aiThreshold: clamp(round(num(raw.aiThreshold, AI_DEFAULTS.aiThreshold)), 0, 100),
         aiSoftness: clamp(round(num(raw.aiSoftness, AI_DEFAULTS.aiSoftness)), 0, 100),
         aiContour: clamp(round(num(raw.aiContour, AI_DEFAULTS.aiContour)), -10, 10),
-        aiPrecision: raw.aiPrecision === 'fine' ? 'fine' : 'standard'
+        aiPrecision: raw.aiPrecision === 'fast' ? 'fast' : 'precise' // anciennes valeurs (standard / fine) : modèle précis
       };
     case 'image':
       if (!SRC.test(raw.src || '')) throw new HttpError(400, 'LAYER_SRC', `Calque ${i + 1} : fichier image manquant`);
@@ -101,7 +121,7 @@ export function normalizeLayer(raw, i) {
         aiThreshold: clamp(round(num(raw.aiThreshold, AI_DEFAULTS.aiThreshold)), 0, 100),
         aiSoftness: clamp(round(num(raw.aiSoftness, AI_DEFAULTS.aiSoftness)), 0, 100),
         aiContour: clamp(round(num(raw.aiContour, AI_DEFAULTS.aiContour)), -10, 10),
-        aiPrecision: raw.aiPrecision === 'fine' ? 'fine' : 'standard',
+        aiPrecision: raw.aiPrecision === 'fast' ? 'fast' : 'precise', // anciennes valeurs (standard / fine) : modèle précis
         cutSrc: SRC.test(raw.cutSrc || '') ? raw.cutSrc : null
       };
     case 'text':
@@ -166,23 +186,30 @@ function normalize(raw, dir) {
   const width = round(num(raw.width, format ? FORMATS[format].width : 0));
   const height = round(num(raw.height, format ? FORMATS[format].height : 0));
   if (width < 100 || height < 100 || width > 8000 || height > 8000) throw new HttpError(400, 'TEMPLATE_SIZE', 'Dimensions invalides');
-  const kind = raw.kind === 'gif' ? 'gif' : 'photo';
+  const kind = ['gif', 'boomerang'].includes(raw.kind) ? raw.kind : 'photo';
   let rawLayers = raw.layers?.length ? raw.layers : legacyLayers({ ...raw, width, height });
-  if (kind === 'gif') rawLayers = rawLayers.map((l) => (l?.type === 'photo' ? { ...l, shot: 0 } : l)); // tous montrent la pose en cours
+  if (isAnimatedKind(kind)) rawLayers = rawLayers.map((l) => (l?.type === 'photo' ? { ...l, shot: 0 } : l)); // tous montrent la pose en cours
+  // Boomerang : pas de détourage IA (des dizaines d'images, trop long) ; fond vert / bleu possible
+  if (kind === 'boomerang') rawLayers = rawLayers.map((l) => (l?.type === 'photo' && l.cutout === 'ai' ? { ...l, cutout: 'none' } : l));
   const layers = normalizeLayers(rawLayers);
   const photoLayers = layers.filter((l) => l.type === 'photo');
   const gif = kind === 'gif' ? normalizeGif(raw.gif) : null;
+  const boomerang = kind === 'boomerang' ? {
+    durationSec: clamp(round(num(raw.boomerang?.durationSec, BOOMERANG_DEFAULTS.durationSec) * 2) / 2, 1, 4),
+    speed: BOOMERANG_SPEEDS[raw.boomerang?.speed] ? Number(raw.boomerang.speed) : BOOMERANG_DEFAULTS.speed
+  } : null;
   return {
     id: raw.id,
     name: String(raw.name || raw.id).slice(0, 80),
     kind,
     gif,
+    boomerang,
     format,
     width,
     height,
     background: color(raw.background, '#ffffff'),
     layers,
-    shots: gif ? gif.frames : Math.max(...photoLayers.map((l) => l.shot)) + 1,
+    shots: gif ? gif.frames : boomerang ? 1 : Math.max(...photoLayers.map((l) => l.shot)) + 1, // boomerang : une vidéo
     slots: photoLayers.map((l) => ({ shot: l.shot, x: l.x, y: l.y, width: l.width, height: l.height })),
     dir
   };
@@ -217,6 +244,13 @@ export class Templates {
     return [...this.items.values()];
   }
 
+  /** Templates dans l'ordre choisi dans l'admin (config.templates.order), les autres ensuite dans leur ordre. */
+  sorted(config, list = this.all()) {
+    const order = config?.templates?.order || [];
+    const rank = (t) => { const i = order.indexOf(t.id); return i < 0 ? Infinity : i; };
+    return list.map((t, i) => [t, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([t]) => t);
+  }
+
   get(id) {
     const t = this.items.get(id);
     if (!t) throw new HttpError(404, 'TEMPLATE_NOT_FOUND', `Template inconnu : ${id}`);
@@ -226,13 +260,13 @@ export class Templates {
   /** Templates activés, dans l'ordre de la config. Les GIF seulement si l'option GIF est active. */
   enabled(config) {
     const ids = config.templates.enabled?.length ? config.templates.enabled : [...this.items.keys()];
-    return ids.filter((id) => this.items.has(id) && (this.items.get(id).kind !== 'gif' || config.templates.gifEnabled))
-      .map((id) => this.toPublic(this.items.get(id)));
+    const list = ids.filter((id) => this.items.has(id) && (!isAnimatedKind(this.items.get(id).kind) || config.templates.gifEnabled)).map((id) => this.items.get(id));
+    return this.sorted(config, list).map((t) => this.toPublic(t));
   }
 
   toPublic(t) {
     const { dir, ...pub } = t;
-    return { ...pub, layers: t.layers.map((l) => (l.type === 'image' ? { ...l, url: `/templates/${t.id}/${l.src}` } : l)) };
+    return { ...pub, previews: previewUrls(t), layers: t.layers.map((l) => (l.type === 'image' ? { ...l, url: `/templates/${t.id}/${l.src}` } : l)) };
   }
 
   uniqueId(name) {
@@ -244,9 +278,9 @@ export class Templates {
   }
 
   write(def) {
-    const { id, name, kind, gif, format, width, height, background, layers } = def;
+    const { id, name, kind, gif, boomerang, format, width, height, background, layers } = def;
     fs.mkdirSync(def.dir, { recursive: true });
-    const out = { id, name, ...(kind === 'gif' ? { kind, gif } : {}), format, width, height, background, layers };
+    const out = { id, name, ...(kind === 'gif' ? { kind, gif } : {}), ...(kind === 'boomerang' ? { kind, boomerang } : {}), format, width, height, background, layers };
     fs.writeFileSync(path.join(def.dir, 'template.json'), JSON.stringify(out, null, 2));
   }
 
@@ -265,7 +299,7 @@ export class Templates {
       layers[0] = { ...layers[0], x: 0, y: 0, width: f.width, height: f.height };
       layers.push({ type: 'image', src: 'assets/overlay.png', name: 'PNG importé', x: 0, y: 0, width: f.width, height: f.height });
     }
-    const def = normalize({ id, name: String(name).trim(), kind, gif: GIF_DEFAULTS, format, width: f.width, height: f.height, background: background || '#ffffff', layers }, dir);
+    const def = normalize({ id, name: String(name).trim(), kind, gif: GIF_DEFAULTS, boomerang: BOOMERANG_DEFAULTS, format, width: f.width, height: f.height, background: background || '#ffffff', layers }, dir);
     this.write(def);
     this.reload();
     return this.toPublic(this.get(id));
@@ -279,6 +313,7 @@ export class Templates {
       name: patch.name ?? cur.name,
       kind: cur.kind,
       gif: { ...cur.gif, ...patch.gif },
+      boomerang: { ...cur.boomerang, ...patch.boomerang },
       format: cur.format,
       width: cur.width,
       height: cur.height,
@@ -318,7 +353,9 @@ export class Templates {
       const rgb = Buffer.alloc(info.width * info.height * 3);
       for (let i = 0, j = 0; i < data.length; i += 4, j += 3) { rgb[j] = data[i]; rgb[j + 1] = data[i + 1]; rgb[j + 2] = data[i + 2]; }
       const [lo, hi] = aiMatteRange(o);
-      applyMatte(data, await personMatte(rgb, info.width, info.height, { precision: o.aiPrecision, contour: o.aiContour }), 255, lo, hi);
+      const matte = await adjustContour(await subjectMatte(rgb, info.width, info.height, { model: o.aiPrecision }), info.width, info.height, o.aiContour);
+      applyMatte(data, matte, 255, lo, hi);
+      await cleanEdges(data, info.width, info.height);
     } else {
       removeColor(data, info.width, info.height, { color: o.bgColor, tolerance: o.bgTolerance, contiguous: o.bgContiguous !== false });
     }
@@ -328,6 +365,60 @@ export class Templates {
     fs.mkdirSync(path.join(t.dir, 'assets'), { recursive: true });
     await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toFile(path.join(t.dir, cutSrc));
     return { cutSrc, url: `/templates/${id}/${cutSrc}` };
+  }
+
+  /**
+   * « Retirer le fond » en un clic : la méthode est choisie d'après l'image.
+   *   déjà transparente      → rien à faire
+   *   fond uni + aplats      → couleur du bord retirée depuis les bords, tolérance d'après le bord (logos, dessins)
+   *   sinon (photo, rendu 3D) → IA, modèle précis (tout sujet)
+   * Rend les réglages choisis (à poser sur le calque) et la version sans fond.
+   */
+  async autoCutout(id, src) {
+    const t = this.get(id);
+    if (!SRC.test(src || '')) throw new HttpError(400, 'LAYER_SRC', 'Image inconnue');
+    const file = path.join(t.dir, src);
+    if (!fs.existsSync(file)) throw new HttpError(404, 'ASSET_MISSING', 'Image introuvable dans le template');
+    const { data, info } = await sharp(file).resize(600, 600, { fit: 'inside', withoutEnlargement: true }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const { width: w, height: h } = info, n = w * h;
+    let clear = 0;
+    for (let i = 0; i < n; i++) if (data[i * 4 + 3] < 200) clear++;
+    if (clear / n > 0.03) return { mode: 'none', reason: 'Cette image est déjà transparente : rien à retirer.' };
+
+    // Bord de l'image (2 px) : couleur médiane et écarts à cette couleur
+    const border = [];
+    for (let x = 0; x < w; x++) for (const y of [0, 1, h - 2, h - 1]) border.push((y * w + x) * 4);
+    for (let y = 2; y < h - 2; y++) for (const x of [0, 1, w - 2, w - 1]) border.push((y * w + x) * 4);
+    const med = [0, 1, 2].map((c) => border.map((i) => data[i + c]).sort((a, b) => a - b)[border.length >> 1]);
+    const dist = (i) => Math.hypot(data[i] - med[0], data[i + 1] - med[1], data[i + 2] - med[2]) / 441.7;
+    const d = border.map(dist).sort((a, b) => a - b);
+    const uniform = d[Math.floor(d.length * 0.9)] < 0.06; // 90 % du bord à moins de 6 % d'écart
+    // Aplats : sur le sujet seul (hors couleur du fond), part des pixels dans ses 16 teintes les plus fréquentes.
+    // Logo, dessin : quelques couleurs franches. Photo, rendu 3D (figurine) : dégradés, ombres, reflets.
+    const bins = new Map();
+    let subject = 0;
+    for (let i = 0; i < n; i++) {
+      if (dist(i * 4) < 0.12) continue;
+      subject++;
+      const k = ((data[i * 4] >> 4) << 8) | ((data[i * 4 + 1] >> 4) << 4) | (data[i * 4 + 2] >> 4);
+      bins.set(k, (bins.get(k) || 0) + 1);
+    }
+    const flat = subject > 0 && [...bins.values()].sort((a, b) => b - a).slice(0, 16).reduce((s, v) => s + v, 0) / subject > 0.8;
+    const hex = `#${med.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+
+    let settings, reason;
+    if (uniform && flat) {
+      const d90 = d[Math.floor(d.length * 0.9)]; // le sujet peut toucher le bord : on ne regarde que le fond
+      const tol = Math.round(Math.max(8, Math.min(40, ((d90 * 2 + 0.05 - 0.02) / 0.5) * 100)));
+      settings = { bgRemove: 'color', bgColor: hex, bgTolerance: tol, bgContiguous: true };
+      reason = `Fond uni ${hex} retiré (tolérance ${tol}).`;
+    } else {
+      if (!preciseReady()) throw new HttpError(409, 'MODEL_MISSING', 'Pour cette image, il faut le modèle de détourage précis : installez-le une fois (Templates → Détourage précis, 115 Mo).');
+      settings = { bgRemove: 'ai', ...AI_DEFAULTS, aiPrecision: 'precise' };
+      reason = 'Sujet détouré par IA.';
+    }
+    const opts = { mode: settings.bgRemove, ...settings };
+    return { ...settings, ...(await this.cutoutAsset(id, src, opts)), reason };
   }
 
   /** Couleur des coins d'une image (médiane) : proposée comme couleur de fond à retirer. */

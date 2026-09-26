@@ -66,6 +66,6 @@ export function eventGalleryHtml({ items, theme, boothName, texts }) {
   return page({ theme, boothName, title: `${texts.galleryTitle} · ${boothName}`, css, body: `
   <h1>${esc(texts.galleryTitle)}</h1>
   ${items.length ? `<p>${items.length} photo${items.length > 1 ? 's' : ''}</p>
-  <div class="grid">${items.map((it) => `<a href="/g/${esc(it.id)}"><img src="${esc(it.thumbUrl)}" alt="" loading="lazy">${it.gif ? '<span class="gif-tag">GIF</span>' : ''}</a>`).join('')}</div>`
+  <div class="grid">${items.map((it) => `<a href="/g/${esc(it.id)}"><img src="${esc(it.thumbUrl)}" alt="" loading="lazy">${it.gif ? `<span class="gif-tag">${it.kind === 'boomerang' ? 'BOOMERANG' : 'GIF'}</span>` : ''}</a>`).join('')}</div>`
     : `<p>${esc(texts.galleryEmpty)}</p>`}` });
 }

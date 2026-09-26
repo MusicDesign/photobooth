@@ -295,11 +295,12 @@ function templatesSection() {
   const cfg = S.config.templates;
   const formatOptions = (sel) => Object.entries(S.formats).map(([k, f]) => `<option value="${k}" ${sel === k ? 'selected' : ''}>${esc(f.name)} · ${f.width}×${f.height}</option>`).join('');
   const cards = S.templates.map((t) => `
-    <div class="card tpl-card">
+    <div class="card tpl-card" data-tpl-card="${esc(t.id)}">
+      <button type="button" class="tpl-handle" title="Glisser pour changer l'ordre sur la borne" aria-label="Déplacer ${esc(t.name)}">⠿</button>
       <canvas class="tpl-preview" data-tpl="${esc(t.id)}" width="${Math.round(t.width * (160 / Math.max(t.width, t.height)))}" height="${Math.round(t.height * (160 / Math.max(t.width, t.height)))}"></canvas>
       <div class="tpl-meta">
         <strong>${esc(t.name)}</strong> <code>${esc(t.id)}</code><br>
-        ${t.kind === 'gif' ? `<span class="badge">GIF animé</span> ${cfg.gifEnabled ? '' : '<span class="badge warn">GIF désactivés</span> '}` : ''}${t.format && S.formats[t.format] ? esc(S.formats[t.format].name) : `${t.width} × ${t.height} px`} · ${t.kind === 'gif' ? `${t.shots} poses` : `${t.shots} photo${t.shots > 1 ? 's' : ''}`} · ${t.layers.length} calque${t.layers.length > 1 ? 's' : ''}<br><br>
+        ${KIND_LABEL[t.kind] ? `<span class="badge">${KIND_LABEL[t.kind]}</span> ${cfg.gifEnabled ? '' : '<span class="badge warn">GIF désactivés</span> '}` : ''}${t.format && S.formats[t.format] ? esc(S.formats[t.format].name) : `${t.width} × ${t.height} px`} · ${t.kind === 'gif' ? `${t.shots} poses` : t.kind === 'boomerang' ? `${String(t.boomerang.durationSec).replace('.', ',')} s filmées` : `${t.shots} photo${t.shots > 1 ? 's' : ''}`} · ${t.layers.length} calque${t.layers.length > 1 ? 's' : ''}<br><br>
         <div class="row">
           <a class="btn secondary small" href="#editor=${encodeURIComponent(t.id)}">Modifier</a>
           <label class="inline"><input type="checkbox" data-enable="${esc(t.id)}" ${cfg.enabled.includes(t.id) ? 'checked' : ''}> Activé</label>
@@ -315,7 +316,7 @@ function templatesSection() {
     <h3>Nouveau template</h3>
     <div class="row">
       <label style="flex:1;min-width:220px">Nom <input name="name" required placeholder="Mariage Julie & Marc"></label>
-      <label>Type <select name="kind"><option value="photo">Photo (tirage)</option><option value="gif">GIF animé (numérique)</option></select></label>
+      <label>Type <select name="kind"><option value="photo">Photo (tirage)</option><option value="gif">GIF animé (numérique)</option><option value="boomerang">Boomerang (numérique)</option></select></label>
       <label>Format <select name="format">${formatOptions(cfg.defaultFormat || S.defaultFormat)}</select></label>
       <button class="btn primary" type="submit">Créer et ouvrir l'éditeur</button>
     </div>
@@ -329,10 +330,14 @@ function templatesSection() {
       <span class="sep"></span>
       <label class="inline">Format par défaut <select id="defaultFormat">${formatOptions(cfg.defaultFormat || S.defaultFormat)}</select></label>
     </div>
-    <label class="inline"><input id="gifEnabled" type="checkbox" ${cfg.gifEnabled ? 'checked' : ''}> Proposer les GIF animés aux invités</label>
+    <label class="inline"><input id="gifEnabled" type="checkbox" ${cfg.gifEnabled ? 'checked' : ''}> Proposer les GIF animés et les boomerangs aux invités</label>
     <small>Numérique uniquement : un GIF n'est jamais imprimé. L'invité le récupère par QR code, ou le retrouve dans la galerie de la borne. Les templates de type GIF apparaissent parmi les cadres.</small>
+    <h3 class="model-title">Détourage précis</h3>
+    ${S.subjectModel?.installed
+      ? '<p><span class="badge ok">installé</span> <small>Photos des invités (calques photo « IA ») et bouton « Retirer le fond » des images : tout sujet, bords propres, hors ligne.</small></p>'
+      : modelNotice()}
   </div>
-  ${cards || '<p class="sub">Aucun template. Créez-en un ci-dessus.</p>'}`;
+  ${cards ? `<p class="sub">Ordre d'affichage sur la borne : glissez un template par sa poignée ⠿.</p><div id="tplList" class="tpl-list">${cards}</div>` : '<p class="sub">Aucun template. Créez-en un ci-dessus.</p>'}`;
 }
 
 function hardware() {
@@ -386,6 +391,8 @@ function hardware() {
       <label>Position du Stream Deck par rapport à l'écran <select name="deckPosition">${[['bottom', 'En dessous'], ['top', 'Au-dessus'], ['left', 'À gauche'], ['right', 'À droite']].map(([v, lb]) => `<option value="${v}" ${(cfg.booth.streamDeck?.position || 'bottom') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select><small>Écran non tactile : l'accueil affiche une flèche vers le Stream Deck (gauche / droite vues par l'invité)</small></label>
       <label>Luminosité des touches (%) <input name="deckBrightness" type="number" min="10" max="100" value="${cfg.booth.streamDeck?.brightness ?? 70}" style="width:120px"></label>
     </div>
+    <label class="inline"><input name="deckShowButtons" type="checkbox" ${cfg.booth.streamDeck?.showButtons ? 'checked' : ''}> Toujours afficher les boutons à l'écran</label>
+    <small>Décoché : quand l'écran n'est pas tactile et que le Stream Deck est branché, les boutons disparaissent de l'écran (retour, flèches, valider…) ; tout se fait sur les touches. Un écran tactile garde toujours ses boutons.</small>
     <label>En ce moment ${deckState()}</label>
     <small>Les touches reprennent les boutons de l'écran affiché, aux couleurs du thème, y compris le pavé du code opérateur. Branché, il pilote aussi la galerie de la borne (autant de photos par page que de touches). Sur Mac, quitter l'application Stream Deck d'Elgato, qui réserve l'appareil.</small>
     <button class="btn primary" type="submit">Enregistrer</button>
@@ -935,9 +942,12 @@ function galleryCard() {
 
 const E = { tpl: null, selected: null, dirty: false, samplesOn: true, scale: 1, dpr: 1, assets: new Map(), samples: [], drag: null, onResize: null, gifFrame: 0, gifTimer: 0 };
 const editingGif = () => E.tpl?.kind === 'gif';
+const editingBoomerang = () => E.tpl?.kind === 'boomerang';
+const editingAnimated = () => editingGif() || editingBoomerang(); // calques photo : tous montrent la même image
+const KIND_LABEL = { gif: 'GIF animé', boomerang: 'Boomerang' };
 
 const LAYER_LABEL = { photo: 'Photo', text: 'Texte', image: 'Image', rect: 'Forme' };
-const layerTitle = (l) => l.name || (l.type === 'photo' ? (editingGif() ? 'Photo (pose en cours)' : `Photo ${l.shot + 1}`) : l.type === 'text' ? `Texte « ${String(l.text || '').split('\n')[0].slice(0, 18)} »` : LAYER_LABEL[l.type]);
+const layerTitle = (l) => l.name || (l.type === 'photo' ? (editingGif() ? 'Photo (pose en cours)' : editingBoomerang() ? 'Vidéo' : `Photo ${l.shot + 1}`) : l.type === 'text' ? `Texte « ${String(l.text || '').split('\n')[0].slice(0, 18)} »` : LAYER_LABEL[l.type]);
 const editorId = () => decodeURIComponent(location.hash.replace(/^#editor=/, ''));
 const selectedLayer = () => E.tpl?.layers.find((l) => l.id === E.selected) || null;
 
@@ -957,7 +967,7 @@ function editorSection() {
     <div class="editor-top">
       <button class="btn" id="edBack">← Templates</button>
       <input id="edName" class="ed-name" value="${esc(E.tpl.name)}" title="Nom du template">
-      <span class="badge">${t.kind === 'gif' ? 'GIF animé · ' : ''}${esc(fmt)} · ${t.width}×${t.height} px</span>
+      <span class="badge">${KIND_LABEL[t.kind] ? `${KIND_LABEL[t.kind]} · ` : ''}${esc(fmt)} · ${t.width}×${t.height} px</span>
       <label class="inline">Fond <input type="color" id="edBg" value="${esc(E.tpl.background)}"></label>
       <span class="sep"></span>
       <span class="muted">Ajouter</span>
@@ -974,7 +984,7 @@ function editorSection() {
     <div class="editor-body">
       <div class="editor-canvas-wrap" id="edWrap"><canvas id="edCanvas" tabindex="0"></canvas></div>
       <aside class="editor-side">
-        ${t.kind === 'gif' ? gifFields() : ''}
+        ${t.kind === 'gif' ? gifFields() : t.kind === 'boomerang' ? boomerangFields() : ''}
         <h3>Calques <small>(le premier est au-dessus)</small></h3>
         <ul id="edLayers" class="layer-list"></ul>
         <h3>Propriétés</h3>
@@ -996,8 +1006,24 @@ function gifFields() {
             <label>Vitesse (ms par image) <input type="number" data-g="frameMs" min="100" max="2000" step="50" value="${g.frameMs}"></label>
           </div>
           <label>Décompte entre deux poses (s) <input type="number" data-g="poseSec" min="1" max="10" value="${g.poseSec}"></label>
-          <label class="inline"><input type="checkbox" data-g="boomerang" ${g.boomerang ? 'checked' : ''}> Aller-retour (1 2 3 4 3 2…)</label>
+          <label class="inline"><input type="checkbox" data-g="boomerang" ${g.boomerang ? 'checked' : ''}> Aller-retour (1 2 3 2…)</label>
           <small class="muted">Chaque pose s'affiche dans les calques photo ; le reste (cadre, textes, logo) est identique sur toutes les images. La première pose garde le décompte normal. Un GIF n'est jamais imprimé.</small>
+        </div>`;
+}
+
+/** Réglages d'un boomerang : durée filmée. */
+function boomerangFields() {
+  const d = E.tpl.boomerang.durationSec;
+  const sp = E.tpl.boomerang.speed ?? 2;
+  const speeds = { 1: 'Normale (×1)', 1.5: 'Rapide (×1,5)', 2: 'Accélérée (×2)', 3: 'Très accélérée (×3)' };
+  return `
+        <h3>Boomerang</h3>
+        <div class="props gif-props">
+          <div class="row2">
+            <label>Durée filmée <select data-bm="durationSec">${[1, 1.5, 2, 2.5, 3, 3.5, 4].map((v) => `<option value="${v}" ${v === d ? 'selected' : ''}>${String(v).replace('.', ',')} s</option>`).join('')}</select></label>
+            <label>Vitesse de lecture <select data-bm="speed">${Object.entries(speeds).map(([v, l]) => `<option value="${v}" ${Number(v) === sp ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          </div>
+          <small class="muted">Filmé dans l'aperçu du boîtier (environ 960×640, sans flash), puis joué en avant et en arrière, en boucle, à la vitesse choisie (×2 : effet vidéo accélérée). La borne fait la mise au point pendant le décompte. Les calques photo montrent la vidéo ; le reste est identique sur toutes les images. Pas de détourage IA (trop d'images), fond vert ou bleu possible. Jamais imprimé.</small>
         </div>`;
 }
 
@@ -1234,14 +1260,16 @@ function renderProps() {
   if (l.type === 'photo') {
     const cut = l.cutout || 'none';
     const cutOpts = { none: 'Aucun', ai: 'IA (sans fond particulier)', green: 'Fond vert', blue: 'Fond bleu' };
-    specific = `${editingGif() ? '<small class="muted">GIF : ce calque montre la pose en cours.</small>' : `<label>Photo affichée <select data-p="shot" data-num>${shots}</select></label>`}${n('radius', 'Coins arrondis (px)', 0, 2000)}
+    if (editingBoomerang()) delete cutOpts.ai; // trop d'images pour le détourage IA
+    specific = `${editingGif() ? '<small class="muted">GIF : ce calque montre la pose en cours.</small>' : editingBoomerang() ? '<small class="muted">Boomerang : ce calque montre la vidéo.</small>' : `<label>Photo affichée <select data-p="shot" data-num>${shots}</select></label>`}${n('radius', 'Coins arrondis (px)', 0, 2000)}
       <small class="muted">Plusieurs calques peuvent afficher la même photo (bande dupliquée).</small>
       <label>Détourage <select data-p="cutout" id="pCutout">${Object.entries(cutOpts).map(([k, v]) => `<option value="${k}" ${cut === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       ${cut === 'ai' ? `
       <label>Seuil <input type="range" data-p="aiThreshold" min="0" max="100" step="1" value="${l.aiThreshold ?? 50}"><small>Plus haut : retire plus de fond. Plus bas : garde plus de la personne (bras, cheveux).</small></label>
       <label>Douceur des bords <input type="range" data-p="aiSoftness" min="0" max="100" step="1" value="${l.aiSoftness ?? 50}"><small>À gauche : découpe nette. À droite : bord fondu.</small></label>
       <label>Contour (px) <input type="number" data-p="aiContour" min="-10" max="10" step="1" value="${l.aiContour ?? 0}"><small>Négatif : resserre la découpe (enlève un halo du fond). Positif : l'élargit.</small></label>
-      <label>Précision <select data-p="aiPrecision"><option value="standard" ${l.aiPrecision !== 'fine' ? 'selected' : ''}>Standard</option><option value="fine" ${l.aiPrecision === 'fine' ? 'selected' : ''}>Fine (cheveux, détails ; montage plus lent)</option></select></label>
+      <label>Modèle de la photo finale <select data-p="aiPrecision" id="pAiModel"><option value="precise" ${l.aiPrecision !== 'fast' ? 'selected' : ''}>Précis : tout sujet, bords propres (calculé pendant la séance)</option><option value="fast" ${l.aiPrecision === 'fast' ? 'selected' : ''}>Rapide : personnes seulement</option></select></label>
+      ${l.aiPrecision !== 'fast' ? modelNotice() : ''}
       <div class="row"><button class="btn small secondary" type="button" id="pCutTestLast">Tester sur la dernière photo</button><button class="btn small" type="button" id="pCutTestSample">Tester sur la photo d'exemple</button></div>
       <small class="muted">Le test fait le vrai montage de la photo finale avec les réglages affichés, même non enregistrés.</small>` : ''}
       ${cut === 'green' || cut === 'blue' ? `<label>Tolérance <input type="range" data-p="keyTolerance" min="0" max="100" step="1" value="${l.keyTolerance ?? 50}"></label>
@@ -1304,6 +1332,7 @@ function renderProps() {
     el.addEventListener('change', apply);
   });
   $('#pCutout')?.addEventListener('change', () => renderProps()); // affiche / masque la tolérance
+  $('#pAiModel')?.addEventListener('change', () => renderProps()); // message du modèle précis
   bindImageBg(box, l);
   const cutTest = async (source, btn) => {
     const label = btn.textContent;
@@ -1328,7 +1357,12 @@ function renderProps() {
 
 function imageBgFields(l) {
   const mode = l.bgRemove || 'none';
-  const opts = { none: 'Aucun', color: 'Fond uni (logo, dessin…)', ai: 'Personne (IA)' };
+  if (mode === 'none') {
+    return `<div class="row"><button class="btn small primary" type="button" id="pBgAuto">Retirer le fond</button></div>
+      <small class="muted">La borne choisit la méthode selon l'image : un fond uni (logo, dessin) est retiré à la couleur près, sinon le sujet est détouré par IA.</small>
+      <div id="pBgNotice"></div>`;
+  }
+  const opts = { color: 'Fond uni (logo, dessin…)', ai: 'Sujet détouré par IA' };
   let fields = '';
   if (mode === 'color') {
     fields = `
@@ -1341,11 +1375,44 @@ function imageBgFields(l) {
       <label>Seuil <input type="range" data-bgp="aiThreshold" min="0" max="100" step="1" value="${l.aiThreshold ?? 50}"></label>
       <label>Douceur des bords <input type="range" data-bgp="aiSoftness" min="0" max="100" step="1" value="${l.aiSoftness ?? 50}"></label>
       <label>Contour (px) <input type="number" data-bgp="aiContour" min="-10" max="10" step="1" value="${l.aiContour ?? 0}"></label>
-      <label>Précision <select data-bgp="aiPrecision"><option value="standard" ${l.aiPrecision !== 'fine' ? 'selected' : ''}>Standard</option><option value="fine" ${l.aiPrecision === 'fine' ? 'selected' : ''}>Fine</option></select></label>
-      <small class="muted">Le modèle reconnaît les personnes. Pour un objet, un logo ou du texte, prends « Fond uni ».</small>`;
+      <small class="muted">Détoure le sujet principal (personne, objet, figurine). Pour un logo ou du texte sur fond uni, « Fond uni » est plus net.</small>
+      ${modelNotice()}`;
   }
-  return `<label>Retirer le fond <select data-bgp="bgRemove" id="pBgMode">${Object.entries(opts).map(([k, v]) => `<option value="${k}" ${mode === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-    ${fields}${mode !== 'none' ? '<small class="muted" id="pBgStatus">' + (l.cutSrc ? 'Fond retiré, visible dans l\'aperçu.' : 'Calcul…') + '</small>' : ''}`;
+  return `<div class="row"><small class="muted" id="pBgStatus">${esc(l.cutSrc ? l.bgReason || 'Fond retiré, visible dans l\'aperçu.' : 'Calcul…')}</small>
+      <button class="btn small" type="button" id="pBgUndo">Remettre le fond</button></div>
+    <details class="bg-adjust" ${E.bgAdjust ? 'open' : ''}><summary>Ajuster</summary>
+      <label>Méthode <select data-bgp="bgRemove" id="pBgMode">${Object.entries(opts).map(([k, v]) => `<option value="${k}" ${mode === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+      ${fields}
+    </details>`;
+}
+
+/** Modèle de détourage précis absent : message et bouton d'installation (vide s'il est installé). */
+function modelNotice() {
+  const m = S.subjectModel;
+  if (!m || m.installed) return '';
+  const pct = m.downloading ? ` ${Math.round((m.received / m.size) * 100)} %` : '';
+  return `<div class="alert model-notice">Modèle précis non installé : détourage de secours (personnes seulement, bords moins propres).
+    <button class="btn small" type="button" data-model-dl ${m.downloading ? 'disabled' : ''}>${m.downloading ? `Téléchargement…${pct}` : `Installer (${Math.round(m.size / 1e6)} Mo, une fois)`}</button>
+    ${m.error ? `<br><small>Échec : ${esc(m.error)}</small>` : ''}</div>`;
+}
+
+/** Téléchargement du modèle précis (borne connectée à internet), suivi jusqu'à la fin. */
+async function downloadSubjectModel() {
+  try { S.subjectModel = await api('/api/admin/models/subject/download', { method: 'POST' }); } catch (e) { toast(e.message, true); return; }
+  const refreshNotices = () => { document.querySelectorAll('.model-notice').forEach((el) => { el.outerHTML = modelNotice(); }); bindModelButtons(); if (currentSection() === 'templates') render(); };
+  refreshNotices();
+  const poll = async () => {
+    try { S.subjectModel = await api('/api/admin/models/subject'); } catch { /* réessaie */ }
+    if (S.subjectModel.downloading) { document.querySelectorAll('[data-model-dl]').forEach((b) => { b.textContent = `Téléchargement… ${Math.round((S.subjectModel.received / S.subjectModel.size) * 100)} %`; }); setTimeout(poll, 1000); return; }
+    if (S.subjectModel.installed) toast('Modèle de détourage précis installé');
+    else toast(`Échec du téléchargement : ${S.subjectModel.error || 'inconnu'}`, true);
+    refreshNotices();
+    if (currentSection() === 'editor') renderProps();
+  };
+  setTimeout(poll, 1000);
+}
+function bindModelButtons() {
+  document.querySelectorAll('[data-model-dl]').forEach((b) => { b.onclick = downloadSubjectModel; });
 }
 
 /** Calcule (serveur) la version sans fond du calque image avec ses réglages, puis met l'aperçu à jour. */
@@ -1377,11 +1444,43 @@ function scheduleImageCutout(l) {
 }
 
 function bindImageBg(box, l) {
+  bindModelButtons();
   if (l.type !== 'image') return;
+  box.querySelector('.bg-adjust')?.addEventListener('toggle', (e) => { E.bgAdjust = e.target.open; });
+  $('#pBgAuto')?.addEventListener('click', async (e) => {
+    const b = e.currentTarget;
+    b.disabled = true;
+    b.textContent = 'Analyse de l\'image…';
+    try {
+      const r = await api(`/api/admin/templates/${encodeURIComponent(E.tpl.id)}/assets/auto-cutout`, { method: 'POST', body: { src: l.src } });
+      if (r.mode === 'none') { toast(r.reason); b.disabled = false; b.textContent = 'Retirer le fond'; return; }
+      for (const k of ['bgRemove', 'bgColor', 'bgTolerance', 'bgContiguous', 'aiThreshold', 'aiSoftness', 'aiContour', 'aiPrecision']) if (r[k] !== undefined) l[k] = r[k];
+      const img = await loadImage(r.url);
+      if (img) E.assets.set(r.cutSrc, img);
+      l.cutSrc = r.cutSrc;
+      l.bgReason = r.reason; // affiché sous le calque (pas enregistré)
+      markDirty();
+      renderProps();
+      renderEditor();
+    } catch (err) {
+      b.disabled = false;
+      b.textContent = 'Retirer le fond';
+      if (err.code === 'MODEL_MISSING') { $('#pBgNotice').innerHTML = modelNotice(); bindModelButtons(); }
+      toast(err.message, true);
+    }
+  });
+  $('#pBgUndo')?.addEventListener('click', () => {
+    l.bgRemove = 'none';
+    l.cutSrc = null;
+    delete l.bgReason;
+    renderProps();
+    scheduleImageCutout(l);
+  });
   box.querySelectorAll('[data-bgp]').forEach((el) => el.addEventListener(el.type === 'range' ? 'input' : 'change', () => {
     const k = el.dataset.bgp;
     l[k] = el.type === 'checkbox' ? el.checked : el.type === 'range' || el.type === 'number' ? Number(el.value) : el.value;
-    if (k === 'bgRemove') { l.cutSrc = null; renderProps(); }
+    if (k === 'bgRemove') { l.cutSrc = null; delete l.bgReason; renderProps(); }
+    else delete l.bgReason; // réglé à la main
     scheduleImageCutout(l);
   }));
   $('#pBgCorner')?.addEventListener('click', async () => {
@@ -1554,7 +1653,7 @@ function addLayer(type) {
   if (type === 'photo') {
     const used = new Set(E.tpl.layers.filter((x) => x.type === 'photo').map((x) => x.shot));
     let shot = 0;
-    while (used.has(shot) && !editingGif()) shot++; // GIF : tous les calques photo montrent la pose en cours
+    while (used.has(shot) && !editingAnimated()) shot++; // GIF : tous les calques photo montrent la pose en cours
     const w = Math.round(W * 0.4), h = Math.round(w * 2 / 3);
     l = { type, shot, name: '', x: Math.round((W - w) / 2), y: Math.round((H - h) / 2), width: w, height: h, radius: 0, opacity: 1, visible: true };
   } else if (type === 'text') {
@@ -1605,7 +1704,7 @@ async function onImageFile(e) {
 
 async function saveTemplate() {
   try {
-    const t = await api(`/api/admin/templates/${encodeURIComponent(E.tpl.id)}`, { method: 'PUT', body: { name: E.tpl.name, background: E.tpl.background, layers: E.tpl.layers, gif: E.tpl.gif || undefined } });
+    const t = await api(`/api/admin/templates/${encodeURIComponent(E.tpl.id)}`, { method: 'PUT', body: { name: E.tpl.name, background: E.tpl.background, layers: E.tpl.layers, gif: E.tpl.gif || undefined, boomerang: E.tpl.boomerang || undefined } });
     E.tpl = { ...E.tpl, ...t };
     const i = S.templates.findIndex((x) => x.id === t.id);
     if (i >= 0) S.templates[i] = t;
@@ -1642,6 +1741,10 @@ function bindEditor() {
     E.tpl.gif[k] = el.type === 'checkbox' ? el.checked : Number(el.value);
     markDirty();
     if (k === 'frameMs') startGifPreview();
+  }));
+  document.querySelectorAll('[data-bm]').forEach((el) => el.addEventListener('change', () => {
+    E.tpl.boomerang[el.dataset.bm] = Number(el.value);
+    markDirty();
   }));
   startGifPreview();
   cv.addEventListener('pointerdown', onPointerDown);
@@ -1695,6 +1798,45 @@ function render() {
 
 const num = (fd, k) => Number(fd.get(k));
 
+/**
+ * Ordre des templates : glisser une carte par sa poignée (souris ou doigt ; le glisser-déposer natif ne marche
+ * pas au toucher). La carte suit le pointeur, les autres s'écartent ; au lâcher, onDrop enregistre l'ordre.
+ */
+function bindTemplateSort(onDrop) {
+  const list = $('#tplList');
+  if (!list) return;
+  list.querySelectorAll('.tpl-handle').forEach((h) => h.addEventListener('pointerdown', (e) => {
+    const card = h.closest('[data-tpl-card]');
+    e.preventDefault();
+    // Écoute sur la fenêtre : déplacer la carte dans la liste ferait perdre la capture du pointeur (lâcher jamais reçu)
+    const before = [...list.children].map((c) => c.dataset.tplCard).join();
+    const startY = e.clientY;
+    const top0 = card.getBoundingClientRect().top;
+    card.classList.add('dragging');
+    let ty = 0; // décalage appliqué à la carte pour qu'elle reste sous le pointeur
+    const move = (ev) => {
+      // La carte se place avant la première carte dont le milieu est sous le pointeur
+      const others = [...list.children].filter((c) => c !== card);
+      const next = others.find((c) => { const r = c.getBoundingClientRect(); return ev.clientY < r.top + r.height / 2; });
+      if (next) { if (card.nextElementSibling !== next) list.insertBefore(card, next); } else if (list.lastElementChild !== card) list.appendChild(card);
+      const naturalTop = card.getBoundingClientRect().top - ty; // sa place dans la liste, sans le décalage
+      ty = ev.clientY - startY - (naturalTop - top0);
+      card.style.transform = `translateY(${ty}px)`;
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      card.classList.remove('dragging');
+      card.style.transform = '';
+      if ([...list.children].map((c) => c.dataset.tplCard).join() !== before) onDrop();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  }));
+}
+
 async function renderTemplateCards() {
   const samples = await sampleImages();
   for (const cv of document.querySelectorAll('canvas.tpl-preview')) {
@@ -1702,6 +1844,10 @@ async function renderTemplateCards() {
     if (!t) continue;
     const scale = cv.width / t.width;
     const ctx = cv.getContext('2d');
+    if (t.previews?.length) { // miniature calculée à l'enregistrement
+      const img = await loadImage(t.previews[0]).catch(() => null);
+      if (img) { ctx.drawImage(img, 0, 0, cv.width, cv.height); continue; }
+    }
     const photos = photosFromSamples(t, samples);
     renderTemplate(ctx, t, { scale, photos, cutoutPhotos: cutoutsFromSamples(photos), placeholder: true });
     loadAssets(t).then((assets) => renderTemplate(ctx, t, { scale, photos, cutoutPhotos: cutoutsFromSamples(photos), assets, placeholder: true }));
@@ -1785,12 +1931,15 @@ function bindSection(sec) {
 
   if (sec === 'templates') {
     renderTemplateCards();
-    const saveTemplates = () => {
+    bindModelButtons();
+    const saveTemplates = (msg = 'Templates enregistrés') => {
       const enabled = [...document.querySelectorAll('[data-enable]')].filter((c) => c.checked).map((c) => c.dataset.enable);
       const def = document.querySelector('input[name=defaultTpl]:checked')?.value || enabled[0] || '';
-      saveConfig({ templates: { enabled, default: def, guestCanChoose: $('#guestCanChoose').checked, defaultFormat: $('#defaultFormat').value, gifEnabled: $('#gifEnabled').checked } }, 'Templates enregistrés');
+      const order = [...document.querySelectorAll('[data-tpl-card]')].map((c) => c.dataset.tplCard); // ordre affiché = ordre sur la borne
+      saveConfig({ templates: { enabled, order, default: def, guestCanChoose: $('#guestCanChoose').checked, defaultFormat: $('#defaultFormat').value, gifEnabled: $('#gifEnabled').checked } }, msg);
     };
-    document.querySelectorAll('[data-enable], input[name=defaultTpl], #guestCanChoose, #defaultFormat, #gifEnabled').forEach((el) => el.addEventListener('change', saveTemplates));
+    bindTemplateSort(() => saveTemplates('Ordre enregistré, la borne est à jour'));
+    document.querySelectorAll('[data-enable], input[name=defaultTpl], #guestCanChoose, #defaultFormat, #gifEnabled').forEach((el) => el.addEventListener('change', () => saveTemplates()));
     document.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm(`Supprimer le template « ${b.dataset.del} » ?`)) return;
       try { await api(`/api/admin/templates/${encodeURIComponent(b.dataset.del)}`, { method: 'DELETE' }); toast('Template supprimé'); refresh(); } catch (e) { toast(e.message, true); }
@@ -1902,7 +2051,7 @@ function bindSettingsForms() {
     } },
     booth: { lensPosition: fd.get('lensPosition') }
   }));
-  form('#formDeck', (fd) => saveConfig({ booth: { streamDeck: { enabled: fd.get('deckEnabled') === 'on', brightness: num(fd, 'deckBrightness'), position: fd.get('deckPosition') } } }));
+  form('#formDeck', (fd) => saveConfig({ booth: { streamDeck: { enabled: fd.get('deckEnabled') === 'on', brightness: num(fd, 'deckBrightness'), position: fd.get('deckPosition'), showButtons: fd.get('deckShowButtons') === 'on' } } }));
   form('#formShare', (fd, f) => saveConfig({ share: { baseUrl: fd.get('shareBaseUrl').trim(), publicUrl: fd.get('publicUrl').trim(), qrOnDone: f.qrOnDone.checked, requireWifi: f.requireWifi.checked } }));
   form('#formCodes', (fd) => saveConfig({ admin: { pin: fd.get('adminPin') }, limits: { operatorPin: fd.get('operatorPin') } }));
   form('#formWifi', (fd, f) => saveConfig({ share: { wifi: { enabled: f.enabled.checked, ssid: f.ssid.value.trim(), password: f.password.value, security: f.security.value } } }, 'Wi-Fi enregistré'));

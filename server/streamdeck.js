@@ -472,7 +472,7 @@ const SECRET_STEP_MS = 1500; // délai maximum entre deux appuis du code
 
 // Rangée de navigation fixe des écrans de galerie (voir navLayout). paged : les flèches tournent les pages.
 const NAV_ROWS = {
-  template: { prev: '__prev', home: 'btnTemplateBack', next: '__next', paged: true }, // pages côté Stream Deck
+  template: { prev: 'btnTemplatePrev', home: 'btnTemplateBack', next: 'btnTemplateNext', paged: true }, // une seule page : côté Stream Deck
   gallery: { prev: 'btnGalleryPrev', home: 'btnGalleryBack', next: 'btnGalleryNext', paged: true },
   photo: { prev: 'btnPhotoPrev', home: 'btnPhotoBack', next: 'btnPhotoNext' }
 };
