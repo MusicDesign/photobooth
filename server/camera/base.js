@@ -25,6 +25,15 @@ export class BaseCamera {
     throw new Error(`capture() non disponible pour le pilote ${this.name}`);
   }
 
+  /** Boomerang : mise au point avant de filmer (facultatif). */
+  async focus() {}
+
+  /** Boomerang : filme quelques secondes dans l'aperçu. Rend des JPEG, dans l'ordre. */
+  async recordClip({ durationMs, fps }) {
+    if (!this.mjpeg) throw new Error(`Vidéo non disponible pour le pilote ${this.name}`);
+    return this.mjpeg.record({ durationMs, fps });
+  }
+
   /** Branche un client HTTP sur le flux MJPEG de l'aperçu live. */
   attachLiveClient(res) {
     res.status(503).json({ error: 'LIVE_UNAVAILABLE', message: `Pas d'aperçu serveur pour le pilote ${this.name}` });

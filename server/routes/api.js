@@ -40,6 +40,17 @@ export function apiRouter({ booth }) {
     res.json(await booth.addShot(req.params.id, index, req.file?.buffer || null));
   });
 
+  /** Boomerang : mise au point au début du décompte ; répond quand l'aperçu est reparti. */
+  r.post('/session/:id/focus', async (req, res) => {
+    await booth.focusForClip(req.params.id);
+    res.json({ ok: true });
+  });
+
+  /** Boomerang : la vidéo (filmée par le serveur, ou images envoyées par le navigateur). */
+  r.post('/session/:id/clip', upload.array('frames', 80), async (req, res) => {
+    res.json(await booth.addClip(req.params.id, req.files?.map((f) => f.buffer) || null));
+  });
+
   /** GIF : toutes les poses sont reprises. */
   r.post('/session/:id/restart', (req, res) => res.json(booth.restartShots(req.params.id)));
 

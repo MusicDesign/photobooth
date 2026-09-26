@@ -6,6 +6,7 @@ import { WebSocketServer } from 'ws';
 import { Config } from './config.js';
 import { Store } from './store.js';
 import { Templates } from './templates.js';
+import { buildAllPreviews } from './template-previews.js';
 import { Themes } from './themes.js';
 import { Booth } from './booth.js';
 import { Devices } from './devices.js';
@@ -23,7 +24,7 @@ import { ROOT, OUTPUT_DIR, PUBLIC_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, 
  * (le lanceur quitte alors le processus, l'app Electron ferme sa fenêtre).
  * onRestart : pareil pour « Redémarrer » ; seul un lanceur capable de se relancer le fournit (app Electron).
  */
-export async function createApp({ port = Number(process.env.PORT) || 3000, onShutdown = null, onRestart = null } = {}) {
+export async function createApp({ port = Number(process.env.PORT) || 3000, onShutdown = null, onRestart = null, remoteScreen = null } = {}) {
   for (const d of [OUTPUT_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, UPLOADS_DIR]) fs.mkdirSync(d, { recursive: true });
 
   const config = new Config();
@@ -56,6 +57,8 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   devices.on('camera', (cam) => { booth.setCamera(cam); broadcast({ type: 'config' }); });
   devices.on('printer', (p) => { booth.setPrinter(p); broadcast({ type: 'config' }); });
   devices.on('network', () => broadcast({ type: 'config' })); // Wi-Fi apparu ou perdu : QR codes affichés ou non
+  // Miniatures des cadres manquantes (templates copiés à la main, nouvelle version) : la borne les reprend ensuite
+  buildAllPreviews(templates).then((n) => { if (n) broadcast({ type: 'config' }); });
 
   // Stream Deck : la borne décrit son écran ('ui'), un appui lui est renvoyé ('deck'), à elle seule.
   let boothSocket = null;
@@ -121,7 +124,9 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   const shutdown = stopThen(onShutdown, 'arrêt');
   const restart = stopThen(onRestart, 'redémarrage');
 
-  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart, kioskScreen }));
+  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart, kioskScreen, remoteScreen }));
+  // Écran déporté (iPad…) : l'écran de la borne et son toucher, avec le code admin (voir electron/remote-screen.js)
+  app.get('/remote', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'remote.html')));
   // API de l'écran de la borne : seulement depuis la borne (les téléphones n'ont besoin que de ping et de la galerie)
   const PHONE_API = [/^\/ping$/, /^\/gallery$/];
   app.use('/api', (req, res, next) => {

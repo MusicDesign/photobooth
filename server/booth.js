@@ -5,7 +5,9 @@ import { SESSIONS_DIR, PUBLIC_DIR } from './paths.js';
 import { HttpError, newId, lanIp } from './util.js';
 import { wifiStatus } from './network.js';
 import { samplePhotos } from './samples.js';
-import { compose, composeGif, thumbnail, normalizeShot } from './compositor.js';
+import { compose, composeGif, composeBoomerang, thumbnail, normalizeShot } from './compositor.js';
+import { BOOMERANG_FPS, isAnimatedKind } from './templates.js';
+import { shotMatte } from './cutout-ai.js';
 
 /**
  * Adresse saisie dans l'admin, complétée pour que le QR code ouvre bien une page : sans schéma, le téléphone
@@ -22,6 +24,12 @@ export function completeUrl(raw, { scheme = 'http', port = null } = {}) {
     if (bare && port && !/^[^/]*:\d+/.test(s.slice(scheme.length + 3))) u.port = String(port);
     return u.toString().replace(/\/+$/, '');
   } catch { return s; }
+}
+
+/** Fichiers d'une prise : la photo, ou les images d'une vidéo (boomerang). */
+function removeShotFiles(sh) {
+  if (sh.clipDir) fs.rmSync(sh.clipDir, { recursive: true, force: true });
+  else { try { fs.unlinkSync(sh.file); } catch { /* déjà supprimé */ } }
 }
 
 /** Version du code de la borne (date de modification des fichiers servis) : la page se recharge si elle change. */
@@ -56,6 +64,7 @@ export class Booth {
     this.jobToSession = new Map();
     this.armed = new Map(); // sessionId → { index, file } : photo programmée pendant le décompte
     this.capturing = new Set(); // sessionId dont une photo est en cours d'arrivée
+    this.focusing = new Map(); // sessionId → mise au point en cours avant un boomerang
     // Seules les sessions validées par l'invité (« Je la garde ») sont conservées. La borne supprime les autres
     // en revenant à l'accueil ; ce passage rattrape celles qu'elle n'a pas pu signaler (page rechargée, coupure).
     this.purgeUnvalidatedSessions();
@@ -350,7 +359,8 @@ export class Booth {
       createdAt: s.createdAt,
       templateId: s.templateId,
       templateName: template?.name || s.templateId,
-      gif: s.kind === 'gif',
+      gif: isAnimatedKind(s.kind), // GIF ou boomerang : numérique uniquement
+      kind: s.kind || 'photo',
       status: s.status,
       shotsExpected: template?.shots ?? s.shots.length,
       shots: s.shots.map((sh, index) => (sh ? { index, url: urlFor(sh.file), takenAt: sh.takenAt } : null)),
@@ -360,7 +370,7 @@ export class Booth {
       copies: s.copies,
       unlocked: s.unlocked,
       maxCopies: s.unlocked ? cfg.limits.operatorMaxCopies : cfg.limits.maxCopiesPerSession,
-      final: s.final ? { url: urlFor(s.final.file), thumbUrl: urlFor(s.final.thumb), gif: s.kind === 'gif' } : null,
+      final: s.final ? { url: urlFor(s.final.file), thumbUrl: urlFor(s.final.thumb), gif: isAnimatedKind(s.kind) } : null,
       printJobs: s.printJobs,
       error: s.error || null
     };
@@ -428,6 +438,10 @@ export class Booth {
       try { fs.unlinkSync(s.shots[index].file); } catch { /* déjà supprimé */ }
     }
     s.shots[index] = { file, takenAt: new Date().toISOString() };
+    // Détourage IA : calculé dès maintenant, pendant la pose suivante ou le montage (quelques secondes par photo)
+    for (const model of new Set(template.layers.filter((l) => l.type === 'photo' && l.cutout === 'ai').map((l) => l.aiPrecision))) {
+      shotMatte(file, model).catch((e) => console.warn(`[cutout] ${e.message}`));
+    }
     s.final = null;
     s.status = 'shooting';
     this.store.saveSession(s);
@@ -441,13 +455,68 @@ export class Booth {
     const cfg = this.cfg();
     if (!['shooting', 'review'].includes(s.status)) throw new HttpError(409, 'SESSION_CLOSED', 'Cette session est terminée');
     if (cfg.limits.maxRetakesPerSession >= 0 && s.retakes >= cfg.limits.maxRetakesPerSession) throw new HttpError(409, 'RETAKE_LIMIT', 'Nombre de reprises atteint');
-    for (const sh of s.shots) if (sh) { try { fs.unlinkSync(sh.file); } catch { /* déjà supprimé */ } }
+    for (const sh of s.shots) if (sh) removeShotFiles(sh);
     s.shots = s.shots.map(() => null);
     s.retakes += 1;
     s.final = null;
     s.status = 'shooting';
     this.store.saveSession(s);
     return this.view(s);
+  }
+
+  /**
+   * Boomerang : mise au point lancée au début du décompte. Se termine quand l'aperçu est reparti ; la vidéo
+   * l'attend aussi, au cas où.
+   */
+  focusForClip(id) {
+    const s = this.load(id);
+    if (this.templates.items.get(s.templateId)?.kind !== 'boomerang' || this.camera.mode !== 'server') return Promise.resolve();
+    if (!this.focusing.has(id)) {
+      const p = this.camera.focus().catch(() => {}).finally(() => { if (this.focusing.get(id) === p) this.focusing.delete(id); });
+      this.focusing.set(id, p);
+    }
+    return this.focusing.get(id);
+  }
+
+  /**
+   * Boomerang : la vidéo de la session. Mode serveur : filmée dans l'aperçu du boîtier pendant la durée du
+   * template ; mode navigateur : images envoyées par la borne (frameBuffers). Une nouvelle vidéo remplace
+   * la précédente (comptée comme reprise).
+   */
+  async addClip(id, frameBuffers = null) {
+    const s = this.load(id);
+    const cfg = this.cfg();
+    const template = this.templates.get(s.templateId);
+    if (template.kind !== 'boomerang') throw new HttpError(400, 'NOT_BOOMERANG', 'Ce template n\'est pas un boomerang');
+    if (!['shooting', 'review'].includes(s.status)) throw new HttpError(409, 'SESSION_CLOSED', 'Cette session est terminée');
+    const isRetake = !!s.shots[0];
+    if (isRetake && cfg.limits.maxRetakesPerSession >= 0 && s.retakes >= cfg.limits.maxRetakesPerSession) throw new HttpError(409, 'RETAKE_LIMIT', 'Nombre de reprises atteint');
+    this.capturing.add(s.id);
+    let frames;
+    try {
+      if (this.camera.mode === 'browser') {
+        if (!frameBuffers?.length) throw new HttpError(400, 'FRAMES_REQUIRED', 'Images de la vidéo manquantes (champ "frames")');
+        frames = frameBuffers;
+      } else {
+        await this.focusing.get(s.id); // mise au point du décompte, si elle n'est pas finie
+        frames = await this.camera.recordClip({ durationMs: template.boomerang.durationSec * 1000, fps: BOOMERANG_FPS });
+      }
+    } catch (e) {
+      throw e instanceof HttpError ? e : new HttpError(502, 'CLIP_FAILED', `Vidéo impossible : ${e.message}`);
+    } finally {
+      this.capturing.delete(s.id);
+    }
+    if (frames.length < 2) throw new HttpError(502, 'CLIP_FAILED', 'Vidéo trop courte : l\'aperçu n\'a presque pas envoyé d\'images');
+    const clipDir = path.join(this.sessionDir(s.id), `clip-${Date.now()}`);
+    fs.mkdirSync(clipDir, { recursive: true });
+    const files = frames.map((buf, i) => { const f = path.join(clipDir, `f-${String(i + 1).padStart(3, '0')}.jpg`); fs.writeFileSync(f, buf); return f; });
+    console.log(`[booth] session ${s.id} : vidéo de ${files.length} images${isRetake ? ' (reprise)' : ''}`);
+    if (isRetake) { s.retakes += 1; removeShotFiles(s.shots[0]); }
+    s.shots[0] = { file: files[0], frames: files, clipDir, takenAt: new Date().toISOString() };
+    s.final = null;
+    s.status = 'shooting';
+    this.store.saveSession(s);
+    return { session: this.view(s) };
   }
 
   async composeSession(id) {
@@ -457,9 +526,15 @@ export class Booth {
     if (missing >= 0) throw new HttpError(409, 'SHOTS_MISSING', `Il manque la photo ${missing + 1}`);
     const dir = this.sessionDir(s.id);
     const gif = s.kind === 'gif' && template.kind === 'gif';
-    const finalFile = path.join(dir, gif ? 'final.gif' : 'final.jpg');
+    const boomerang = s.kind === 'boomerang' && template.kind === 'boomerang';
+    const finalFile = path.join(dir, gif || boomerang ? 'final.gif' : 'final.jpg');
     const thumbFile = path.join(dir, 'thumb.jpg');
-    if (gif) {
+    if (boomerang) {
+      const poster = path.join(dir, 'poster.jpg');
+      const frames = s.shots[0].frames?.length ? s.shots[0].frames : [s.shots[0].file];
+      await composeBoomerang(template, frames, finalFile, { mirror: !!s.mirror, posterFile: poster });
+      await thumbnail(poster, thumbFile);
+    } else if (gif) {
       const poster = path.join(dir, 'poster.jpg');
       await composeGif(template, s.shots.map((sh) => sh.file), finalFile, { mirror: !!s.mirror, posterFile: poster });
       await thumbnail(poster, thumbFile); // miniature fixe : la galerie reste légère
@@ -499,7 +574,7 @@ export class Booth {
     const cfg = this.cfg();
     if (s.status !== 'review') throw new HttpError(409, 'NOT_REVIEWED', 'Le montage n\'est pas prêt');
     if (!s.final) throw new HttpError(409, 'NO_FINAL', 'Aucune image finale');
-    if (s.kind === 'gif') { // numérique uniquement : on termine sans tirage
+    if (isAnimatedKind(s.kind)) { // numérique uniquement : on termine sans tirage
       if (copies !== 0) throw new HttpError(409, 'GIF_NO_PRINT', 'Un GIF ne s\'imprime pas');
       return this.sendToPrinter(s, 0, 'guest');
     }
@@ -523,7 +598,7 @@ export class Booth {
   async reprint(id, copies) {
     const s = this.load(id);
     if (!s.final) throw new HttpError(409, 'NO_FINAL', 'Aucune image finale pour cette session');
-    if (s.kind === 'gif') throw new HttpError(409, 'GIF_NO_PRINT', 'Un GIF ne s\'imprime pas');
+    if (isAnimatedKind(s.kind)) throw new HttpError(409, 'GIF_NO_PRINT', 'Un GIF ne s\'imprime pas');
     if (!Number.isInteger(copies) || copies < 1 || copies > 50) throw new HttpError(400, 'COPIES_INVALID', 'Nombre de copies invalide');
     return this.sendToPrinter(s, copies, 'admin');
   }
@@ -536,7 +611,7 @@ export class Booth {
       .filter((s) => s.final && !this.isUnvalidated(s))
       .map((s) => {
         const v = this.view(s);
-        return { id: v.id, createdAt: v.createdAt, url: v.final.url, thumbUrl: v.final.thumbUrl, gif: v.gif, printing: s.status === 'printing' };
+        return { id: v.id, createdAt: v.createdAt, url: v.final.url, thumbUrl: v.final.thumbUrl, gif: v.gif, kind: v.kind, printing: s.status === 'printing' };
       });
   }
 
@@ -552,7 +627,7 @@ export class Booth {
     if (!s || s.eventId !== this.store.data.activeEventId || !s.final || this.isUnvalidated(s)) {
       throw new HttpError(404, 'SESSION_NOT_FOUND', 'Photo introuvable dans la galerie');
     }
-    if (s.kind === 'gif') throw new HttpError(409, 'GIF_NO_PRINT', 'Un GIF ne s\'imprime pas');
+    if (isAnimatedKind(s.kind)) throw new HttpError(409, 'GIF_NO_PRINT', 'Un GIF ne s\'imprime pas');
     const operator = mode === 'operator';
     if (operator && String(pin ?? '') !== String(cfg.limits.operatorPin)) throw new HttpError(403, 'BAD_PIN', 'Code opérateur incorrect');
     const max = operator ? cfg.limits.operatorMaxCopies : cfg.limits.maxCopiesPerSession;

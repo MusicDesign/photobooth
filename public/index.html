@@ -74,6 +74,12 @@
   <section class="screen" id="screen-template">
     <h2 id="txtChooseTemplate" class="title"></h2>
     <div id="templateGrid" class="template-grid"></div>
+    <!-- Stream Deck branché : une page de cadres à la fois, autant que de touches (comme la galerie) -->
+    <div id="templateNav" class="gallery-nav hidden">
+      <button id="btnTemplatePrev" class="btn btn-ghost btn-nav" aria-label="Cadres précédents"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <span id="templatePage" class="shot-label"></span>
+      <button id="btnTemplateNext" class="btn btn-ghost btn-nav" aria-label="Cadres suivants"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+    </div>
     <button id="btnTemplateBack" class="btn btn-ghost back">← Retour</button>
   </section>
 

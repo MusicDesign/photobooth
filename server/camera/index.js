@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { BrowserCamera } from './browser.js';
 import { MockCamera } from './mock.js';
 import { Gphoto2Camera } from './gphoto2.js';
+import { parseAutoDetect, NOT_A_CAMERA } from './detect.js';
 
 const execFileP = promisify(execFile);
 
@@ -24,13 +25,19 @@ export function createCamera(cameraConfig) {
  * Un boîtier gphoto2 est-il branché ? Énumération USB seulement, sans réserver
  * l'appareil. La commande est surchargeable (tests).
  */
+/**
+ * Boîtier pilotable en USB. port : à imposer aux commandes seulement si un autre appareil est branché (un
+ * iPhone…) : sans lui, gphoto2 prendrait le premier de la liste.
+ */
 export async function detectGphoto2(gphoto2Config = {}) {
   const cmd = gphoto2Config.detectCommand || 'gphoto2 --auto-detect';
   try {
     const { stdout } = await execFileP('sh', ['-c', cmd], { timeout: 8000 });
-    const line = stdout.split('\n').find((l) => /\busb:/i.test(l));
-    if (!line) return { found: false, reason: 'aucun boîtier détecté en USB' };
-    return { found: true, model: line.replace(/\s+usb:.*$/i, '').trim() || 'Boîtier' };
+    const all = parseAutoDetect(stdout);
+    const cams = all.filter((d) => !NOT_A_CAMERA.test(d.model));
+    const ignored = all.filter((d) => NOT_A_CAMERA.test(d.model)).map((d) => d.model);
+    if (!cams.length) return { found: false, reason: ignored.length ? `aucun boîtier en USB (${ignored.join(', ')} ignoré : téléphone, non pilotable)` : 'aucun boîtier détecté en USB' };
+    return { found: true, model: cams[0].model, port: all.length > 1 ? cams[0].port : null, ignored };
   } catch (e) {
     if (/not found|introuvable|ENOENT/i.test(e.message) || e.code === 127) return { found: false, reason: 'gphoto2 non installé' };
     return { found: false, reason: `gphoto2 : ${e.message.split('\n')[0]}` };

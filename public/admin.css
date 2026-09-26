@@ -208,3 +208,18 @@ label.ctl-mode small { margin: 0 !important; color: var(--muted); }
 @media (max-width: 900px) { .co-main { flex-direction: column; } .co-side { width: auto; } }
 .co-info { background: rgba(255,255,255,0.08); border-radius: 10px; padding: 10px 14px; color: #d9dce1; max-width: 80ch; }
 .gif-props { margin-bottom: 22px; } /* réglages d'un template GIF, au-dessus des calques */
+
+/* Détourage : bouton « Retirer le fond », réglages repliés, modèle précis à installer */
+.bg-adjust { margin: 8px 0 10px; }
+.bg-adjust summary { cursor: pointer; font-weight: 600; font-size: 13px; margin-bottom: 8px; }
+.model-notice { font-size: 13px; margin: 8px 0; }
+.model-notice .btn { margin-top: 8px; }
+.model-title { margin-top: 22px; }
+
+/* Ordre des templates : poignée à glisser */
+.tpl-list { display: flex; flex-direction: column; gap: 16px; }
+.tpl-list > .tpl-card { margin: 0; }
+.tpl-handle { flex: none; align-self: center; border: 0; background: none; font-size: 22px; line-height: 1; padding: 10px 6px; color: var(--muted); cursor: grab; touch-action: none; border-radius: 8px; }
+.tpl-handle:hover { background: rgba(0, 0, 0, 0.05); color: var(--text); }
+.tpl-card.dragging { position: relative; z-index: 5; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.22); cursor: grabbing; }
+.tpl-card.dragging .tpl-handle { cursor: grabbing; }

@@ -13,6 +13,7 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "demo-assets": "node scripts/make-demo-assets.js",
+    "models": "node scripts/download-models.js",
     "smoke": "node scripts/smoke-test.js",
     "remote": "node scripts/build-remote.js",
     "app": "env -u ELECTRON_RUN_AS_NODE electron .",

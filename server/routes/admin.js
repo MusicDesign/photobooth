@@ -12,12 +12,15 @@ import { MANUAL_SETTINGS, MAX_SHOTS } from '../camera/control.js';
 import { PRINTER_DRIVERS, PRINTER_FALLBACKS } from '../printer/index.js';
 import { FORMATS, FONTS, DEFAULT_FORMAT, normalizeLayers } from '../templates.js';
 import { compose } from '../compositor.js';
+import { modelStatus, downloadModel } from '../models.js';
+import { buildPreviews } from '../template-previews.js';
+import { MjpegBroadcaster } from '../camera/mjpeg.js';
 import { OUTPUT_DIR as OUT } from '../paths.js';
 
 const EDITABLE_SECTIONS = ['booth', 'camera', 'printer', 'limits', 'templates', 'theme', 'texts', 'admin', 'share', 'gallery'];
 const IMAGE_EXT = { 'image/png': '.png', 'image/svg+xml': '.svg', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
 
-export function adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart, kioskScreen = () => null }) {
+export function adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart, kioskScreen = () => null, remoteScreen = null }) {
   const r = express.Router();
   const tokens = new Set();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024 } });
@@ -60,6 +63,28 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   r.use((req, res, next) => {
     if (!isAuthed(req)) throw new HttpError(401, 'UNAUTHORIZED', 'Connexion admin requise');
     next();
+  });
+
+  // ---------- Écran déporté (page /remote) ----------
+  // Disponible seulement dans l'app de la borne (Electron) : c'est elle qui a la fenêtre à montrer.
+  const remoteOk = () => { if (!remoteScreen?.available()) throw new HttpError(409, 'REMOTE_UNAVAILABLE', 'Écran déporté disponible seulement quand la borne tourne dans son application'); };
+  const remoteStream = new MjpegBroadcaster();
+  let remoteStop = null;
+  r.get('/remote/info', (req, res) => { remoteOk(); res.json(remoteScreen.size()); });
+  r.get('/remote/stream.mjpeg', (req, res) => {
+    remoteOk();
+    remoteStream.attach(res);
+    remoteStop ||= remoteScreen.subscribe((jpeg) => remoteStream.push(jpeg)); // capture seulement quand on regarde
+    console.log(`[remote] écran déporté connecté (${remoteStream.clients.size})`);
+    res.on('close', () => {
+      remoteStream.clients.delete(res);
+      if (!remoteStream.clients.size && remoteStop) { remoteStop(); remoteStop = null; }
+    });
+  });
+  r.post('/remote/input', async (req, res) => {
+    remoteOk();
+    for (const ev of Array.isArray(req.body?.events) ? req.body.events : [req.body]) await remoteScreen.input(ev);
+    res.json({ ok: true });
   });
 
   r.post('/shutdown', (req, res) => {
@@ -134,7 +159,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       config: config.get(),
       counters: booth.publicCounters(),
       rawCounters: store.counters(),
-      templates: templates.all().map((t) => templates.toPublic(t)),
+      templates: templates.sorted(config.get()).map((t) => templates.toPublic(t)), // ordre d'affichage choisi
       formats: FORMATS,
       defaultFormat: DEFAULT_FORMAT,
       fonts: Object.fromEntries(Object.entries(FONTS).map(([k, v]) => [k, v.name])),
@@ -150,6 +175,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       cameraSettings: MANUAL_SETTINGS, // réglages du mode manuel, dans l'ordre, avec leur libellé
       canShutdown: !!shutdown,
       canRestart: !!restart,
+      subjectModel: modelStatus('subject'), // modèle de détourage précis : installé ou à télécharger
       events: store.listEvents().map((ev) => booth.eventView(ev)),
       activeEventId: store.data.activeEventId,
       sessions: store.sessionsOfEvent(store.data.activeEventId).map((s) => booth.view(s)),
@@ -223,26 +249,43 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     res.json({ url: `/output/cutout-test/${name}`, ms: Date.now() - t0, source: source === 'last' ? 'dernière photo de la borne' : 'photo d\'exemple' });
   });
 
-  r.post('/templates', upload.single('overlay'), (req, res) => {
+  /** Miniatures du template (choix du cadre) : calculées ici, une fois, plutôt qu'à chaque affichage sur la borne. */
+  const previews = (id) => buildPreviews(templates.get(id)).catch((e) => console.warn(`[templates] miniature de ${id} : ${e.message}`));
+
+  r.post('/templates', upload.single('overlay'), async (req, res) => {
     const cfg = config.get();
     if (req.file && req.file.mimetype !== 'image/png') throw new HttpError(400, 'FILE_TYPE', 'Le PNG importé doit être un PNG avec transparence');
     const t = templates.create({
       name: req.body?.name,
-      kind: req.body?.kind === 'gif' ? 'gif' : 'photo',
+      kind: ['gif', 'boomerang'].includes(req.body?.kind) ? req.body.kind : 'photo',
       format: req.body?.format || cfg.templates.defaultFormat || DEFAULT_FORMAT,
       background: req.body?.background,
       overlayBuffer: req.file?.buffer || null
     });
     const enabled = cfg.templates.enabled.includes(t.id) ? cfg.templates.enabled : [...cfg.templates.enabled, t.id];
+    await previews(t.id);
     config.update({ templates: { enabled, default: cfg.templates.default && templates.items.has(cfg.templates.default) ? cfg.templates.default : t.id } });
-    res.json(t);
+    res.json(templates.toPublic(templates.get(t.id)));
   });
 
   /** Enregistrement depuis l'éditeur de calques. */
-  r.put('/templates/:id', (req, res) => {
+  r.put('/templates/:id', async (req, res) => {
     const t = templates.update(req.params.id, req.body || {});
+    await previews(t.id); // prêtes avant que la borne recharge ses cadres
     notifyBooth();
-    res.json(t);
+    res.json(templates.toPublic(templates.get(t.id)));
+  });
+
+  /** Modèle de détourage précis : état, et téléchargement (une fois, borne connectée à internet). */
+  r.get('/models/subject', (req, res) => res.json(modelStatus('subject')));
+  r.post('/models/subject/download', (req, res) => {
+    downloadModel('subject').catch(() => { /* erreur gardée dans modelStatus */ });
+    res.json(modelStatus('subject'));
+  });
+
+  /** « Retirer le fond » en un clic : méthode et réglages choisis d'après l'image. */
+  r.post('/templates/:id/assets/auto-cutout', async (req, res) => {
+    res.json(await templates.autoCutout(req.params.id, req.body?.src));
   });
 
   /** Image ajoutée dans un template (logo, cadre…). */

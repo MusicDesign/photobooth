@@ -23,6 +23,7 @@ const state = {
   copies: 1,
   maxCopies: 1,
   gallery: { items: [], index: 0, page: 0, copies: 1, printingId: null, qr: new Map() },
+  templatePage: 0, // page des cadres quand le Stream Deck pilote l'écran
   deck: null, // Stream Deck branché : { connected, gallery: { perPage, cols } | null } (message 'deckInfo')
   pendingConfigReload: false
 };
@@ -134,6 +135,7 @@ function applyBoot() {
   t('#txtGallery', 'gallery'); t('#txtGalleryTitle', 'galleryTitle'); t('#txtGalleryEmpty', 'galleryEmpty'); t('#btnReprint', 'reprint'); t('#txtGalleryQr', 'galleryQr'); t('#txtWifiQr', 'wifiQr');
   renderWifiQr();
   renderIdleGallery();
+  applyDeckUi();
 }
 
 /** Bouton Galerie de l'accueil : les 3 dernières photos de l'événement en éventail et leur nombre. Caché sans photo. */
@@ -171,7 +173,21 @@ window.addEventListener('pointerdown', (e) => {
   if (e.pointerType !== 'touch' || state.touch) return;
   state.touch = true;
   showWelcome();
+  applyDeckUi();
 }, true);
+
+/**
+ * Écran non tactile piloté par le Stream Deck : les boutons disparaissent de l'écran (body.deck-ui), tout se
+ * fait sur les touches. Ils restent dans la page, seulement invisibles : le Stream Deck les reprend (libellés,
+ * couleurs, appuis). Option de l'admin pour les garder (booth.streamDeck.showButtons).
+ */
+function applyDeckUi() {
+  const on = !state.touch && !!state.deck?.connected && !state.boot?.booth?.streamDeck?.showButtons;
+  if (document.body.classList.contains('deck-ui') === on) return;
+  document.body.classList.toggle('deck-ui', on);
+  if (state.screen === 'capture') fitCanvas(); // la colonne des boutons change de largeur
+  sizeTemplateCards();
+}
 
 /** QR code Wi-Fi en bas à droite, sur tous les écrans (body.wifi-on : la pastille papier remonte au-dessus). */
 async function renderWifiQr() {
@@ -406,6 +422,11 @@ const previewCutter = createCutter(() => state.previewScale);
 const usesAi = (t) => t?.layers?.some((l) => l.type === 'photo' && l.cutout === 'ai');
 // Template GIF : plusieurs poses dans le même emplacement (tous les calques photo montrent la pose en cours)
 const isGif = (t) => t?.kind === 'gif';
+// Boomerang : quelques secondes filmées, jouées en avant puis en arrière
+const isBoomerang = (t) => t?.kind === 'boomerang';
+const isAnimated = (t) => isGif(t) || isBoomerang(t);
+const BOOMERANG_FPS = 12.5; // comme le serveur (server/templates.js)
+const animTag = (kind) => (kind === 'boomerang' ? 'BOOMERANG' : 'GIF');
 
 function renderPreview() {
   const c = $('#preview');
@@ -413,7 +434,7 @@ function renderPreview() {
   if (!t) return;
   const live = liveSize();
   const shutter = shutterValue(); // fermé tant que la caméra n'envoie rien (webcam comprise), puis s'ouvre
-  const gif = isGif(t); // GIF : l'emplacement montre toujours le live, pose après pose
+  const gif = isAnimated(t); // GIF, boomerang : l'emplacement montre toujours le live
   renderTemplate(c.getContext('2d'), t, {
     scale: state.previewScale,
     photos: gif ? {} : state.shotImages,
@@ -469,40 +490,35 @@ let gifCardTimers = [];
 function renderTemplateGrid() {
   gifCardTimers.forEach(clearInterval);
   gifCardTimers = [];
-  loadSamplePhotos();
+  // Miniatures calculées par le serveur à l'enregistrement : rien à dessiner. Sinon (ancien template, miniature
+  // pas encore prête) : rendu ici avec les photos d'exemple.
+  if (state.boot.templates.items.some((t) => !t.previews?.length)) loadSamplePhotos();
   const ready = (state.boot.samples || []).map((u) => samplePhotos.get(u)).filter((img) => img?.complete && img.naturalWidth);
   const grid = $('#templateGrid');
   grid.innerHTML = '';
-  for (const t of state.boot.templates.items) {
+  // Stream Deck branché : une page à la fois, autant de cadres que de touches, comme la galerie
+  const all = state.boot.templates.items;
+  const per = deckPerPage();
+  const pages = per ? Math.max(1, Math.ceil(all.length / per)) : 1;
+  state.templatePage = Math.max(0, Math.min(pages - 1, state.templatePage));
+  const shown = per ? all.slice(state.templatePage * per, (state.templatePage + 1) * per) : all;
+  grid.classList.toggle('paged', !!per);
+  $('#templateNav').classList.toggle('hidden', pages <= 1);
+  $('#templatePage').textContent = `${state.templatePage + 1} / ${pages}`;
+  $('#btnTemplatePrev').disabled = state.templatePage === 0;
+  $('#btnTemplateNext').disabled = state.templatePage >= pages - 1;
+  for (const t of shown) {
     const card = document.createElement('button');
     card.className = 'template-card';
-    const cv = document.createElement('canvas');
-    const scale = 720 / Math.max(t.width, t.height); // net même affiché en grand (voir .template-card canvas)
-    cv.width = Math.round(t.width * scale);
-    cv.height = Math.round(t.height * scale);
-    const ctx = cv.getContext('2d');
-    const photos = ready.length ? Object.fromEntries(Array.from({ length: t.shots }, (_, i) => [i, ready[i % ready.length]])) : {};
-    const cutoutPhotos = Object.fromEntries(Object.entries(photos).filter(([, img]) => img.cutout?.complete && img.cutout.naturalWidth).map(([k, img]) => [k, img.cutout]));
-    renderTemplate(ctx, t, { scale, photos, cutoutPhotos, placeholder: true });
-    let cardAssets = null;
-    loadAssets(t).then((assets) => { cardAssets = assets; renderTemplate(ctx, t, { scale, photos, cutoutPhotos, assets, placeholder: true }); });
-    if (isGif(t) && ready.length > 1) {
-      let f = 0;
-      gifCardTimers.push(setInterval(() => {
-        if (state.screen !== 'template') return;
-        const img = ready[++f % ready.length];
-        const cut = img.cutout?.complete && img.cutout.naturalWidth ? { 0: img.cutout } : {};
-        renderTemplate(ctx, t, { scale, photos: { 0: img }, cutoutPhotos: cut, assets: cardAssets || undefined, placeholder: true });
-      }, t.gif.frameMs));
-    }
+    const cv = t.previews?.length ? previewThumb(t) : drawnThumb(t, ready);
     const label = document.createElement('div');
     label.className = 'template-name';
     label.textContent = t.name;
     card.append(cv, label);
-    if (isGif(t)) { // pastille sur l'aperçu (div, pas span : le Stream Deck garde le nom du cadre)
+    if (isAnimated(t)) { // pastille sur l'aperçu (div, pas span : le Stream Deck garde le nom du cadre)
       const tag = document.createElement('div');
       tag.className = 'gif-tag';
-      tag.textContent = 'GIF';
+      tag.textContent = animTag(t.kind);
       card.classList.add('is-gif');
       card.append(tag);
     }
@@ -512,26 +528,95 @@ function renderTemplateGrid() {
   sizeTemplateCards();
 }
 
+/** Carte : miniature du serveur. GIF, boomerang : ses images défilent (une par photo d'exemple). */
+function previewThumb(t) {
+  const img = new Image();
+  img.className = 'tpl-thumb';
+  img.alt = '';
+  img.decoding = 'async';
+  const scale = 720 / Math.max(t.width, t.height);
+  img.dataset.w = Math.round(t.width * scale); // taille connue avant le chargement (sizeTemplateCards)
+  img.dataset.h = Math.round(t.height * scale);
+  img.src = t.previews[0];
+  if (isAnimated(t) && t.previews.length > 1) {
+    t.previews.slice(1).forEach((u) => { new Image().src = u; }); // préchargées : pas de trou au changement
+    let f = 0;
+    gifCardTimers.push(setInterval(() => { if (state.screen === 'template') img.src = t.previews[++f % t.previews.length]; }, t.gif?.frameMs || 500));
+  }
+  return img;
+}
+
+/** Carte sans miniature du serveur : template dessiné ici avec les photos d'exemple. */
+function drawnThumb(t, ready) {
+  const cv = document.createElement('canvas');
+  const scale = 720 / Math.max(t.width, t.height); // net même affiché en grand (voir .template-card canvas)
+  cv.width = Math.round(t.width * scale);
+  cv.height = Math.round(t.height * scale);
+  const ctx = cv.getContext('2d');
+  const photos = ready.length ? Object.fromEntries(Array.from({ length: t.shots }, (_, i) => [i, ready[i % ready.length]])) : {};
+  const cutoutPhotos = Object.fromEntries(Object.entries(photos).filter(([, img]) => img.cutout?.complete && img.cutout.naturalWidth).map(([k, img]) => [k, img.cutout]));
+  renderTemplate(ctx, t, { scale, photos, cutoutPhotos, placeholder: true });
+  let cardAssets = null;
+  loadAssets(t).then((assets) => { cardAssets = assets; renderTemplate(ctx, t, { scale, photos, cutoutPhotos, assets, placeholder: true }); });
+  if (isGif(t) && ready.length > 1) {
+    let f = 0;
+    gifCardTimers.push(setInterval(() => {
+      if (state.screen !== 'template') return;
+      const img = ready[++f % ready.length];
+      const cut = img.cutout?.complete && img.cutout.naturalWidth ? { 0: img.cutout } : {};
+      renderTemplate(ctx, t, { scale, photos: { 0: img }, cutoutPhotos: cut, assets: cardAssets || undefined, placeholder: true });
+    }, t.gif.frameMs));
+  }
+  return cv;
+}
+
 /**
- * Cartes des cadres aussi grandes que l'écran le permet : jusqu'à 4 par rangée en paysage ; en portrait empilées
- * (jusqu'à 3 cadres) puis 2 par rangée,
- * chacune à la taille de sa case (proportions du cadre gardées, 560 px de haut au plus).
+ * Cartes des cadres aussi grandes que la place le permet (QR Wi-Fi compris), proportions gardées, 560 px de
+ * haut au plus. Toujours à la taille d'une grille complète, rangée depuis la gauche comme la galerie : avec
+ * 1 ou 2 cadres, mêmes cartes, aux premières places. Sans Stream Deck : 4 colonnes et 2 rangées visibles
+ * en paysage, 2 colonnes et 3 rangées en portrait, puis défilement. Stream Deck : colonnes et rangées de ses touches.
  */
 function sizeTemplateCards() {
-  const cards = [...document.querySelectorAll('#templateGrid .template-card')];
+  const grid = $('#templateGrid');
+  const cards = [...grid.querySelectorAll('.template-card')];
   if (!cards.length) return;
   const portrait = innerHeight > innerWidth;
-  const cols = portrait ? (cards.length <= 3 ? 1 : 2) : Math.min(cards.length, 4); // portrait : empilés, jusqu'à 3
-  const rows = Math.ceil(cards.length / cols);
+  const deckCols = deckPerPage() ? state.deck.gallery.cols : 0;
+  // Grille de référence (taille des cartes) : une page pleine, quel que soit le nombre de cadres affichés
+  const cols = deckCols || (portrait ? 2 : 4);
+  const rows = deckCols ? Math.max(1, Math.ceil(deckPerPage() / deckCols)) : portrait ? 3 : 2; // rangées visibles
   const GAP = 32, PAD = 36, LABEL = 50; // espacement, marges de la carte, nom sous l'aperçu
-  const boxW = (innerWidth * 0.92 - (cols - 1) * GAP) / cols - PAD;
-  const boxH = Math.min(560, (innerHeight - 280 - (rows - 1) * GAP) / rows - PAD - LABEL);
+  const W = grid.clientWidth - 2 * GRID_PAD, H = grid.clientHeight - 2 * GRID_PAD;
+  const boxW = (W - (cols - 1) * GAP) / cols - PAD;
+  const boxH = Math.min(560, (H - (rows - 1) * GAP) / rows - PAD - LABEL);
+  // Colonnes de largeur fixe (celle de la plus large carte) : les cadres se rangent depuis la gauche, comme
+  // dans la galerie ; la grille entière reste centrée sur l'écran
+  const trackW = Math.floor(Math.max(...cards.map((card) => {
+    const el = card.querySelector('canvas, img.tpl-thumb');
+    const w = Number(el.dataset.w) || el.width, h = Number(el.dataset.h) || el.height;
+    return Math.max(80, w * Math.min(boxW / w, boxH / h)) + PAD;
+  })));
+  grid.style.gridTemplateColumns = `repeat(${cols}, ${trackW}px)`;
   for (const card of cards) {
-    const cv = card.querySelector('canvas');
-    const k = Math.min(boxW / cv.width, boxH / cv.height);
-    cv.style.width = `${Math.max(80, Math.floor(cv.width * k))}px`;
-    cv.style.height = `${Math.max(60, Math.floor(cv.height * k))}px`;
+    const cv = card.querySelector('canvas, img.tpl-thumb');
+    const w = Number(cv.dataset.w) || cv.width, h = Number(cv.dataset.h) || cv.height;
+    const k = Math.min(boxW / w, boxH / h);
+    cv.style.width = `${Math.max(80, Math.floor(w * k))}px`;
+    cv.style.height = `${Math.max(60, Math.floor(h * k))}px`;
   }
+}
+
+const GRID_PAD = 16; // marge de la grille des cadres (booth.css) : l'ombre des cartes n'est pas rognée
+
+/** Cadres ou photos par page quand le Stream Deck pilote l'écran, sinon 0 (tout, avec défilement). */
+function deckPerPage() {
+  return state.deck?.connected && state.deck.gallery ? state.deck.gallery.perPage : 0;
+}
+
+function templatePageTurn(delta) {
+  state.templatePage += delta;
+  renderTemplateGrid();
+  menuActivity();
 }
 
 function onIdleTap() {
@@ -539,7 +624,7 @@ function onIdleTap() {
   if (!items.length) return toast('Aucun template activé, voir l\'admin');
   startLive(); // réveille le live view du boîtier pendant que l'invité choisit son cadre
   if (items.some(usesAi)) preloadAi();
-  if (guestCanChoose && items.length > 1) showScreen('template');
+  if (guestCanChoose && items.length > 1) { state.templatePage = 0; renderTemplateGrid(); showScreen('template'); $('#templateGrid').scrollTop = 0; sizeTemplateCards(); }
   else startSession(items.some((t) => t.id === def) ? def : items[0].id);
 }
 
@@ -568,9 +653,15 @@ async function startSession(templateId) {
 
 function prepareShot(index, manual) {
   state.currentShot = index;
-  hideCountdown();
   resetShutter(); // chaque photo commence obturateur fermé, qui s'ouvre sur le flux
   const total = state.template.shots;
+  // GIF lancé : on reste en plein écran d'une pose à l'autre (« Photo 2/3 », décompte…), sans revenir à l'aperçu
+  if (isGif(state.template) && !manual) {
+    showPoseLabel(index);
+    setTimer('autoNext', () => runCountdown(index), POSE_LABEL_MS);
+    return;
+  }
+  hideCountdown();
   $('#shotLabel').textContent = total > 1 ? `${isGif(state.template) ? 'Pose' : 'Photo'} ${index + 1} / ${total}` : '';
   $('#btnCaptureBack').classList.toggle('hidden', !(manual && canChangeTemplate()));
   fitCanvas(); // l'aperçu se redimensionne selon la place que prend ce bouton
@@ -587,20 +678,46 @@ function prepareShot(index, manual) {
   }
 }
 
+/** GIF : « Photo 2/3 » en plein écran, sur le fond du décompte, entre deux poses. */
+const POSE_LABEL_MS = 1200;
+function showPoseLabel(index) {
+  enterLookMode();
+  $('#lookUp').classList.add('hidden');
+  const cd = $('#countdown');
+  cd.textContent = `Photo ${index + 1}/${state.template.shots}`;
+  cd.classList.remove('hidden', 'wait', 'pop');
+  cd.classList.add('msg');
+  void cd.offsetWidth;
+  cd.classList.add('pop');
+}
+
 async function runCountdown(index) {
   clearTimer('idleReturn');
   $('#btnStart').classList.add('hidden');
   $('#btnCaptureBack').classList.add('hidden'); // décompte lancé : plus de retour au choix du cadre
   $('#txtGetReady').classList.add('hidden');
+  if (isGif(state.template) && index === 0) { // lancement du GIF : plein écran dès « Photo 1/3 »
+    showPoseLabel(0);
+    await sleep(POSE_LABEL_MS);
+    if (state.screen !== 'capture') return;
+  }
   await waitLive(); // le boîtier peut mettre une à deux secondes à rouvrir l'obturateur
   if (state.screen !== 'capture') return;
   const cd = $('#countdown');
-  cd.classList.remove('hidden');
+  cd.classList.remove('hidden', 'msg', 'wait');
+  if (isGif(state.template)) enterLookMode(); // décompte des poses en plein écran, flèche vers l'objectif
   // GIF : décompte complet pour la première pose, puis celui du template entre deux poses
   const total = isGif(state.template) && index > 0 ? state.template.gif.poseSec : state.boot.limits.countdownSec;
   // Pré-armement du boîtier (live coupé, miroir baissé) juste avant la fin du décompte, avec l'avance
   // que demande le pilote (pause de stabilisation + marge) : le déclenchement part pile à « 0 ».
-  const lead = state.boot.camera.armLeadMs || 0;
+  // Boomerang : jamais, la vidéo est filmée dans l'aperçu, qui doit continuer.
+  const boomerang = isBoomerang(state.template);
+  const lead = boomerang ? 0 : state.boot.camera.armLeadMs || 0;
+  if (boomerang) {
+    // Mise au point pendant le décompte (l'aperçu se coupe un instant) : décompte en plein écran
+    state.focusing = api(`/api/session/${state.session.id}/focus`, { method: 'POST' }).catch(() => {});
+    enterLookMode();
+  }
   const fireAt = performance.now() + total * 1000; // instant du « 0 »
   if (lead > 0) {
     const sessionId = state.session.id;
@@ -621,6 +738,7 @@ async function runCountdown(index) {
     await sleep(1000);
     if (state.screen !== 'capture') return; // annulé
   }
+  if (boomerang) return recordClip();
   // « 0 » : la photo part, mais le boîtier met encore une à trois secondes (liaison, mise au point,
   // transfert). On demande de garder la pose jusqu'à l'arrivée de l'image.
   cd.textContent = state.boot.texts.holdPose || 'Gardez la pose !';
@@ -631,10 +749,96 @@ async function runCountdown(index) {
   await takeShot(index);
 }
 
+/**
+ * Boomerang : « Bougez ! » en plein écran avec une barre qui avance pendant que la borne filme (le serveur
+ * enregistre l'aperçu du boîtier ; une webcam est filmée ici), puis « Veuillez patienter » pendant le montage.
+ */
+async function recordClip() {
+  const durationMs = state.template.boomerang.durationSec * 1000;
+  enterLookMode();
+  const cd = $('#countdown');
+  if (state.focusing) { // mise au point pas encore finie : on l'annonce le temps qu'elle se termine
+    cd.textContent = state.boot.texts.focusing || 'Mise au point…';
+    cd.classList.add('msg');
+    await state.focusing;
+    state.focusing = null;
+    if (state.screen !== 'capture') return;
+  }
+  cd.textContent = state.boot.texts.boomerangGo || 'Bougez !';
+  cd.classList.add('msg');
+  cd.classList.remove('pop');
+  void cd.offsetWidth;
+  cd.classList.add('pop');
+  let bar = $('#recBar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'recBar';
+    bar.className = 'rec-bar';
+    bar.innerHTML = '<i></i>';
+    $('#screen-capture').appendChild(bar);
+  }
+  const fill = bar.firstElementChild;
+  bar.classList.remove('hidden');
+  fill.style.transition = 'none';
+  fill.style.width = '0%';
+  void fill.offsetWidth;
+  fill.style.transition = `width ${durationMs}ms linear`;
+  fill.style.width = '100%';
+  try {
+    const url = `/api/session/${state.session.id}/clip`;
+    let result;
+    if (state.boot.camera.mode === 'browser') {
+      const form = new FormData();
+      (await grabClip(durationMs)).forEach((b, i) => form.append('frames', b, `f-${i + 1}.jpg`));
+      result = await api(url, { method: 'POST', form });
+    } else {
+      result = await api(url, { method: 'POST' });
+    }
+    state.session = result.session;
+    if (state.screen !== 'capture') return;
+    bar.classList.add('hidden');
+    showPleaseWait();
+    await finishShots();
+  } catch (e) {
+    toast(e.message, 5000);
+    prepareShot(0, true);
+  }
+}
+
+/** Webcam : images de la vidéo à BOOMERANG_FPS pendant durationMs (960 px au plus). */
+async function grabClip(durationMs) {
+  const v = $('#video');
+  const k = Math.min(1, 960 / (v.videoWidth || 960));
+  const c = document.createElement('canvas');
+  c.width = Math.round((v.videoWidth || 1280) * k);
+  c.height = Math.round((v.videoHeight || 720) * k);
+  const ctx = c.getContext('2d');
+  const blobs = [];
+  const t0 = performance.now();
+  for (let i = 0; performance.now() - t0 < durationMs; i++) {
+    ctx.drawImage(v, 0, 0, c.width, c.height);
+    blobs.push(new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85)));
+    await sleep(Math.max(0, t0 + (i + 1) * (1000 / BOOMERANG_FPS) - performance.now()));
+  }
+  return (await Promise.all(blobs)).filter(Boolean);
+}
+
+/** Plein écran « Veuillez patienter » (assemblage du GIF), sur le fond du décompte, sans la flèche vers l'objectif. */
+function showPleaseWait() {
+  enterLookMode();
+  $('#lookUp').classList.add('hidden');
+  const cd = $('#countdown');
+  cd.textContent = state.boot.texts.pleaseWait || 'Veuillez patienter';
+  cd.classList.remove('hidden', 'pop');
+  cd.classList.add('msg', 'wait');
+  $('#shotLabel').textContent = '';
+}
+
 function hideCountdown() {
   const cd = $('#countdown');
   cd.classList.add('hidden');
-  cd.classList.remove('msg', 'pop');
+  cd.classList.remove('msg', 'pop', 'wait');
+  $('#recBar')?.classList.add('hidden');
   $('#lookUp').classList.add('hidden');
   $('#screen-capture').classList.remove('looking');
 }
@@ -696,8 +900,10 @@ async function takeShot(index) {
     img.src = `${result.shot.url}?t=${Date.now()}`;
     await img.decode();
     state.shotImages[index] = img;
-    hideCountdown(); // la photo est là, l'invité peut bouger
     const next = state.session.shots.findIndex((s) => !s);
+    // GIF : plein écran jusqu'au bout (« Photo 2/3 » entre les poses, « Veuillez patienter » pendant l'assemblage)
+    if (next < 0 && isAnimated(state.template)) showPleaseWait();
+    else if (!isGif(state.template)) hideCountdown(); // la photo est là, l'invité peut bouger
     if (next >= 0) prepareShot(next, false);
     else await finishShots();
   } catch (e) {
@@ -707,7 +913,7 @@ async function takeShot(index) {
 }
 
 async function finishShots() {
-  $('#shotLabel').textContent = 'Montage…';
+  if (!isAnimated(state.template)) $('#shotLabel').textContent = 'Montage…'; // GIF, boomerang : plein écran « Veuillez patienter »
   try {
     state.session = await api(`/api/session/${state.session.id}/compose`, { method: 'POST' });
     showReview();
@@ -973,9 +1179,7 @@ async function openGallery() {
 }
 
 /** Nombre de miniatures par page quand le Stream Deck pilote la galerie, sinon 0 (toutes, avec défilement). */
-function galleryPerPage() {
-  return state.deck?.connected && state.deck.gallery ? state.deck.gallery.perPage : 0;
-}
+const galleryPerPage = deckPerPage;
 
 function renderGalleryGrid() {
   const { items } = state.gallery;
@@ -991,7 +1195,7 @@ function renderGalleryGrid() {
   (per ? items.slice(start, start + per) : items).forEach((it, k) => {
     const b = document.createElement('button');
     b.className = 'gallery-thumb';
-    b.innerHTML = `<img src="${it.thumbUrl}" alt="" decoding="async"${per ? '' : ' loading="lazy"'}>${it.gif ? '<div class="gif-tag">GIF</div>' : ''}`;
+    b.innerHTML = `<img src="${it.thumbUrl}" alt="" decoding="async"${per ? '' : ' loading="lazy"'}>${it.gif ? `<div class="gif-tag">${animTag(it.kind)}</div>` : ''}`;
     b.addEventListener('click', () => showPhoto(start + k));
     grid.appendChild(b);
   });
@@ -1129,7 +1333,7 @@ function deckKind(el) {
 
 // Pictogramme par bouton, dessiné par le serveur sur la touche.
 const DECK_ICONS = {
-  btnStart: 'camera', btnCancel: 'x', pinCancel: 'x', btnTemplateBack: 'back', btnCaptureBack: 'back', btnKeep: 'check', btnRetake: 'retake',
+  btnStart: 'camera', btnCancel: 'x', pinCancel: 'x', btnTemplateBack: 'back', btnTemplatePrev: 'chevronLeft', btnTemplateNext: 'chevronRight', btnCaptureBack: 'back', btnKeep: 'check', btnRetake: 'retake',
   btnPrint: 'printer', btnNoPrint: 'qr', btnOperator: 'key', btnFinish: 'home', btnMinus: 'minus', btnPlus: 'plus',
   btnGallery: 'gallery', btnGalleryBack: 'back', btnGalleryPrev: 'chevronLeft', btnGalleryNext: 'chevronRight', btnPhotoBack: 'back', btnPhotoPrev: 'chevronLeft', btnPhotoNext: 'chevronRight', btnReprint: 'printer',
   btnPhotoMinus: 'minus', btnPhotoPlus: 'plus'
@@ -1349,7 +1553,9 @@ function connectWs() {
     if (msg.type === 'flashStray') { if (state.boot) { state.boot.camera.flashStray = msg.stray; $('#flashBadge').classList.toggle('hidden', !msg.stray); } return; }
     if (msg.type === 'deckInfo') { // Stream Deck branché ou débranché : la galerie se met à sa taille
       state.deck = msg;
+      applyDeckUi();
       if (state.screen === 'gallery') renderGalleryGrid();
+      if (state.screen === 'template') renderTemplateGrid();
       return;
     }
     if (msg.type === 'config') {
@@ -1394,6 +1600,8 @@ function bind() {
   // Échap natif sur la fenêtre du code : la fermerait sans prévenir askPin(). On passe par « Annuler ».
   $('#pinDialog').addEventListener('cancel', (e) => { e.preventDefault(); $('#pinCancel').click(); });
   $('#btnTemplateBack').addEventListener('click', goIdle);
+  $('#btnTemplatePrev').addEventListener('click', () => templatePageTurn(-1));
+  $('#btnTemplateNext').addEventListener('click', () => templatePageTurn(1));
   $('#btnStart').addEventListener('click', () => runCountdown(state.currentShot));
   $('#btnCancel').addEventListener('click', goIdle);
   $('#btnCaptureBack').addEventListener('click', backToTemplates);

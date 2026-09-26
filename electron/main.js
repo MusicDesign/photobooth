@@ -7,9 +7,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, session } from 'electron';
+import { createRemoteScreen } from './remote-screen.js';
 
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform-hint', 'auto'); // Wayland (tactile)
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+// Écran déporté (/remote) : la borne doit continuer à se dessiner et à charger ses images même quand sa fenêtre
+// est recouverte (Mac) ou que personne ne regarde l'écran branché ; sinon l'iPad voit des vignettes vides
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
 
 // Lancée depuis le Finder, l'app hérite d'un PATH minimal (/usr/bin:/bin…) : sans Homebrew, gphoto2 est introuvable.
 if (process.platform === 'darwin') {
@@ -66,7 +72,9 @@ async function start() {
   installFileLog();
 
   let stopped = false;
+  const remoteScreen = createRemoteScreen(); // page /remote : écran et toucher de la borne à distance (iPad…)
   const { server, port, close } = await createApp({
+    remoteScreen,
     onShutdown: () => { stopped = true; app.quit(); },
     // Redémarrer : nouvelle instance au départ de celle-ci (même dossier d'app, même environnement)
     onRestart: () => { stopped = true; app.relaunch(app.isPackaged ? {} : { args: [app.getAppPath()] }); app.exit(0); }
@@ -104,8 +112,10 @@ async function start() {
     autoHideMenuBar: true,
     backgroundColor: '#000000',
     show: false,
-    webPreferences: { contextIsolation: true, sandbox: true }
+    // backgroundThrottling : la borne continue de se dessiner même cachée, pour l'écran déporté (/remote)
+    webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false }
   });
+  remoteScreen.attach(win);
   win.once('ready-to-show', () => win.show());
   win.webContents.on('before-input-event', (e, input) => {
     if (input.type === 'keyDown' && input.control && input.shift && input.key.toLowerCase() === 'q') app.quit();

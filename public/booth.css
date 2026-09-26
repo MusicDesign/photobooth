@@ -89,16 +89,21 @@ body[data-font="serif"] { font-family: Georgia, "Times New Roman", serif; }
 .side { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; min-width: 340px; }
 
 /* Choix du template */
-.template-grid { display: flex; flex-wrap: wrap; gap: 32px; justify-content: center; align-items: flex-end; max-width: 100%; } /* taille des cartes : sizeTemplateCards() */
+/* Taille des cartes et colonnes : sizeTemplateCards(). Défile au-delà des rangées visibles (sans Stream Deck). */
+.template-grid { flex: 1 1 auto; min-height: 0; width: 100%; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
+  display: grid; gap: 32px; justify-content: center; justify-items: stretch; align-content: safe center; align-items: end; padding: 16px; }
+.template-grid .template-card { width: 100%; }
+.template-grid.paged { overflow: hidden; }
+#screen-template { padding-bottom: 120px; } /* bouton retour en bas (.back), la grille s'arrête au-dessus */
 .template-card { appearance: none; border: 0; background: var(--surface); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 14px; transition: transform 0.12s ease; }
 .template-card:active { transform: scale(0.97); }
 /* Choix au clavier (flèches) : contour visible sur la carte sélectionnée */
 .template-card:focus-visible, .retake-thumb:focus-visible { outline: 5px solid var(--accent); outline-offset: 6px; }
-.template-card canvas { border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); background: repeating-conic-gradient(#e9e9e9 0 25%, #fff 0 50%) 0 0 / 20px 20px; }
+.template-card canvas, .template-card .tpl-thumb { display: block; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); background: repeating-conic-gradient(#e9e9e9 0 25%, #fff 0 50%) 0 0 / 20px 20px; }
 .template-name { font-weight: 800; font-size: 22px; color: var(--on-surface); }
 /* Pastille « GIF » : cadres animés et GIF de la galerie */
 .template-card.is-gif, .gallery-thumb { position: relative; }
-.gif-tag { position: absolute; top: 26px; left: 26px; background: rgba(0, 0, 0, 0.62); color: #fff; font-weight: 800; font-size: 16px; letter-spacing: 0.06em; padding: 6px 10px; border-radius: 8px; pointer-events: none; }
+.gif-tag { position: absolute; top: 24px; left: 24px; background: rgba(0, 0, 0, 0.62); color: #fff; font-weight: 800; font-size: clamp(10px, 1.05vw, 16px); letter-spacing: 0.06em; padding: 0.35em 0.6em; border-radius: 8px; pointer-events: none; }
 .gallery-thumb .gif-tag { top: 16px; left: 16px; font-size: 13px; padding: 4px 8px; }
 
 /* Prise de vue */
@@ -141,6 +146,12 @@ body[data-font="serif"] { font-family: Georgia, "Times New Roman", serif; }
 }
 #screen-capture.looking[data-lens="left"] .countdown, #screen-capture.looking[data-lens="right"] .countdown { font-size: max(80px, min(calc(100vh - 140px), 32vw)); }
 #screen-capture.looking .countdown.msg { font-size: clamp(36px, 7vw, 110px); line-height: 1.15; }
+/* Assemblage du GIF : le message respire doucement, pour montrer que ça travaille */
+.countdown.wait { animation: wait-pulse 1.6s ease-in-out infinite; }
+@keyframes wait-pulse { 50% { opacity: 0.45; } }
+/* Boomerang : barre du temps filmé, sous « Bougez ! » */
+.rec-bar { position: absolute; left: 50%; bottom: 14vh; transform: translateX(-50%); width: min(60vw, 720px); height: 14px; border-radius: 999px; background: color-mix(in srgb, var(--on-secondary) 25%, transparent); overflow: hidden; z-index: 30; }
+.rec-bar i { display: block; height: 100%; width: 0; background: var(--on-secondary); border-radius: inherit; } /* lisible sur le fond plein écran (--secondary) */
 #screen-capture.looking .countdown.pop { animation-name: pop-soft; } /* sans agrandissement : il déborderait sur le bandeau */
 @keyframes pop-soft { 0% { transform: scale(0.85); opacity: 0.2; } 30% { transform: scale(1); opacity: 1; } 100% { transform: scale(0.95); opacity: 0.9; } }
 #screen-capture.looking .flash { border-radius: 0; }
@@ -302,3 +313,14 @@ body.wifi-on #screen-photo { padding-left: 40px; } /* visionneuse : rien de cent
 /* Curseur de la souris masqué (Admin → Apparence) : toujours, ou quand la souris ne bouge pas */
 body[data-cursor="hide"], body[data-cursor="hide"] *,
 body[data-cursor="idle"].cursor-idle, body[data-cursor="idle"].cursor-idle * { cursor: none !important; }
+
+/* Écran non tactile + Stream Deck (body.deck-ui, voir applyDeckUi) : boutons retirés de l'écran, pas de la
+   page (le Stream Deck les reprend) ; ils ne prennent plus de place. Cartes et miniatures restent. */
+body.deck-ui .screen .btn, body.deck-ui #btnOperator, body.deck-ui #btnGallery, body.deck-ui #pinDialog .keypad, body.deck-ui #pinCancel {
+  visibility: hidden !important; pointer-events: none !important; position: absolute !important; width: 1px !important; height: 1px !important; min-height: 0 !important; overflow: hidden !important;
+}
+body.deck-ui .gallery-nav .shot-label { margin: 0 auto; } /* compteur de pages seul, centré */
+/* Sans boutons, la colonne de droite ne sert plus : photo pleine largeur, consigne et barre du temps dessous */
+body.deck-ui #screen-capture .capture-layout, body.deck-ui #screen-review .review-layout, body.deck-ui #screen-copies .review-layout { flex-direction: column; gap: 20px; }
+body.deck-ui #screen-capture .side, body.deck-ui #screen-review .side, body.deck-ui #screen-copies .side { min-width: 0; width: min(100%, 720px); flex: none; gap: 12px; }
+body.deck-ui #screen-review .final-wrap { flex: 1 1 auto; min-height: 0; }

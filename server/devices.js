@@ -83,7 +83,7 @@ export class Devices extends EventEmitter {
     // « gphoto2 --auto-detect » lancé pendant une photo la bloque, comme toute commande concurrente.
     if (this.camera?.name === 'gphoto2' && this.camera.inUse?.()) return { driver: 'gphoto2', reason: 'boîtier en cours d\'utilisation' };
     const d = await detectGphoto2(c.gphoto2);
-    if (d.found) return { driver: 'gphoto2', reason: `${d.model} détecté en USB` };
+    if (d.found) return { driver: 'gphoto2', port: d.port, reason: `${d.model} détecté en USB${d.ignored.length ? ` (${d.ignored.join(', ')} ignoré)` : ''}` };
     return { driver: c.fallback || 'browser', reason: `${d.reason} → repli ${c.fallback || 'browser'}` };
   }
 
@@ -91,12 +91,17 @@ export class Devices extends EventEmitter {
     const r = await this.resolveCamera(c);
     const key = JSON.stringify({ driver: r.driver, gphoto2: r.driver === 'gphoto2' ? c.gphoto2 : null });
     this.state.camera = { requested: c.driver, driver: r.driver, reason: r.reason, checkedAt: new Date().toISOString() };
-    if (this.camera && key === this.cameraKey) { this.camera.setControl?.(c.control); return; } // réglages de prise de vue : à chaud
+    if (this.camera && key === this.cameraKey) { // réglages de prise de vue et port USB : à chaud
+      this.camera.setControl?.(c.control);
+      if (r.port !== undefined) this.camera.setPort?.(r.port);
+      return;
+    }
     if (this.camera?.busy) return; // photo en cours : on rebasculera au prochain passage
     let next;
     try {
       next = createCamera({ ...c, driver: r.driver });
       next.setControl?.(c.control); // appliqué à la détection du boîtier
+      next.setPort?.(r.port || null); // un autre appareil USB (iPhone…) : commandes adressées au boîtier
       await next.init();
     } catch (e) {
       // Pilote injoignable (ex. gphoto2 non installé) : la borne démarre quand même sur le repli.

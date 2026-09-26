@@ -1,8 +1,8 @@
 import path from 'node:path';
 import sharp from 'sharp';
-import { FONTS, GIF_MAX_SIDE } from './templates.js';
+import { FONTS, GIF_MAX_SIDE, BOOMERANG_SPEEDS, BOOMERANG_MAX_SIDE } from './templates.js';
 import { chromaKey, applyMatte, aiMatteRange } from '../public/cutout.js';
-import { personMatte } from './cutout-ai.js';
+import { shotMatte, adjustContour, cleanEdges } from './cutout-ai.js';
 
 /**
  * Rendu du template pour l'impression : chaque calque est dessiné dans l'ordre,
@@ -77,14 +77,22 @@ function rectSvg(l) {
   return `<rect x="${l.x}" y="${l.y}" width="${l.width}" height="${l.height}" rx="${r}" ry="${r}" fill="${l.fill || 'none'}"${stroke} opacity="${l.opacity}"${rotateAttr(l)}/>`;
 }
 
-/** Photo détourée (fond vert / bleu ou IA) : PNG transparent là où le fond est retiré. */
-async function cutout(img, l) {
+/**
+ * Photo détourée (fond vert / bleu ou IA) : PNG transparent là où le fond est retiré.
+ * IA : masque de la photo entière (souvent déjà calculé pendant la séance, voir shotMatte), recadré et
+ * retourné comme la photo, puis bords nettoyés.
+ */
+async function cutout(img, l, file, mirror) {
   const { data, info } = await img.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   if (l.cutout === 'ai') {
-    const rgb = Buffer.alloc(info.width * info.height * 3);
-    for (let i = 0, j = 0; i < data.length; i += 4, j += 3) { rgb[j] = data[i]; rgb[j + 1] = data[i + 1]; rgb[j + 2] = data[i + 2]; }
+    const m = await shotMatte(file, l.aiPrecision);
+    let mi = sharp(m.data, { raw: { width: m.w, height: m.h, channels: 1 } });
+    if (mirror) mi = mi.flop();
+    let matte = await mi.resize(info.width, info.height, { fit: 'cover', position: 'centre' }).extractChannel(0).raw().toBuffer();
+    matte = await adjustContour(matte, info.width, info.height, l.aiContour);
     const [lo, hi] = aiMatteRange(l);
-    applyMatte(data, await personMatte(rgb, info.width, info.height, { precision: l.aiPrecision, contour: l.aiContour }), 255, lo, hi);
+    applyMatte(data, matte, 255, lo, hi);
+    await cleanEdges(data, info.width, info.height);
   } else {
     chromaKey(data, l.cutout, l.keyTolerance);
   }
@@ -101,7 +109,7 @@ async function renderLayer(l, { template, shotFiles, mirror }) {
       let img = sharp(file).rotate();
       if (mirror) img = img.flop(); // photo en miroir, comme l'aperçu : chacun reste là où il s'est vu par rapport au cadre
       img = img.resize(l.width, l.height, { fit: 'cover', position: 'centre' });
-      let buf = l.cutout && l.cutout !== 'none' ? await cutout(img, l) : await img.png().toBuffer();
+      let buf = l.cutout && l.cutout !== 'none' ? await cutout(img, l, file, mirror) : await img.png().toBuffer();
       buf = await roundCorners(buf, l.width, l.height, l.radius);
       buf = await withOpacity(buf, l.opacity);
       return placeLayer(buf, l, W, H);
@@ -141,7 +149,7 @@ export async function compose(template, shotFiles, outFile, { mirror = false } =
 
 /**
  * Template GIF : chaque pose montée dans le template (tous les calques photo la montrent), réduite
- * à GIF_MAX_SIDE, puis assemblée en animation qui boucle. Aller-retour : 1 2 3 4 3 2, puis on recommence.
+ * à GIF_MAX_SIDE, puis assemblée en animation qui boucle. Aller-retour : 1 2 3 2, puis on recommence.
  * posterFile : première image en JPEG (miniatures de la galerie).
  */
 export async function composeGif(template, frameFiles, outFile, { mirror = false, posterFile = null } = {}) {
@@ -167,4 +175,34 @@ export async function thumbnail(inFile, outFile, size = 900) {
 export async function normalizeShot(inputBuffer, outFile) {
   await sharp(inputBuffer).rotate().jpeg({ quality: 94 }).toFile(outFile);
   return outFile;
+}
+
+/**
+ * Boomerang : chaque image filmée montée dans le template (réduite à BOOMERANG_MAX_SIDE), puis jouée en avant
+ * et en arrière, en boucle, plus vite que filmée (vitesse du template). posterFile : image du milieu (miniatures).
+ */
+export async function composeBoomerang(template, frameFiles, outFile, { mirror = false, posterFile = null } = {}) {
+  const small = scaleTemplate(template, Math.min(1, BOOMERANG_MAX_SIDE / Math.max(template.width, template.height)));
+  const frames = [];
+  for (const file of frameFiles) frames.push(await (await render(small, [file], mirror)).jpeg({ quality: 92 }).toBuffer());
+  if (posterFile) await sharp(frames[Math.floor(frames.length / 2)]).toFile(posterFile);
+  const seq = frames.length > 2 ? [...frames, ...frames.slice(1, -1).reverse()] : frames;
+  const delay = BOOMERANG_SPEEDS[template.boomerang?.speed] || BOOMERANG_SPEEDS[2]; // lecture accélérée
+  await sharp(seq, { join: { animated: true } }).gif({ delay: seq.map(() => delay), loop: 0, effort: 4, dither: 0.6 }).toFile(outFile);
+  return outFile;
+}
+
+/** Template ramené à l'échelle k (montage réduit : bien plus rapide que monter en grand puis réduire). */
+export function scaleTemplate(template, k) {
+  return { ...template, width: Math.round(template.width * k), height: Math.round(template.height * k), layers: template.layers.map((l) => scaleLayer(l, k)) };
+}
+
+/** Calque ramené à l'échelle k. */
+function scaleLayer(l, k) {
+  const r = (v) => Math.round(v * k);
+  const out = { ...l, x: r(l.x), y: r(l.y), width: Math.max(1, r(l.width)), height: Math.max(1, r(l.height)) };
+  if (l.radius) out.radius = r(l.radius);
+  if (l.fontSize) out.fontSize = Math.max(1, r(l.fontSize));
+  if (l.strokeWidth) out.strokeWidth = Math.max(1, r(l.strokeWidth));
+  return out;
 }

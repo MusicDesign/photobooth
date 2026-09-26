@@ -19,7 +19,8 @@ export const DEFAULTS = {
     cursor: 'show',        // curseur de la souris sur la borne : show | idle (masqué après 3 s sans mouvement) | hide
     // Télécommande Elgato branchée en USB (sans écran tactile). position : où il est posé par rapport à l'écran,
     // pour la flèche de l'accueil quand l'écran n'est pas tactile (top | bottom | left | right).
-    streamDeck: { enabled: true, brightness: 70, position: 'bottom' },
+    // showButtons : garder les boutons à l'écran même quand l'écran n'est pas tactile et qu'un Stream Deck pilote la borne
+    streamDeck: { enabled: true, brightness: 70, position: 'bottom', showButtons: false },
     logo: '',              // /uploads/logo-xxx.png, vide = logo par défaut
     backgroundImage: ''
   },
@@ -81,6 +82,7 @@ export const DEFAULTS = {
     enabled: ['classic-10x15', 'strip-3'],
     default: 'classic-10x15',
     defaultFormat: '10x15-paysage',
+    order: [],                // ordre d'affichage des cadres (glissé dans l'admin) ; les absents viennent après
     gifEnabled: false         // templates GIF proposés aux invités (numérique uniquement)
   },
   theme: {
@@ -108,6 +110,9 @@ export const DEFAULTS = {
     start: "C'est parti !",
     lookUp: "Regardez l'objectif", // bandeau avec flèche vers l'objectif (booth.lensPosition), juste avant le « 0 »
     holdPose: 'Gardez la pose !',   // affiché entre le « 0 » et l'arrivée de la photo
+    pleaseWait: 'Veuillez patienter', // plein écran pendant l'assemblage d'un GIF
+    boomerangGo: 'Bougez !',          // boomerang : pendant que la borne filme
+    focusing: 'Mise au point…',       // boomerang : si la mise au point n'est pas finie au bout du décompte
     review: 'On la garde ?',
     retake: 'Refaire',
     keep: 'Je la garde',

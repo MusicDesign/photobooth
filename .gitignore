@@ -11,3 +11,8 @@ data/config.json
 data/templates/*
 !data/templates/default/
 dist/
+# Modèles d'IA téléchargés (npm run models ou admin), trop lourds pour git
+data/models/
+# Miniatures des templates : recalculées au démarrage et à chaque enregistrement
+data/templates/*/preview*.jpg
+data/templates/*/preview.json
