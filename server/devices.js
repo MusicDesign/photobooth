@@ -94,6 +94,7 @@ export class Devices extends EventEmitter {
     if (this.camera && key === this.cameraKey) { // réglages de prise de vue et port USB : à chaud
       this.camera.setControl?.(c.control);
       if (r.port !== undefined) this.camera.setPort?.(r.port);
+      this.camera.retryIfFrozen?.().catch(() => {}); // boîtier figé au démarrage : repris quand il répond
       return;
     }
     if (this.camera?.busy) return; // photo en cours : on rebasculera au prochain passage

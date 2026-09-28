@@ -1,7 +1,6 @@
-import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { CONFIG_FILE } from './paths.js';
-import { clone, deepMerge, readJson, writeJsonAtomic } from './util.js';
+import { clone, deepMerge, loadJsonSafe, writeJsonAtomic, backupJson } from './util.js';
 
 /**
  * Configuration par défaut. Le fichier data/config.json ne contient que ce que
@@ -123,6 +122,7 @@ export const DEFAULTS = {
     thanks: 'Merci ! Scannez le QR code pour récupérer votre photo.',
     thanksNoQr: 'Merci et bonne soirée !', // écran de fin quand le QR code est désactivé
     thanksGif: 'Merci ! Scannez le QR code pour récupérer votre GIF.',
+    thanksVideo: 'Merci ! Scannez le QR code pour récupérer votre vidéo.', // boomerang (MP4)
     reviewGif: 'On le garde ?', // relecture d'un GIF (review / keep sont au féminin, pour la photo)
     keepGif: 'Je le garde',
     gifInGallery: 'Merci ! Votre GIF vous attend dans la galerie de la borne.', // GIF sans QR code (pas de Wi-Fi)
@@ -135,6 +135,8 @@ export const DEFAULTS = {
     galleryEmpty: 'Pas encore de photo : à vous de jouer !',
     reprint: 'Réimprimer',
     galleryQr: 'Scannez pour récupérer cette photo',
+    galleryQrGif: 'Scannez pour récupérer ce GIF',     // visionneuse de la galerie : GIF
+    galleryQrVideo: 'Scannez pour récupérer cette vidéo', // visionneuse de la galerie : boomerang (MP4)
     wifiQr: 'Wi-Fi des photos',
     remoteTitle: 'Votre photo vous attend sur la borne',   // page distante (adresse publique), hors du Wi-Fi de la borne
     remoteHint: 'Connectez-vous au Wi-Fi de la borne : scannez le QR code Wi-Fi en bas à droite de son écran. Votre photo s\'affichera ici toute seule.'
@@ -168,10 +170,13 @@ export class Config extends EventEmitter {
   }
 
   load() {
-    const saved = fs.existsSync(this.file) ? readJson(this.file, {}) : null;
+    // Illisible : dernière sauvegarde (voir loadJsonSafe), plutôt que les réglages par défaut qui l'écraseraient
+    const { data: saved, warning } = loadJsonSafe(this.file, 'Configuration');
+    this.warning = warning; // affiché dans le tableau de bord
     this.data = deepMerge(clone(DEFAULTS), saved || {});
     this.migrate();
-    if (!saved) this.save();
+    if (!saved || warning) this.save();
+    else backupJson(this.file); // copie saine au démarrage
     return this.get();
   }
 

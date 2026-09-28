@@ -3,6 +3,7 @@ import sharp from 'sharp';
 import { FONTS, GIF_MAX_SIDE, BOOMERANG_SPEEDS, BOOMERANG_MAX_SIDE } from './templates.js';
 import { chromaKey, applyMatte, aiMatteRange } from '../public/cutout.js';
 import { shotMatte, adjustContour, cleanEdges } from './cutout-ai.js';
+import { ffmpegPath, encodeMp4 } from './video.js';
 
 /**
  * Rendu du template pour l'impression : chaque calque est dessiné dans l'ordre,
@@ -178,18 +179,34 @@ export async function normalizeShot(inputBuffer, outFile) {
 }
 
 /**
- * Boomerang : chaque image filmée montée dans le template (réduite à BOOMERANG_MAX_SIDE), puis jouée en avant
- * et en arrière, en boucle, plus vite que filmée (vitesse du template). posterFile : image du milieu (miniatures).
+ * Boomerang : chaque image filmée montée dans le template, puis jouée en avant et en arrière, plus vite que
+ * filmée (vitesse du template). Vidéo MP4 (H.264, BOOMERANG_MAX_SIDE) si ffmpeg est là : légère et fidèle,
+ * même avec le bruit du capteur. Sinon GIF de secours, réduit et allégé (sans tramage, pixels identiques
+ * d'une image à l'autre réutilisés) : environ 1 Mo au lieu de 10.
+ * outBase : chemin sans extension. Rend le fichier écrit (.mp4 ou .gif). posterFile : image du milieu (miniatures).
  */
-export async function composeBoomerang(template, frameFiles, outFile, { mirror = false, posterFile = null } = {}) {
-  const small = scaleTemplate(template, Math.min(1, BOOMERANG_MAX_SIDE / Math.max(template.width, template.height)));
+export async function composeBoomerang(template, frameFiles, outBase, { mirror = false, posterFile = null } = {}) {
+  const video = !!ffmpegPath();
+  const side = video ? BOOMERANG_MAX_SIDE : 480;
+  const small = scaleTemplate(template, Math.min(1, side / Math.max(template.width, template.height)));
   const frames = [];
-  for (const file of frameFiles) frames.push(await (await render(small, [file], mirror)).jpeg({ quality: 92 }).toBuffer());
+  for (const file of frameFiles) {
+    let img = await (await render(small, [file], mirror)).jpeg({ quality: 92 }).toBuffer();
+    if (!video) img = await sharp(img).median(3).jpeg({ quality: 92 }).toBuffer(); // bruit du capteur : le GIF le compresse mal
+    frames.push(img);
+  }
   if (posterFile) await sharp(frames[Math.floor(frames.length / 2)]).toFile(posterFile);
   const seq = frames.length > 2 ? [...frames, ...frames.slice(1, -1).reverse()] : frames;
   const delay = BOOMERANG_SPEEDS[template.boomerang?.speed] || BOOMERANG_SPEEDS[2]; // lecture accélérée
-  await sharp(seq, { join: { animated: true } }).gif({ delay: seq.map(() => delay), loop: 0, effort: 4, dither: 0.6 }).toFile(outFile);
-  return outFile;
+  if (video) {
+    try {
+      return await encodeMp4(seq, `${outBase}.mp4`, { fps: 1000 / delay });
+    } catch (e) {
+      console.warn(`[video] ${e.message} : boomerang en GIF`);
+    }
+  }
+  await sharp(seq, { join: { animated: true } }).gif({ delay: seq.map(() => delay), loop: 0, effort: 4, dither: 0, interFrameMaxError: 24, colours: 128 }).toFile(`${outBase}.gif`);
+  return `${outBase}.gif`;
 }
 
 /** Template ramené à l'échelle k (montage réduit : bien plus rapide que monter en grand puis réduire). */
