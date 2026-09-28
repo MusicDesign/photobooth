@@ -370,7 +370,7 @@ export class Booth {
       copies: s.copies,
       unlocked: s.unlocked,
       maxCopies: s.unlocked ? cfg.limits.operatorMaxCopies : cfg.limits.maxCopiesPerSession,
-      final: s.final ? { url: urlFor(s.final.file), thumbUrl: urlFor(s.final.thumb), gif: isAnimatedKind(s.kind) } : null,
+      final: s.final ? { url: urlFor(s.final.file), thumbUrl: urlFor(s.final.thumb), gif: isAnimatedKind(s.kind), video: s.final.file.endsWith('.mp4') } : null,
       printJobs: s.printJobs,
       error: s.error || null
     };
@@ -527,12 +527,12 @@ export class Booth {
     const dir = this.sessionDir(s.id);
     const gif = s.kind === 'gif' && template.kind === 'gif';
     const boomerang = s.kind === 'boomerang' && template.kind === 'boomerang';
-    const finalFile = path.join(dir, gif || boomerang ? 'final.gif' : 'final.jpg');
+    let finalFile = path.join(dir, gif ? 'final.gif' : 'final.jpg'); // boomerang : .mp4, ou .gif sans ffmpeg
     const thumbFile = path.join(dir, 'thumb.jpg');
     if (boomerang) {
       const poster = path.join(dir, 'poster.jpg');
       const frames = s.shots[0].frames?.length ? s.shots[0].frames : [s.shots[0].file];
-      await composeBoomerang(template, frames, finalFile, { mirror: !!s.mirror, posterFile: poster });
+      finalFile = await composeBoomerang(template, frames, path.join(dir, 'final'), { mirror: !!s.mirror, posterFile: poster });
       await thumbnail(poster, thumbFile);
     } else if (gif) {
       const poster = path.join(dir, 'poster.jpg');
@@ -611,7 +611,7 @@ export class Booth {
       .filter((s) => s.final && !this.isUnvalidated(s))
       .map((s) => {
         const v = this.view(s);
-        return { id: v.id, createdAt: v.createdAt, url: v.final.url, thumbUrl: v.final.thumbUrl, gif: v.gif, kind: v.kind, printing: s.status === 'printing' };
+        return { id: v.id, createdAt: v.createdAt, url: v.final.url, thumbUrl: v.final.thumbUrl, gif: v.gif, video: v.final.video, kind: v.kind, printing: s.status === 'printing' };
       });
   }
 

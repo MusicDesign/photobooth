@@ -145,6 +145,15 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
     res.type('html').send(galleryHtml({ session, theme: themes.resolve(cfg), boothName: cfg.booth.name, texts: cfg.texts, nav }));
   });
 
+  // Fichier à télécharger (boomerang en MP4) : envoyé comme pièce jointe. Ouverte dans Safari, la vidéo
+  // s'affiche dans le lecteur et ne propose pas de l'enregistrer.
+  app.get('/g/:id/fichier', (req, res) => {
+    const s = booth.load(req.params.id);
+    if (!s.final?.file || !fs.existsSync(s.final.file) || booth.isUnvalidated(s)) throw new HttpError(404, 'NOT_FOUND', 'Fichier introuvable');
+    const name = `${String(config.get().booth.name || 'photobooth').replace(/[^\w-]+/g, '-')}-${s.id}${path.extname(s.final.file)}`;
+    res.download(s.final.file, name);
+  });
+
   // Grille de l'événement pour les téléphones (réglage gallery.web) ; chaque photo s'ouvre sur /g/:id.
   app.get('/galerie', (req, res) => {
     const cfg = config.get();

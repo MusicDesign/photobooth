@@ -196,7 +196,7 @@ label.ctl-mode small { margin: 0 !important; color: var(--muted); }
 .co-shot figcaption b { color: #fff; }
 .co-foot { display: flex; gap: 12px; justify-content: flex-end; padding-top: 6px; }
 .co-lightbox { position: fixed; inset: 0; z-index: 110; background: rgba(0,0,0,0.92); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; cursor: zoom-out; }
-.co-lightbox img { max-width: 100%; max-height: calc(100vh - 110px); object-fit: contain; border-radius: 8px; }
+.co-lightbox img, .co-lightbox video { max-width: 100%; max-height: calc(100vh - 110px); object-fit: contain; border-radius: 8px; }
 .co-lightbox .lb-bar { display: flex; align-items: center; gap: 18px; color: #fff; }
 .co-lightbox .lb-count { font-weight: 700; opacity: 0.8; min-width: 70px; text-align: center; }
 .co-lightbox .lb-arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 64px; height: 64px; border-radius: 50%; border: 0; background: rgba(255,255,255,0.14); color: #fff; font-size: 44px; line-height: 1; padding-bottom: 6px; cursor: pointer; }
@@ -223,3 +223,7 @@ label.ctl-mode small { margin: 0 !important; color: var(--muted); }
 .tpl-handle:hover { background: rgba(0, 0, 0, 0.05); color: var(--text); }
 .tpl-card.dragging { position: relative; z-index: 5; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.22); cursor: grabbing; }
 .tpl-card.dragging .tpl-handle { cursor: grabbing; }
+
+/* Mot de passe masqué + bouton Afficher */
+.pw-row { display: flex; gap: 8px; align-items: center; }
+.pw-row input { flex: 1; }

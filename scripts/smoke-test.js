@@ -510,11 +510,34 @@ async function runSteps(app, camera) {
     if (app.booth.camera.mode === 'browser') { assert.equal(clip.data.error, 'FRAMES_REQUIRED'); return; }
     assert.equal(clip.status, 200, JSON.stringify(clip.data));
     const c = (await post(`/api/session/${s.id}/compose`, {})).data;
-    assert.ok(c.final.url.endsWith('/final.gif') && c.final.gif);
-    const meta = await sharp(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s.id, 'final.gif'), { animated: true }).metadata();
-    const n = Math.round(1 * 12.5); // 1 s filmée à 12,5 i/s
-    assert.equal(meta.delay.reduce((a, x) => a + x, 0), (2 * n - 2) * 40, `aller-retour de ${n} images, lecture ×2 (40 ms) : ${meta.delay}`);
-    assert.equal(meta.width, 640, 'boomerang réduit à 640 px');
+    const n = Math.round(1 * 12.5); // 1 s filmée à 12,5 i/s, aller-retour de 2n-2 images, lecture ×2 (40 ms)
+    const { ffmpegPath } = await import('../server/video.js');
+    if (ffmpegPath()) {
+      // Vidéo MP4 : durée de l'aller-retour, 960 px, H.264
+      assert.ok(c.final.url.endsWith('/final.mp4') && c.final.video && c.final.gif, JSON.stringify(c.final));
+      const { spawnSync } = await import('node:child_process');
+      const info = spawnSync(ffmpegPath(), ['-hide_banner', '-i', path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s.id, 'final.mp4')], { encoding: 'utf8' }).stderr;
+      const [, mm, ss] = /Duration: 00:(\d+):([\d.]+)/.exec(info) || [];
+      assert.ok(Math.abs(Number(mm) * 60 + Number(ss) - (2 * n - 2) * 0.04) < 0.1, `durée de la vidéo : ${mm}:${ss}`);
+      assert.ok(/h264/.test(info) && /960x\d+/.test(info), info.split('\n').find((l) => /Video:/.test(l)));
+    } else {
+      assert.ok(c.final.url.endsWith('/final.gif') && c.final.gif);
+      const meta = await sharp(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s.id, 'final.gif'), { animated: true }).metadata();
+      assert.equal(meta.delay.reduce((a, x) => a + x, 0), (2 * n - 2) * 40, `aller-retour : ${meta.delay}`);
+      assert.equal(meta.width, 480, 'GIF de secours réduit à 480 px');
+    }
+    // Page téléphone : lecteur vidéo, flèches lisibles, pas de numéro de session
+    const phone = await (await fetch(`${base}/g/${s.id}`)).text();
+    if (c.final.video) {
+      assert.ok(phone.includes('<video') && phone.includes('Enregistrer la vidéo'));
+      // Bouton d'enregistrement : le fichier arrive en téléchargement (Safari ne propose pas d'enregistrer un MP4 ouvert)
+      await post(`/api/session/${s.id}/keep`, {});
+      const dl = await fetch(`${base}/g/${s.id}/fichier`);
+      assert.equal(dl.status, 200);
+      assert.ok(/attachment/.test(dl.headers.get('content-disposition') || '') && /\.mp4/.test(dl.headers.get('content-disposition')), dl.headers.get('content-disposition'));
+      assert.equal(dl.headers.get('content-type'), 'video/mp4');
+    }
+    assert.ok(!phone.includes(`Session ${s.id}`), 'numéro de session caché aux invités');
     const again = (await post(`/api/session/${s.id}/clip`, {})).data;
     assert.equal(again.session.retakes, 1, 'nouvelle vidéo comptée comme reprise');
     await post(`/api/session/${s.id}/compose`, {});

@@ -242,6 +242,7 @@ async function reloadBoot() {
 function showScreen(name) {
   for (const s of $$('.screen')) s.classList.toggle('active', s.id === `screen-${name}`);
   state.screen = name;
+  for (const v of $$('video.final-img')) if (!v.closest(`#screen-${name}`)) v.pause(); // boomerang hors écran : arrêté
   document.body.dataset.screen = name; // styles propres à un écran (ex. bandeau au-dessus de la flèche de l'accueil)
   clearTimer('idleReturn');
   clearTimer('reviewTimeout');
@@ -757,9 +758,13 @@ async function recordClip() {
   const durationMs = state.template.boomerang.durationSec * 1000;
   enterLookMode();
   const cd = $('#countdown');
-  if (state.focusing) { // mise au point pas encore finie : on l'annonce le temps qu'elle se termine
-    cd.textContent = state.boot.texts.focusing || 'Mise au point…';
-    cd.classList.add('msg');
+  if (state.focusing) {
+    // Mise au point pas encore finie : annoncée seulement si elle dure (sinon le texte clignote une fraction de seconde)
+    const done = await Promise.race([state.focusing.then(() => true), sleep(400).then(() => false)]);
+    if (!done) {
+      cd.textContent = state.boot.texts.focusing || 'Mise au point…';
+      cd.classList.add('msg');
+    }
     await state.focusing;
     state.focusing = null;
     if (state.screen !== 'capture') return;
@@ -925,10 +930,25 @@ async function finishShots() {
 
 // ---------- Relecture ----------
 
+/** Photo ou GIF dans l'image, boomerang (MP4) dans le lecteur vidéo (en boucle, muet) ; l'autre est vidé. */
+function showMedia(img, video, url, isVideo) {
+  img.classList.toggle('hidden', !!isVideo);
+  video.classList.toggle('hidden', !isVideo);
+  if (isVideo) {
+    img.removeAttribute('src');
+    if (video.getAttribute('src') !== url) { video.src = url; video.play().catch(() => {}); }
+  } else {
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    img.src = url;
+  }
+}
+
 function showReview() {
   const s = state.session;
   const { texts } = state.boot;
-  $('#finalImg').src = `${s.final.url}?t=${Date.now()}`;
+  showMedia($('#finalImg'), $('#finalVideo'), `${s.final.url}?t=${Date.now()}`, s.final.video);
   $('#txtReview').textContent = (s.gif && texts.reviewGif) || texts.review || '';
   $('#btnKeep').textContent = (s.gif && texts.keepGif) || texts.keep || '';
   $('#btnRetake').classList.toggle('hidden', s.retakesLeft !== null && s.retakesLeft <= 0); // null = reprises illimitées
@@ -940,10 +960,10 @@ function showReview() {
   fill.style.transition = 'none';
   fill.style.width = '100%';
   if (total > 0) {
-    requestAnimationFrame(() => {
-      fill.style.transition = `width ${total}ms linear`;
-      fill.style.width = '0%';
-    });
+    // Barre pleine prise en compte avant l'animation : sinon le navigateur saute directement à 0 % (barre vide)
+    void fill.offsetWidth;
+    fill.style.transition = `width ${total}ms linear`;
+    fill.style.width = '0%';
     setTimer('reviewTimeout', keepPhoto, total);
   }
 }
@@ -1086,7 +1106,8 @@ async function showDone() {
     toast((gif && state.boot.gallery?.enabled ? texts.gifInGallery : texts.thanksNoQr) || '', 5000);
     return;
   }
-  $('#txtThanks').textContent = (gif ? texts.thanksGif || texts.thanks : texts.thanks) || '';
+  const video = !!state.session?.final?.video;
+  $('#txtThanks').textContent = (video ? texts.thanksVideo || texts.thanksGif : gif ? texts.thanksGif : null) || texts.thanks || '';
   try {
     const q = await api(`/api/session/${state.session.id}/qr`);
     $('#qrImg').src = q.dataUrl;
@@ -1225,7 +1246,9 @@ function showPhoto(index) {
   state.gallery.index = Math.max(0, Math.min(items.length - 1, index));
   state.gallery.copies = 1;
   const it = items[state.gallery.index];
-  $('#photoImg').src = it.url;
+  showMedia($('#photoImg'), $('#photoVideo'), it.url, it.video);
+  const { texts } = state.boot; // légende du QR selon ce qu'on récupère
+  $('#txtGalleryQr').textContent = (it.video ? texts.galleryQrVideo : it.gif ? texts.galleryQrGif : null) || texts.galleryQr || '';
   $('#photoCount').textContent = `${state.gallery.index + 1} / ${items.length}`;
   $('#btnPhotoPrev').disabled = state.gallery.index === 0;
   $('#btnPhotoNext').disabled = state.gallery.index === items.length - 1;

@@ -164,7 +164,7 @@ export class Gphoto2Camera extends BaseCamera {
       await execFileP('gphoto2', [...(this.port ? ['--port', this.port] : []), '--reset'], { timeout: 10000 });
       await sleep(2000); // le boîtier se réannonce sur l'USB
       console.log('[gphoto2] connexion USB du boîtier réinitialisée');
-      await this.recover().catch(() => {});
+      this.responsive = await this.recover().catch(() => false); // figé : il ne répond même pas au relâchement
     } catch { /* pas de boîtier branché : rien à réinitialiser */ }
   }
 
@@ -189,6 +189,16 @@ export class Gphoto2Camera extends BaseCamera {
       if (found) { this.model = cam.model; this.setPort(all.length > 1 ? cam.port : null); }
       this.failing = !found;
       this.lastError = found ? null : 'Aucun appareil détecté en USB (allumé ? câble ? Wi-Fi du boîtier coupé ?)';
+      if (found && this.responsive === false) {
+        // Figé (il ne répond pas au relâchement du déclencheur) : inutile d'enchaîner les commandes, chacune
+        // attendrait son délai maximal et la borne mettrait plus d'une minute à démarrer. Réessai plus tard.
+        this.failing = true;
+        this.frozen = true;
+        this.frozenAt = Date.now();
+        this.lastError = 'Le boîtier ne répond plus (figé) : éteignez-le puis rallumez-le. La borne le reprend toute seule dans les 30 s.';
+        console.warn(`[gphoto2] ${this.lastError}`);
+        return;
+      }
       if (found) await this.readFirmware();
       if (found) await this.setup();
       if (found) { this.applied = {}; await this.applyControl().catch((e) => console.warn(`[gphoto2] réglages du boîtier refusés : ${e.message}`)); }
@@ -280,7 +290,14 @@ export class Gphoto2Camera extends BaseCamera {
     if (this.live || this.starting || this.stopping || this.busy || !this.wanted()) return;
     clearTimeout(this.idleTimer);
     this.starting = true;
-    const go = () => {
+    const go = async () => {
+      // Flash à lever (réglage avec flash) et pas levé récemment : levé avant l'aperçu. Flash levé, le Canon ne
+      // simule plus l'exposition des photos au flash : l'aperçu (et le boomerang filmé dedans) n'est plus noir.
+      // Aperçu coupé pendant la commande : jamais deux commandes gphoto2 à la fois (le boîtier se figerait).
+      if (!this.live && !this.stopping && !this.busy && this.wanted() && this.flashControl() && this.wantFlash()
+        && Date.now() - (this.flashRaisedAt || 0) > 30000) {
+        await this.raiseFlash().catch(() => {});
+      }
       this.starting = false;
       if (this.live || this.stopping || this.busy || !this.wanted()) return;
       this.spawnLive();
@@ -394,6 +411,10 @@ export class Gphoto2Camera extends BaseCamera {
         // gphoto2 rend 0 même quand l'acquisition échoue tout de suite : sans image, c'est un échec.
         this.failing = true;
         this.lastError = lastLine || `gphoto2 terminé (code ${code}) sans image`;
+        // « 0 trames » : le boîtier ne renvoie plus d'image (batterie vide, éteint, en veille ou câble débranché)
+        if (/\b0\s(trames|frames)\b|No camera found|Aucun appareil/i.test(this.lastError)) { // \s : gphoto2 met une espace insécable
+          this.lastError = 'Le boîtier n\'envoie plus d\'image : batterie vide, boîtier éteint ou en veille, ou câble débranché. Vérifiez la batterie, rallumez-le (ou appuyez à mi-course sur le déclencheur), et désactivez « Arrêt auto » dans son menu (clé jaune).';
+        }
       }
       if (!this.wanted()) return;
       if (!hadFrames) {
@@ -584,6 +605,7 @@ export class Gphoto2Camera extends BaseCamera {
     if (!use || !cmd) return;
     try {
       await this.sh(cmd, 6000);
+      this.flashRaisedAt = Date.now();
       console.log(`[gphoto2] flash intégré levé (mode ${this.opts.flash}${this.opts.flash === 'auto' ? `, luminosité ${this.sceneLuma}` : ''})`);
     } catch (e) {
       console.warn(`[gphoto2] levée du flash refusée : ${e.message}`);
@@ -598,14 +620,38 @@ export class Gphoto2Camera extends BaseCamera {
   }
 
   /** Relâche le déclencheur à distance si une commande a été interrompue. Jamais bloquant. */
+  /** Relâche le déclencheur. Rend false si le boîtier ne répond pas (figé, délai PTP dépassé). */
   async recover() {
     const cmd = (this.opts.recoverCommand || '').trim();
-    if (!cmd || this.live) return;
+    if (!cmd || this.live) return true;
     try {
       await this.sh(cmd, 8000);
       console.log('[gphoto2] déclencheur relâché');
+      return true;
     } catch (e) {
       console.warn(`[gphoto2] relâchement du déclencheur : ${e.message}`);
+      return !/Délai d'attente|Timeout|n'a pas répondu/i.test(e.message);
+    }
+  }
+
+  /**
+   * Boîtier figé au démarrage, ou firmware jamais lu (flash pilotable ou non) : réessai (appelé par devices.js
+   * toutes les 10 s, au plus une fois toutes les 30 s, jamais pendant une utilisation). Dès qu'il répond
+   * (éteint et rallumé), tout est repris : firmware, préparation, réglages.
+   */
+  async retryIfFrozen() {
+    const needed = this.frozen || (this.model && !this.firmware);
+    if (!needed || this.retrying || this.inUse() || Date.now() - (this.frozenAt || 0) < 30000) return;
+    this.retrying = true;
+    try {
+      this.frozenAt = Date.now();
+      if (!(await this.recover())) return;
+      console.log('[gphoto2] le boîtier répond de nouveau : réglages renvoyés');
+      this.frozen = false;
+      this.responsive = true;
+      await this.probe();
+    } finally {
+      this.retrying = false;
     }
   }
 
@@ -652,16 +698,33 @@ export class Gphoto2Camera extends BaseCamera {
     this.busy = true; // bloque la relance du live et la bascule de pilote
     this.arming = (async () => {
       if (this.statusRead) await this.statusRead; // lecture ou réglage en cours : il finit d'abord
+      while (this.starting) await sleep(50); // aperçu en train de démarrer (flash levé avant) : il finit d'abord
       const tStop = Date.now();
       await this.stopLive(false); // l'ouverture de la liaison gphoto2 sert de pause de stabilisation
+      if (this.clipExposure) { this.clipExposure = false; await this.applyControl().catch(() => {}); } // boomerang abandonné : ISO des photos
       const stopMs = Date.now() - tStop;
       const wait = Math.max(150, Math.round(fireInMs - (Date.now() - t0) - (this.opts.armOpenMs || 0)));
       await this.raiseFlash();
       const cmd = tpl.replace('{flash}', '').replace('{wait}', String(wait)).replace('{file}', quoteArg(file));
-      const job = this.run(cmd, wait + 15000);
-      const pending = { file, kill: job.kill };
-      pending.promise = job.promise.then(() => {
+      // Photo attendue 1 à 2 s après le déclenchement : au-delà de 8 s, elle ne viendra pas (voir le repli)
+      const job = this.run(cmd, wait + 8000);
+      const pending = { file, kill: (sig) => { pending.cancelled = true; job.kill(sig); } };
+      const shot = job.promise.then(() => {
         if (!fs.existsSync(file)) throw new Error('gphoto2 a terminé sans produire de fichier');
+        return file;
+      });
+      // Repli : en « One Shot », le boîtier refuse de déclencher tant que la mise au point n'accroche pas (pièce
+      // presque noire, rien devant l'objectif) ; l'écran reste alors sur « Gardez la pose ». On relâche le
+      // déclencheur et on prend la photo en déclenchement direct (celui du calibrage), sans attendre le point.
+      // Même prise en main du boîtier (busy), aucune commande en parallèle. Pas de repli si l'invité est parti.
+      pending.promise = shot.catch(async (e) => {
+        if (pending.cancelled || this.closing) throw e;
+        console.warn(`[gphoto2] pas de photo après la mise au point (${e.message.split('\n')[0]}) : photo en déclenchement direct, sans attendre le point`);
+        await this.recover();
+        const direct = this.opts.captureCommand.replace('{flash}', '').replace('{file}', quoteArg(file));
+        await this.sh(direct, 20000);
+        if (!fs.existsSync(file)) throw new Error('gphoto2 a terminé sans produire de fichier');
+        pending.direct = true;
         return file;
       });
       pending.promise.catch(() => {}); // consommée par capture()
@@ -671,7 +734,7 @@ export class Gphoto2Camera extends BaseCamera {
       pending.promise
         // Échec : ne jamais laisser le déclencheur « enfoncé »
         .then(() => {
-          console.log(`[gphoto2] photo reçue ${Date.now() - tFire} ms après le lancement de la commande`);
+          console.log(`[gphoto2] photo reçue ${Date.now() - tFire} ms après le lancement de la commande${pending.direct ? ' (déclenchement direct, mise au point non accrochée)' : ''}`);
         }, (e) => {
           this.noteCaptureError(e);
           return this.recover();
@@ -697,6 +760,13 @@ export class Gphoto2Camera extends BaseCamera {
     const t0 = Date.now();
     try {
       await this.exclusive(async () => {
+        // La vidéo est filmée sans flash : avec l'exposition des photos au flash (ISO 200…), elle sort noire dans
+        // une salle un peu sombre. ISO automatique le temps du boomerang, réglage des photos remis après (recordClip).
+        if (this.control?.mode && this.control.mode !== 'camera' && this.applied?.iso !== 'Auto') {
+          await this.writeConfig({ iso: 'Auto' }).catch((e) => console.warn(`[gphoto2] ISO auto pour la vidéo refusé : ${e.message}`));
+          this.applied.iso = 'Auto'; // applyControl remettra l'ISO des photos
+          this.clipExposure = true;
+        }
         try { await this.sh(cmd, 10000); } catch (e) { await this.recover(); throw e; } // ne jamais laisser le déclencheur enfoncé
       }, { timeoutMs: 8000 });
       // Rendu seulement quand l'aperçu renvoie des images : la vidéo peut commencer tout de suite
@@ -704,6 +774,18 @@ export class Gphoto2Camera extends BaseCamera {
       console.log(`[gphoto2] mise au point avant la vidéo : ${Date.now() - t0} ms (aperçu ${this.gotFrame ? 'relancé' : 'pas encore relancé'})`);
     } catch (e) {
       console.warn(`[gphoto2] mise au point avant la vidéo : ${e.message}`);
+    }
+  }
+
+  /** Boomerang filmé dans l'aperçu ; ensuite, réglage des photos remis (ISO automatique posé pour la vidéo). */
+  async recordClip(opts) {
+    try {
+      return await super.recordClip(opts);
+    } finally {
+      if (this.clipExposure) {
+        this.clipExposure = false;
+        this.exclusive(() => this.applyControl()).catch((e) => console.warn(`[gphoto2] réglage des photos après la vidéo : ${e.message}`));
+      }
     }
   }
 
@@ -734,6 +816,7 @@ export class Gphoto2Camera extends BaseCamera {
       }
       // Sans pré-armement : on coupe le live maintenant et tout se fait à « 0 » (mise au point comprise).
       if (this.statusRead) await this.statusRead; // lecture ou réglage en cours : il finit d'abord
+      while (this.starting) await sleep(50); // aperçu en train de démarrer : il finit d'abord
       this.busy = true;
       await this.stopLive();
       await this.raiseFlash();
@@ -789,9 +872,16 @@ export class Gphoto2Camera extends BaseCamera {
   }
 
   async shutdown() {
+    this.closing = true; // plus de repli de photo : on s'arrête
     this.opts.liveview = false;
     clearTimeout(this.controlTimer);
-    // Photo en cours (déjà réclamée par la borne, donc hors de disarm) : arrêtée ici, puis déclencheur relâché
+    // Photo ou réglage en cours : on les laisse finir (20 s au plus). Coupée en pleine transaction, une commande
+    // fige le 2000D (plus de réponse USB jusqu'à ce qu'on l'éteigne) ; vu au redémarrage demandé pendant une photo.
+    if (this.procs.size) {
+      console.log(`[gphoto2] ${this.procs.size} commande(s) en cours : on les laisse finir avant d'arrêter`);
+      for (let i = 0; i < 100 && this.procs.size; i++) await sleep(200);
+    }
+    // Toujours en cours : arrêtées ici, puis déclencheur relâché
     if (await this.stopAllCommands()) { await sleep(1200); await this.recover().catch(() => {}); } // le boîtier se libère d'abord
     if (this.statusRead) await this.statusRead;
     clearTimeout(this.idleTimer);
