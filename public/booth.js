@@ -1397,10 +1397,22 @@ function mix(a, b, t) {
   const [x, y] = [n(a), n(b)];
   return `#${x.map((v, i) => Math.round(v * t + y[i] * (1 - t)).toString(16).padStart(2, '0')).join('')}`;
 }
+/**
+ * Fond réellement situé derrière un élément : le premier parent à fond non transparent (carte, fenêtre du
+ * code, panneau), sinon la page. Un bouton semi-transparent se lit sur ce fond-là, pas sur celui de la page.
+ */
+function backdropOf(el, page) {
+  for (let p = el.parentElement; p && p !== document.documentElement; p = p.parentElement) {
+    const c = getComputedStyle(p).backgroundColor;
+    if (c && c !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(c)) return solid(c, page);
+  }
+  return page;
+}
+
 function deckStyle(el) {
   const page = solid(getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || getComputedStyle(document.body).backgroundColor, '#000');
   const cs = getComputedStyle(el);
-  const bg = solid(cs.backgroundColor, page);
+  const bg = solid(cs.backgroundColor, backdropOf(el, page));
   let fg = solid(cs.color, bg);
   const hasBorder = parseFloat(cs.borderTopWidth) > 0 && cs.borderTopStyle !== 'none';
   let border = hasBorder ? solid(cs.borderTopColor, bg) : null;

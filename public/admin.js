@@ -562,7 +562,7 @@ function renderCalibration() {
   const c = CTL.calibration;
   const head = (title, sub = '') => `<header class="co-head"><div><h2>${title}</h2>${sub ? `<p>${sub}</p>` : ''}</div>
     ${['preview', 'results', 'error'].includes(CAL.stage) ? '<button class="btn ghost" type="button" id="coClose">Fermer</button>' : ''}</header>`;
-  const live = `<div class="co-live"><img id="coLive" src="/api/live.mjpeg?t=${Date.now()}" alt="Aperçu du boîtier"></div>`;
+  const live = `<div class="co-live"><img id="coLive" src="/api/live.mjpeg?calib=1&t=${Date.now()}" alt="Aperçu du boîtier"></div>`;
 
   if (CAL.stage === 'preview') {
     ov.innerHTML = `${head('Calibrage du boîtier', 'Cadre la photo comme pour l\'événement, puis lance : un décompte laisse le temps de se placer.')}
@@ -2095,7 +2095,7 @@ function showLogin() {
     try {
       await api('/api/admin/login', { method: 'POST', body: { pin: $('#loginPin').value } });
       await boot();
-    } catch (err) { $('#loginError').textContent = err.message; }
+    } catch (err) { $('#loginError').textContent = err.message; $('#loginPin').value = ''; } // nouvelle saisie (clavier ou Stream Deck)
   };
 }
 
@@ -2219,6 +2219,16 @@ function sendDeckUi() {
     deckSock.send(JSON.stringify({ type: 'ui', screen: `admin-calib-${CAL.stage}`, items: calibDeckItems(), colors: S?.theme?.colors || {} }));
     return;
   }
+  // Écran de connexion : pavé du code sur les touches (comme le code opérateur de la borne), puis retour
+  if (!shell && !$('#login').classList.contains('hidden')) {
+    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'].map((k) => (
+      k === 'del' ? { id: 'pin-del', label: '⌫', icon: 'delete', kind: 'ghost' }
+        : k === 'ok' ? { id: 'pin-ok', label: 'OK', icon: 'check', kind: 'primary' }
+          : { id: `pin-${k}`, label: k, kind: 'ghost' }));
+    keys.push({ id: 'btnBooth', label: 'Retour à la borne', icon: 'back', kind: 'ghost' });
+    deckSock.send(JSON.stringify({ type: 'ui', screen: 'pin', items: keys, colors: S?.theme?.colors || {} }));
+    return;
+  }
   let items;
   if (dlg.open) {
     items = [{ id: 'cfOk', label: $('#cfOk').textContent, icon: $('#cfOk').dataset.icon || 'power', kind: 'primary', style: DECK_DANGER }, { id: 'cfCancel', label: 'Annuler', icon: 'x', kind: 'ghost' }];
@@ -2254,7 +2264,18 @@ async function refreshDevices() {
 }
 setInterval(() => { if (document.visibilityState === 'visible') refreshDevices(); }, 5000);
 
+/** Touche du pavé du Stream Deck sur l'écran de connexion : tape dans le champ du code, ⌫ efface, OK valide. */
+function deckPinKey(id) {
+  const input = $('#loginPin');
+  const k = id.slice(4);
+  $('#loginError').textContent = '';
+  if (k === 'del') input.value = input.value.slice(0, -1);
+  else if (k === 'ok') $('#loginForm').requestSubmit();
+  else if (input.value.length < 12) input.value += k;
+}
+
 function onDeckPress(id) {
+  if (id.startsWith('pin-')) { if (!$('#login').classList.contains('hidden')) deckPinKey(id); return; }
   if (id === 'deckCalib') { if (!CAL.stage && calibReady()) openCalibration('preview'); return; }
   if (CAL.stage === 'preview' && (id === 'btnMinus' || id === 'btnPlus')) { // délai du décompte, un cran à la fois
     const i = CALIB_DELAYS.indexOf(CAL.countdown) + (id === 'btnPlus' ? 1 : -1);
