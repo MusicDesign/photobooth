@@ -294,8 +294,8 @@ export class Gphoto2Camera extends BaseCamera {
       // Flash à lever (réglage avec flash) et pas levé récemment : levé avant l'aperçu. Flash levé, le Canon ne
       // simule plus l'exposition des photos au flash : l'aperçu (et le boomerang filmé dedans) n'est plus noir.
       // Aperçu coupé pendant la commande : jamais deux commandes gphoto2 à la fois (le boîtier se figerait).
-      if (!this.live && !this.stopping && !this.busy && this.wanted() && this.flashControl() && this.wantFlash()
-        && Date.now() - (this.flashRaisedAt || 0) > 30000) {
+      if (!this.live && !this.stopping && !this.busy && this.wanted() && !this.noFlashViewers && !this.calibrating
+        && this.flashControl() && this.wantFlash() && Date.now() - (this.flashRaisedAt || 0) > 30000) {
         await this.raiseFlash().catch(() => {});
       }
       this.starting = false;
@@ -840,11 +840,16 @@ export class Gphoto2Camera extends BaseCamera {
     }
   }
 
-  attachLiveClient(res) {
+  /** noFlash : aperçu du calibrage, qui commence par des photos sans flash (il lève le flash lui-même ensuite). */
+  attachLiveClient(res, { noFlash = false } = {}) {
     this.mjpeg.attach(res);
+    if (noFlash) this.noFlashViewers = (this.noFlashViewers || 0) + 1;
     clearTimeout(this.idleTimer);
     this.startLive();
-    res.on('close', () => this.scheduleIdleStop());
+    res.on('close', () => {
+      if (noFlash) this.noFlashViewers -= 1;
+      this.scheduleIdleStop();
+    });
   }
 
   status() {
