@@ -2112,7 +2112,7 @@ $('#btnLogout').onclick = async () => { await api('/api/admin/logout', { method:
 // Retour à la borne dans la même fenêtre : on se déconnecte, sinon la zone cachée rouvrirait l'admin sans code.
 $('#btnBooth').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }).catch(() => {}); location.href = '/'; };
 $('#btnShutdown').onclick = async () => {
-  if (!await askConfirm('Éteindre la borne ?\n\nLe logiciel se ferme. Pour le relancer : icône « Photo Booth » sur le bureau.', 'Éteindre')) return;
+  if (!await askConfirm('Éteindre la borne ?\n\nLe logiciel se ferme. Pour le relancer : icône « Cheesy » sur le bureau.', 'Éteindre')) return;
   try {
     await api('/api/admin/shutdown', { method: 'POST', body: {} });
   } catch (e) {
@@ -2121,7 +2121,7 @@ $('#btnShutdown').onclick = async () => {
   }
   // Le lanceur ferme la fenêtre ; ce message ne reste visible que dans un navigateur ordinaire.
   document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>Borne éteinte</h1>
-    <p class="sub">Pour la relancer : icône « Photo Booth » sur le bureau.</p></div></div>`;
+    <p class="sub">Pour la relancer : icône « Cheesy » sur le bureau.</p></div></div>`;
 };
 // Redémarrer : le logiciel se ferme proprement (caméra, Stream Deck) et se relance tout seul sur l'accueil.
 $('#btnRestart').onclick = async () => {

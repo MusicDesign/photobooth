@@ -429,7 +429,7 @@ scripts/kiosk/install-linux.sh --no-sleep
 
 Le script, pour l'utilisateur courant et sans sudo :
 
-- pose l'icône **Photo Booth** sur le bureau et dans les applications ;
+- pose l'icône **Cheesy** sur le bureau et dans les applications ;
 - lance la borne à l'ouverture de session (`~/.config/autostart`) ;
 - avec `--no-sleep` : écran jamais éteint, pas de verrouillage (borne dédiée).
 
@@ -439,7 +439,7 @@ Deux lanceurs, au choix, avec le même comportement :
 |---|---|---|
 | Chromium en kiosque (défaut) | `install-linux.sh` | `scripts/kiosk/photobooth.sh` démarre le serveur Node puis Chromium plein écran, avec un profil à part |
 | App Electron | `install-linux.sh --electron` | Serveur et fenêtre plein écran dans une seule app (`npm run app`) |
-| App Electron empaquetée | `npm run app:build` puis `install-linux.sh --exec dist/Photo\ Booth-*.AppImage` | Un fichier unique ; ses données vont dans `~/.config/Photo Booth/` et non dans le dépôt |
+| App Electron empaquetée | `npm run app:build` puis `install-linux.sh --exec dist/Cheesy-*.AppImage` | Un fichier unique ; ses données vont dans `~/.config/Cheesy/` et non dans le dépôt |
 
 L'AppImage se construit **sur la borne elle-même** : les modules natifs
 (sharp, Stream Deck) sont propres au système.
@@ -449,7 +449,7 @@ Comportement :
 - **Éteindre** : admin → bas du menu → **Éteindre la borne**. Le serveur
   s'arrête proprement (caméra, Stream Deck) et la fenêtre se ferme. Refusé
   pendant une impression, sauf confirmation.
-- **Relancer** : icône Photo Booth du bureau. Un deuxième appui pendant que la
+- **Relancer** : icône Cheesy du bureau. Un deuxième appui pendant que la
   borne tourne ne lance rien de plus.
 - **Borne ↔ admin** : 5 appuis en haut à droite (ou G D G D sur les touches du
   haut du Stream Deck) ouvrent l'admin dans la même fenêtre ; **← Retour à la borne** revient à l'accueil et déconnecte l'admin
@@ -465,11 +465,11 @@ automatique**. Sans elle, l'écran de connexion attend un mot de passe.
 
 L'icône du bureau : GNOME n'affiche pas d'icônes sur le bureau par défaut.
 Installe l'extension **Desktop Icons NG (DING)** avec le Gestionnaire
-d'extensions, ou épingle Photo Booth au dock (Activités → clic droit →
+d'extensions, ou épingle Cheesy au dock (Activités → clic droit →
 Épingler). Retirer le tout : `install-linux.sh --uninstall`.
 
 **Vérification.** Redémarre le PC : la borne s'affiche seule, plein écran.
-Admin → Éteindre la borne : retour au bureau. Icône Photo Booth : la borne
+Admin → Éteindre la borne : retour au bureau. Icône Cheesy : la borne
 revient. Journaux : `data/logs/launcher.log` (lanceur) et `data/logs/booth.log`
 (serveur).
 
@@ -651,13 +651,13 @@ automatique. Un iPad trop ancien (iOS 9 et avant) ne convient pas.
 | La borne repasse en webcam une minute après l'allumage du Canon | Arrêt automatique du boîtier encore actif | Menu du boîtier → Arrêt auto : Désactiver (le 2000D ignore la commande USB) |
 | Le serveur s'arrête au démarrage avec « gphoto2 introuvable » | Ancien comportement | Ne se produit plus : la borne démarre sur le repli et l'admin affiche l'erreur sous « Caméra » |
 | Admin ou QR code inaccessibles depuis un téléphone | Pare-feu ou mauvais réseau | Port 3000 ouvert (étape 10.6), même Wi-Fi que la borne, adresse affichée au démarrage du serveur |
-| L'icône du bureau n'apparaît pas | GNOME sans icônes de bureau | Extension Desktop Icons NG, ou lancer Photo Booth depuis Activités (étape 10.5) |
+| L'icône du bureau n'apparaît pas | GNOME sans icônes de bureau | Extension Desktop Icons NG, ou lancer Cheesy depuis Activités (étape 10.5) |
 | L'icône du bureau ouvre un éditeur de texte | Lanceur non autorisé | Clic droit sur l'icône → Autoriser l'exécution |
 | Rien ne s'ouvre au clic sur l'icône | Node ou Chromium introuvable, port 3000 pris | Lire `data/logs/launcher.log` |
 | Le port 3000 est déjà utilisé | Une autre application écoute dessus | `PORT=3001` dans le lanceur, ou arrêter l'autre application |
 | Une session reste en `shooting` ou `review` | Invité parti en cours de route | Normal ; elle se supprime dans Événements & photos, et la validation automatique limite le phénomène |
 
 Journal du serveur : la sortie du terminal sur Mac, `data/logs/booth.log` partout
-(`data/logs/launcher.log` pour le lanceur Linux ; `~/.config/Photo Booth/data/logs/`
+(`data/logs/launcher.log` pour le lanceur Linux ; `~/.config/Cheesy/data/logs/`
 pour l'AppImage). Les erreurs gphoto2 remontent aussi dans le tableau de bord, sous le
 badge caméra.

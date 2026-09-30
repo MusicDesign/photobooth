@@ -7,7 +7,7 @@ import { Config } from './config.js';
 import { Store } from './store.js';
 import { Templates } from './templates.js';
 import { buildAllPreviews } from './template-previews.js';
-import { Themes } from './themes.js';
+import { Themes, DEFAULT_LOGO } from './themes.js';
 import { Booth } from './booth.js';
 import { Devices } from './devices.js';
 import { StreamDeckRemote } from './streamdeck.js';
@@ -100,7 +100,7 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
     if (isLocalRequest(req)) return next();
     res.redirect(302, '/galerie'); // autre appareil : la galerie de la soirée (ou sa page « fermée » si désactivée)
   });
-  app.get('/favicon.ico', (req, res) => res.redirect(302, themes.resolve(config.get()).logo || '/assets/logo-default.svg'));
+  app.get('/favicon.ico', (req, res) => res.redirect(302, themes.resolve(config.get()).logo || DEFAULT_LOGO));
   app.use(express.static(PUBLIC_DIR, { index: 'index.html' }));
   app.use('/output', express.static(OUTPUT_DIR, { maxAge: '1h' }));
   app.use('/templates', express.static(TEMPLATES_DIR, { maxAge: '1h' }));
