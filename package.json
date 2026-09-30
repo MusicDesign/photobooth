@@ -1,6 +1,6 @@
 {
   "name": "photo-booth",
-  "productName": "Cheesy",
+  "productName": "Cheeesy",
   "version": "0.1.0",
   "description": "Photo booth tactile pour PC Linux : Canon EOS via gphoto2, impression CUPS, templates et thèmes personnalisables.",
   "type": "module",
@@ -37,7 +37,7 @@
   },
   "build": {
     "appId": "local.photobooth.kiosk",
-    "productName": "Cheesy",
+    "productName": "Cheeesy",
     "directories": {
       "output": "dist"
     },

@@ -11,6 +11,7 @@ import { Themes, DEFAULT_LOGO } from './themes.js';
 import { Booth } from './booth.js';
 import { Devices } from './devices.js';
 import { StreamDeckRemote } from './streamdeck.js';
+import { Lights } from './lights/index.js';
 import { apiRouter } from './routes/api.js';
 import { adminRouter } from './routes/admin.js';
 import { galleryHtml, eventGalleryHtml } from './gallery.js';
@@ -60,6 +61,9 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   // Miniatures des cadres manquantes (templates copiés à la main, nouvelle version) : la borne les reprend ensuite
   buildAllPreviews(templates).then((n) => { if (n) broadcast({ type: 'config' }); });
 
+  // Lumières du réseau local : ambiance à l'accueil, blanc neutre pour la prise de vue (voir lights/index.js)
+  const lights = new Lights({ config });
+
   // Stream Deck : la borne décrit son écran ('ui'), un appui lui est renvoyé ('deck'), à elle seule.
   let boothSocket = null;
   const toBooth = (msg) => { if (boothSocket?.readyState === 1) boothSocket.send(JSON.stringify(msg)); };
@@ -77,6 +81,7 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
         if (boothSocket !== ws) { boothSocket = ws; toBooth({ type: 'deckInfo', ...deck.galleryInfo() }); }
         boothScreen = typeof msg.screen === 'string' ? msg.screen : null;
         deck.setUi(msg);
+        lights.setScreen(boothScreen);
       }
     });
     ws.on('close', () => { if (boothSocket === ws) boothScreen = null; });
@@ -85,6 +90,7 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   let boothScreen = null;
   const kioskScreen = () => (boothSocket?.readyState === 1 ? boothScreen : null);
   if (process.env.BOOTH_STREAMDECK !== 'off') await deck.start();
+  await lights.start().catch((e) => console.warn(`[lights] ${e.message}`));
 
   config.on('change', () => {
     broadcast({ type: 'config' });
@@ -124,7 +130,7 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   const shutdown = stopThen(onShutdown, 'arrêt');
   const restart = stopThen(onRestart, 'redémarrage');
 
-  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart, kioskScreen, remoteScreen }));
+  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, lights, shutdown, restart, kioskScreen, remoteScreen }));
   // Écran déporté (iPad…) : l'écran de la borne et son toucher, avec le code admin (voir electron/remote-screen.js)
   app.get('/remote', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'remote.html')));
   // API de l'écran de la borne : seulement depuis la borne (les téléphones n'ont besoin que de ping et de la galerie)
@@ -176,10 +182,11 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   const close = async () => {
     await devices.stop();
     await deck.stop();
+    await lights.stop().catch(() => {}); // borne éteinte : lumières éteintes
     for (const client of wss.clients) client.terminate();
     server.closeAllConnections?.();
     await new Promise((r) => server.close(r));
   };
 
-  return { app, server, wss, booth, config, store, templates, themes, devices, deck, port, close };
+  return { app, server, wss, booth, config, store, templates, themes, devices, deck, lights, port, close };
 }

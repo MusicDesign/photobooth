@@ -17,6 +17,7 @@ process.env.BOOTH_SAMPLES_DIR = path.join(tmp, 'samples');
 process.env.BOOTH_CAMERA = 'mock';
 process.env.BOOTH_PRINTER = 'mock';
 process.env.BOOTH_STREAMDECK = 'off'; // ne pas prendre la main sur un Stream Deck branché
+process.env.BOOTH_LIGHTS = 'mock';     // lumières simulées : jamais celles du réseau
 
 const { generateDemoAssets } = await import('./make-demo-assets.js');
 await generateDemoAssets({ templatesDir: process.env.BOOTH_TEMPLATES_DIR, samplesDir: process.env.BOOTH_SAMPLES_DIR });
@@ -679,6 +680,16 @@ async function runSteps(app, camera) {
     assert.equal((await reprint(older, { copies: 1, pin })).data.error, 'SESSION_PRINTING');
     await waitStatus(older, 'done');
     assert.equal((await j('/api/bootstrap')).data.counters.printed, before + 3);
+    // Borne arrêtée pendant un tirage : au redémarrage, son suivi (en mémoire) était perdu et la photo restait
+    // « en cours d'impression » pour toujours. Le suivi reprend (ici : pilote qui ne sait plus, tirage clos).
+    const stuck = app.store.getSession(older);
+    stuck.status = 'printing';
+    stuck.printJobs.push({ jobId: 'perdu-1', copies: 1, paperTaken: 0, origin: 'guest', status: 'queued', at: new Date().toISOString() });
+    app.store.saveSession(stuck);
+    app.booth.jobToSession.clear();
+    app.booth.resumePrintJobs();
+    await waitStatus(older, 'done');
+    assert.equal((await j('/api/gallery')).data.items.find((it) => it.id === older)?.printing, false, 'galerie : plus « en cours »');
 
     await put('/api/admin/config', { gallery: { reprint: 'guest' } }, ADMIN);
     assert.equal((await reprint(newer, { copies: 3 })).data.error, 'COPIES_INVALID');
@@ -688,6 +699,80 @@ async function runSteps(app, camera) {
     assert.equal((await reprint(newer, { copies: 1 })).data.error, 'QUOTA_REACHED');
     await put('/api/admin/config', { limits: { eventQuota: 0 }, gallery: { booth: false, web: false, reprint: 'operator' } }, ADMIN);
     assert.equal((await reprint(newer, { copies: 1 })).status, 403, 'galerie fermée : plus de réimpression');
+  });
+
+  await step('lumières : allumées au démarrage, prise de vue du template aux photos, ambiance, calibrage, éteintes à l\'arrêt', async () => {
+    const { default: WebSocket } = await import('ws');
+    const L = app.lights;
+    const settle = async () => { await new Promise((r) => setTimeout(r, 30)); await L.queue; };
+    assert.equal((await j('/api/admin/lights', { headers: ADMIN })).data.lights.running, false, 'désactivées par défaut');
+    await put('/api/admin/config', { lights: { enabled: true, idle: { mode: 'ambiance', effect: 'fixed', color: '#00ff00', brightness: 50 } } }, ADMIN);
+    await settle();
+    assert.ok(L.driver.sent.some(([ip, cmd, d]) => ip === '10.0.0.13' && cmd === 'turn' && d.value === 1), 'démarrage : la lumière éteinte est allumée');
+    const { lights } = (await j('/api/admin/lights', { headers: ADMIN })).data;
+    assert.deepEqual(lights.devices.map((d) => [d.type, d.online]), [['ampoule', true], ['ampoule', true], ['tube', true]]);
+    const st = () => L.driver.state;
+    const ips = Object.keys(st());
+    // Accueil : couleur fixe
+    assert.ok(ips.every((ip) => st()[ip].brightness === 50 && st()[ip].color.g === 255 && st()[ip].colorTemInKelvin === 0), JSON.stringify(st()));
+    // Cycle de couleurs : décalé entre les lumières, ou synchronisé
+    const cycleColors = async (sync) => {
+      await put('/api/admin/config', { lights: { idle: { effect: 'cycle', periodSec: 30, sync } } }, ADMIN);
+      await settle();
+      await new Promise((r) => setTimeout(r, 1100)); // premier pas du cycle
+      return new Set(ips.map((ip) => JSON.stringify(st()[ip].color))).size;
+    };
+    assert.equal(await cycleColors(false), 3, 'décalées : trois couleurs');
+    assert.equal(await cycleColors(true), 1, 'synchronisées : une seule couleur');
+    await put('/api/admin/config', { lights: { idle: { effect: 'fixed' } } }, ADMIN);
+    await settle();
+    // La borne décrit son écran : choix du template → prise de vue
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise((r) => ws.on('open', r));
+    const screen = async (name) => { ws.send(JSON.stringify({ type: 'ui', screen: name, items: [] })); await settle(); };
+    await screen('template');
+    assert.ok(ips.every((ip) => st()[ip].onOff === 1 && st()[ip].brightness === 100 && st()[ip].colorTemInKelvin === 5000), 'prise de vue : 5000 K, 100 %');
+    await screen('pin'); // code opérateur par-dessus : la scène continue
+    await screen('capture');
+    assert.equal(st()[ips[0]].colorTemInKelvin, 5000);
+    await screen('review'); // « On la garde ? » : résultat regardé dans l'ambiance
+    assert.ok(ips.every((ip) => st()[ip].brightness === 50 && st()[ip].colorTemInKelvin === 0), 'relecture : ambiance');
+    await screen('capture');
+    // Le tube sans rôle « prise de vue » : il garde l'ambiance
+    const tube = lights.devices.find((d) => d.type === 'tube');
+    await put('/api/admin/config', { lights: { devices: { [tube.id]: { shooting: false } } } }, ADMIN);
+    await settle();
+    assert.equal(st()[tube.ip].color.g, 255, 'tube : ambiance pendant la prise de vue');
+    await screen('done');
+    assert.ok(ips.every((ip) => st()[ip].brightness === 50), 'retour à l\'accueil : ambiance');
+    // Calibrage : prise de vue imposée, lumières stabilisées avant de rendre la main
+    const t0 = Date.now();
+    assert.equal(await L.hold('calibration'), true);
+    assert.ok(Date.now() - t0 >= 900, 'attente de stabilisation');
+    assert.equal(st()[ips[0]].colorTemInKelvin, 5000);
+    L.release('calibration');
+    await settle();
+    assert.equal(st()[ips[0]].brightness, 50);
+    // « Laisser telles quelles » : chaque lumière retrouve son état d'avant la borne (20 / 30 / 40 %, 3000 K), allumée
+    await put('/api/admin/config', { lights: { idle: { mode: 'keep' } } }, ADMIN);
+    await settle();
+    assert.deepEqual(ips.map((ip) => [st()[ip].onOff, st()[ip].brightness, st()[ip].colorTemInKelvin]), [[1, 20, 3000], [1, 30, 3000], [1, 40, 3000]]);
+    await put('/api/admin/config', { lights: { idle: { mode: 'off' } } }, ADMIN);
+    await settle();
+    assert.ok(ips.every((ip) => st()[ip].onOff === 0), 'accueil : éteintes');
+    // Option coupée : état d'avant rendu, plus aucune commande
+    const driver = L.driver;
+    await put('/api/admin/config', { lights: { enabled: false } }, ADMIN);
+    await settle();
+    assert.deepEqual(Object.values(driver.state).map((x) => [x.onOff, x.brightness]), [[1, 20], [1, 30], [1, 40]]);
+    assert.equal(L.running, false);
+    // Arrêt de la borne : toutes éteintes, quel que soit le mode
+    await put('/api/admin/config', { lights: { enabled: true, idle: { mode: 'keep' } } }, ADMIN);
+    await settle();
+    const d2 = L.driver;
+    await L.stop();
+    assert.ok(Object.values(d2.state).every((x) => x.onOff === 0), 'arrêt : éteintes');
+    ws.close();
   });
 
   await step('arrêt : indisponible sans lanceur (409)', async () => {

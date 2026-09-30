@@ -233,4 +233,18 @@ label.ctl-mode small { margin: 0 !important; color: var(--muted); }
 .filter-table { border-collapse: collapse; margin: 10px 0 6px; font-size: 14px; }
 .filter-table th { font-size: 12px; font-weight: 600; color: var(--muted); text-align: left; padding: 4px 18px 4px 0; }
 .filter-table td { padding: 4px 18px 4px 0; }
+.light-table { border-collapse: collapse; width: 100%; margin: 10px 0 12px; font-size: 14px; }
+.light-table th { font-size: 12px; font-weight: 600; color: var(--muted); text-align: left; padding: 6px 12px 6px 0; }
+.light-table td { padding: 8px 12px 8px 0; }
+.light-table .c { text-align: center; }
+.light-table input:not([type]) { width: 100%; min-width: 120px; margin: 0; }
+.light-table .nowrap { white-space: nowrap; text-align: right; }
+/* Température de couleur : 2000 K (bougie) → 9000 K (ciel couvert), 5000 K au milieu de la piste à ~43 % */
+.kelvin-range { -webkit-appearance: none; appearance: none; width: 100%; height: 14px; margin: 10px 0 4px; padding: 0; border: 1px solid rgba(0, 0, 0, 0.12); border-radius: 999px;
+  background: linear-gradient(90deg, #ff8912 0%, #ffb46b 14%, #ffd1a3 29%, #ffe4ce 43%, #fff4ed 57%, #f3f2ff 71%, #dfe7ff 86%, #cddcff 100%); }
+.kelvin-range::-webkit-slider-thumb { -webkit-appearance: none; width: 24px; height: 24px; border-radius: 50%; background: #fff; border: 2px solid var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); cursor: pointer; }
+.kelvin-range::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: #fff; border: 2px solid var(--text); cursor: pointer; }
+.kelvin-out { float: right; font-weight: 700; color: var(--text); }
+.kelvin-scale { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+.light-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: -1px; border: 1px solid rgba(0, 0, 0, 0.15); }
 .filter-table td + td, .filter-table th + th { text-align: center; }

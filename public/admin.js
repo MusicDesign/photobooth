@@ -77,6 +77,19 @@ function deckState() {
   return `<span class="badge">aucun Stream Deck</span>${d.error ? ` <small>${esc(d.error)}</small>` : ' <small>recherché toutes les 3 s</small>'}`;
 }
 
+/** Tableau de bord : lumières connectées (Appareils connectés), une par ligne avec leur état. */
+function lightsSummary() {
+  const L = S.lights;
+  if (!L?.available) return '';
+  if (!L.enabled) return '<p>Lumières <span class="badge">désactivées</span> <small><a href="#lights">Appareils connectés</a></small></p>';
+  const on = L.devices.filter((d) => d.online).length;
+  const badge = !L.devices.length ? '<span class="badge">aucune trouvée</span>'
+    : `<span class="badge ${on === L.devices.length ? 'ok' : on ? 'warn' : 'err'}">${on} / ${L.devices.length} connectée${on > 1 ? 's' : ''}</span>`;
+  const scene = { idle: 'accueil', shooting: 'prise de vue' }[L.scene];
+  const rows = L.devices.map((d) => `<br><small>${esc(d.name || `${d.type[0].toUpperCase()}${d.type.slice(1)} ${d.ip.split('.').pop()}`)} · ${esc(d.sku)} · ${esc(d.ip)} · ${d.online ? 'en ligne' : '<b>hors ligne</b>'}</small>`).join('');
+  return `<p>Lumières ${badge}${scene ? ` <small>scène : ${scene}</small>` : ''}${L.error ? `<br><small><b>${esc(L.error)}</b></small>` : ''}${rows}</p>`;
+}
+
 /** Le flash est-il parti sur la dernière photo ? (EXIF, le boîtier ne dit rien de fiable avant) */
 /** Ce qui s'est passé sur la dernière photo (lu dans son EXIF) : avec ou sans flash. */
 function flashState() {
@@ -120,6 +133,7 @@ function dashboard() {
       <p>Imprimante <code>${esc(S.printer.driver)}</code> ${S.printer.driver === 'none' ? '<span class="badge">aucune</span>' : `<span class="badge ${S.printer.ok ? 'ok' : 'err'}">${S.printer.ok ? 'OK' : 'problème'}</span>`}${S.devices.printer.requested === 'auto' ? `<br><small>auto · ${esc(S.devices.printer.reason)}</small>` : ''}<br><small>${esc(S.printer.message)}</small></p>
       ${S.devices.network ? `<p>Wi-Fi <span class="badge ${S.devices.network.wifi ? 'ok' : 'err'}">${S.devices.network.wifi ? 'connecté' : 'absent'}</span><br><small>${S.devices.network.wifi ? `${esc(S.devices.network.iface)} · ${esc(S.devices.network.ip)}` : S.config.share.requireWifi === false ? 'QR codes affichés quand même (réglage <a href="#sharing">Partage</a>)' : 'QR codes des photos masqués'}</small></p>` : ''}
       <p>Stream Deck ${deckState()}</p>
+      ${lightsSummary()}
       <p>Partage : <code>${esc(S.shareBaseUrl)}</code></p>
     </div>
     <div class="card">
@@ -225,6 +239,9 @@ function printing() {
         <label>Copies maximum avec le code opérateur <input name="operatorMaxCopies" type="number" min="1" max="100" value="${l.operatorMaxCopies}"></label>
         <label class="inline"><input name="allowZeroCopies" type="checkbox" ${l.allowZeroCopies ? 'checked' : ''}> L'invité peut terminer sans imprimer</label>
         <small>Bouton « ${esc(cfg.texts.noPrint)} » sur l'écran des copies, quand une imprimante est branchée. Décoché : au moins un tirage par passage.</small>
+        <label>Sans action sur « ${esc(cfg.texts.copies)} », après (secondes, 0 = jamais) <input name="copiesTimeoutSec" type="number" min="0" max="600" value="${l.copiesTimeoutSec ?? 30}" style="width:120px"></label>
+        <select name="copiesTimeoutAction">${[['print', 'Imprimer le nombre affiché'], ['skip', 'Terminer sans impression']].map(([v, lb]) => `<option value="${v}" ${(l.copiesTimeoutAction || 'print') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select>
+        <small>Une barre et un compte à rebours préviennent l'invité ; changer le nombre de tirages ne relance pas le délai. « Terminer sans impression » ne vaut que si l'invité peut terminer sans imprimer, sinon la borne imprime.</small>
       </div>
       <div>
         <label>Quota de tirages de l'événement (0 = illimité) <input name="eventQuota" type="number" min="0" value="${l.eventQuota}"></label>
@@ -413,6 +430,117 @@ function hardware() {
     <small>Les touches reprennent les boutons de l'écran affiché, aux couleurs du thème, y compris le pavé du code opérateur. Branché, il pilote aussi la galerie de la borne (autant de photos par page que de touches). Sur Mac, quitter l'application Stream Deck d'Elgato, qui réserve l'appareil.</small>
     <button class="btn primary" type="submit">Enregistrer</button>
   </form>`;
+}
+
+// ---------- Appareils connectés : lumières Govee du réseau local ----------
+
+const LIGHT_EFFECTS = [['cycle', 'Cycle de couleurs'], ['breathe', 'Respiration'], ['fixed', 'Couleur fixe']];
+const LIGHT_MODES = [['ambiance', 'Ambiance', 'Les lumières animent l\'accueil (effet ci-dessous).'], ['keep', 'Laisser telles quelles', 'Elles gardent l\'état qu\'elles avaient avant la borne.'], ['off', 'Éteintes', 'Éteintes à l\'accueil, allumées pour la prise de vue.']];
+
+function lightState(d) {
+  if (!d.online) return '<span class="badge">hors ligne</span>';
+  const st = d.state;
+  if (!st) return '<span class="badge ok">en ligne</span>';
+  if (!st.onOff) return '<span class="badge ok">en ligne</span> <small>éteinte</small>';
+  const c = st.color || {};
+  const tint = st.colorTemInKelvin > 0 ? `${st.colorTemInKelvin} K` : `<span class="light-swatch" style="background:rgb(${c.r},${c.g},${c.b})"></span>`;
+  return `<span class="badge ok">en ligne</span> <small>allumée, ${st.brightness} %, ${tint}</small>`;
+}
+
+function lightsSection() {
+  const L = S.lights;
+  const cfg = S.config.lights || {};
+  const idle = cfg.idle || {};
+  const shoot = cfg.shooting || {};
+  if (!L?.available) {
+    return '<h2>Appareils connectés</h2><div class="card"><p class="sub">Désactivés pour cette borne (BOOTH_LIGHTS=off).</p></div>';
+  }
+  const rows = L.devices.map((d) => `
+      <tr data-light="${esc(d.id)}">
+        <td><input name="name_${esc(d.id)}" value="${esc(d.name)}" placeholder="${esc(d.type[0].toUpperCase() + d.type.slice(1))} ${esc(d.ip.split('.').pop() || '')}"></td>
+        <td>${esc(d.type)}<br><small>${esc(d.sku)} · ${esc(d.ip)}</small></td>
+        <td>${lightState(d)}</td>
+        <td class="c"><input type="checkbox" name="amb_${esc(d.id)}" ${d.ambiance ? 'checked' : ''}></td>
+        <td class="c"><input type="checkbox" name="shoot_${esc(d.id)}" ${d.shooting ? 'checked' : ''}></td>
+        <td class="nowrap"><button class="btn small" type="button" data-light-identify="${esc(d.id)}" ${d.online && L.running ? '' : 'disabled'}>Identifier</button>
+          <button class="btn ghost small" type="button" data-light-forget="${esc(d.id)}">Oublier</button></td>
+      </tr>`).join('');
+  return `
+  <h2>Appareils connectés</h2>
+  <p class="sub">Lumières Govee du réseau local, pilotées directement par la borne (sans internet ni compte) : allumées à son démarrage, ambiance à l'accueil, blanc neutre pour les photos, éteintes quand on éteint la borne. Sur chaque lumière, activer <b>LAN Control</b> dans l'app Govee Home (appareil → réglages). Elles doivent être sur le même réseau que la borne.</p>
+  <form id="formLights">
+    <div class="card">
+      <label class="inline"><input name="lightsEnabled" type="checkbox" ${cfg.enabled ? 'checked' : ''}> Piloter les lumières</label>
+      <small>${L.running ? [L.network && `Réseau de la borne : ${esc(L.network)}`, L.error && `<b>${esc(L.error)}</b>`].filter(Boolean).join(' · ') : 'Coupé : la borne ne touche à aucune lumière. En le coupant, chaque lumière retrouve son état d\'avant.'}</small>
+      <h3>Lumières</h3>
+      ${L.devices.length ? `<table class="light-table"><thead><tr><th>Nom</th><th>Type</th><th>État</th><th class="c">Ambiance</th><th class="c">Prise de vue</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+        : `<p class="sub">${L.running ? 'Aucune lumière trouvée pour l\'instant.' : 'Activez le pilotage puis lancez une recherche.'}</p>`}
+      <div class="row">
+        <button class="btn" type="button" id="btnLightsScan" ${L.running ? '' : 'disabled'}>Rechercher</button>
+        <button class="btn" type="button" id="btnLightsTry" ${L.running && L.devices.some((d) => d.online && d.shooting) ? '' : 'disabled'}>Essayer la prise de vue (8 s)</button>
+      </div>
+      <small>Recherche automatique chaque minute : une lumière rallumée au mur reprend sa place. « Identifier » la fait clignoter en bleu.</small>
+    </div>
+    <div class="card">
+      <h3>Accueil</h3>
+      <div class="ctl-modes">${LIGHT_MODES.map(([v, t, desc]) => `<label class="inline ctl-mode"><input type="radio" name="lightsMode" value="${v}" ${(idle.mode || 'ambiance') === v ? 'checked' : ''}> <span><b>${t}</b><small>${desc}</small></span></label>`).join('')}</div>
+      <div class="grid-2">
+        <label>Effet <select name="lightsEffect">${LIGHT_EFFECTS.map(([v, lb]) => `<option value="${v}" ${(idle.effect || 'cycle') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select>
+          <small>Cycle : les lumières font le tour des couleurs. Respiration : la couleur choisie monte et descend doucement.</small></label>
+        <label>Couleur (fixe et respiration) <input name="lightsColor" type="color" value="${esc(idle.color || '#ff7a1a')}"></label>
+        <label>Luminosité (%) <input name="lightsBrightness" type="number" min="1" max="100" value="${idle.brightness ?? 60}" style="width:120px"></label>
+        <label>Durée d'un cycle ou d'une respiration (secondes) <input name="lightsPeriod" type="number" min="2" max="600" value="${idle.periodSec ?? 20}" style="width:120px"></label>
+      </div>
+      <label class="inline"><input name="lightsSync" type="checkbox" ${idle.sync ? 'checked' : ''}> Lumières synchronisées</label>
+      <small>Coché : toutes les lumières ont la même couleur au même moment (cycle) et respirent ensemble. Décoché : chacune est décalée des autres, les couleurs se répartissent dans la pièce.</small>
+    </div>
+    <div class="card">
+      <h3>Prise de vue</h3>
+      <p class="sub">Du choix du template à la dernière photo (le résultat se regarde dans l'ambiance), et pendant le calibrage du boîtier : les lumières sont allumées et stabilisées avant sa première mesure, le calibrage décide du flash dans cette lumière-là.</p>
+      <div class="grid-2">
+        <label>Température du blanc <output id="lightsKelvinOut" class="kelvin-out">${shoot.kelvin ?? 5000} K</output>
+          <input name="lightsKelvin" class="kelvin-range" type="range" min="2000" max="9000" step="100" value="${shoot.kelvin ?? 5000}">
+          <span class="kelvin-scale"><span>Chaud</span><span>Neutre</span><span>Froid</span></span></label>
+        <label>Luminosité (%) <input name="lightsShootBrightness" type="number" min="1" max="100" value="${shoot.brightness ?? 100}" style="width:120px"></label>
+      </div>
+      <small>Refaire le calibrage après avoir changé ces réglages ou déplacé les lumières.</small>
+    </div>
+    <button class="btn primary" type="submit">Enregistrer</button>
+  </form>`;
+}
+
+function bindLights() {
+  const f = $('#formLights');
+  if (!f) return;
+  f.onsubmit = (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    const devices = Object.fromEntries((S.lights?.devices || []).map((d) => [d.id, {
+      name: String(fd.get(`name_${d.id}`) || '').trim(), ambiance: fd.get(`amb_${d.id}`) === 'on', shooting: fd.get(`shoot_${d.id}`) === 'on'
+    }]));
+    saveConfig({ lights: {
+      enabled: fd.get('lightsEnabled') === 'on', devices,
+      idle: { mode: fd.get('lightsMode') || 'ambiance', effect: fd.get('lightsEffect'), color: fd.get('lightsColor'), brightness: num(fd, 'lightsBrightness'), periodSec: num(fd, 'lightsPeriod'), sync: fd.get('lightsSync') === 'on' },
+      shooting: { kelvin: num(fd, 'lightsKelvin'), brightness: num(fd, 'lightsShootBrightness') }
+    } }, 'Lumières enregistrées');
+  };
+  const kelvin = f.querySelector('[name=lightsKelvin]');
+  kelvin?.addEventListener('input', () => { $('#lightsKelvinOut').textContent = `${kelvin.value} K`; });
+  const busy = async (btn, fn) => { btn.disabled = true; try { await fn(); } catch (e) { toast(e.message, true); } finally { btn.disabled = false; } };
+  $('#btnLightsScan')?.addEventListener('click', (e) => busy(e.currentTarget, async () => {
+    const r = await api('/api/admin/lights/discover', { method: 'POST' });
+    toast(`${r.lights.devices.filter((d) => d.online).length} lumière(s) en ligne`);
+    await refresh();
+  }));
+  $('#btnLightsTry')?.addEventListener('click', (e) => busy(e.currentTarget, async () => {
+    await api('/api/admin/lights/try-shooting', { method: 'POST' });
+    toast('Prise de vue pendant 8 s');
+  }));
+  document.querySelectorAll('[data-light-identify]').forEach((b) => b.addEventListener('click', () => busy(b, () => api('/api/admin/lights/identify', { method: 'POST', body: { id: b.dataset.lightIdentify } }))));
+  document.querySelectorAll('[data-light-forget]').forEach((b) => b.addEventListener('click', () => busy(b, async () => {
+    await api(`/api/admin/lights/${encodeURIComponent(b.dataset.lightForget)}`, { method: 'DELETE' });
+    await refresh();
+  })));
 }
 
 // ---------- Boîtier : réglages de prise de vue (mode boîtier / manuel / auto avec calibrage) ----------
@@ -624,6 +752,7 @@ function renderCalibration() {
         </figcaption>
       </figure>`).join('');
     ov.innerHTML = `${head('Résultat du calibrage', `${esc(c?.reason || '')}<br><small>Note : écart à la luminosité idéale, zones brûlées et bruit (ISO) ; plus elle est basse, mieux c'est.</small>`)}
+      ${c.lights ? '<div class="co-info">Calibré lumières de prise de vue allumées (Appareils connectés) : elles se rallument de la même façon pour chaque séance.</div>' : ''}
       ${flashAdvice(c, pick)}
       <div class="co-shots">${cards || '<p>Aucune photo.</p>'}</div>
       <footer class="co-foot">
@@ -1786,7 +1915,7 @@ function unbindEditor() {
   E.drag = null;
 }
 
-const SECTIONS = { dashboard, sessions, templates: templatesSection, editor: editorSection, flow, printing, sharing, theme: themeSection, hardware, security };
+const SECTIONS = { dashboard, sessions, templates: templatesSection, editor: editorSection, flow, printing, sharing, theme: themeSection, hardware, lights: lightsSection, security };
 const OLD_HASHES = { limits: 'printing' }; // anciens liens de l'admin
 
 // ---------- Rendu + événements ----------
@@ -1894,6 +2023,7 @@ function bindSection(sec) {
   }
 
   bindSettingsForms();
+  bindLights();
   // Mots de passe masqués : un bouton pour les afficher le temps de les vérifier
   document.querySelectorAll('[data-pw-toggle]').forEach((b) => b.addEventListener('click', () => {
     const input = b.previousElementSibling;
@@ -2071,6 +2201,8 @@ function bindSettingsForms() {
   form('#formPrintLimits', (fd) => saveConfig({ limits: {
     maxCopiesPerSession: num(fd, 'maxCopiesPerSession'),
     allowZeroCopies: fd.get('allowZeroCopies') === 'on',
+    copiesTimeoutSec: num(fd, 'copiesTimeoutSec'),
+    copiesTimeoutAction: fd.get('copiesTimeoutAction'),
     operatorMaxCopies: num(fd, 'operatorMaxCopies'),
     eventQuota: num(fd, 'eventQuota'),
     lowPaperThreshold: num(fd, 'lowPaperThreshold')
@@ -2149,7 +2281,7 @@ $('#btnLogout').onclick = async () => { await api('/api/admin/logout', { method:
 // Retour à la borne dans la même fenêtre : on se déconnecte, sinon la zone cachée rouvrirait l'admin sans code.
 $('#btnBooth').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }).catch(() => {}); location.href = '/'; };
 $('#btnShutdown').onclick = async () => {
-  if (!await askConfirm('Éteindre la borne ?\n\nLe logiciel se ferme. Pour le relancer : icône « Cheesy » sur le bureau.', 'Éteindre')) return;
+  if (!await askConfirm('Éteindre la borne ?\n\nLe logiciel se ferme. Pour le relancer : icône « Cheeesy » sur le bureau.', 'Éteindre')) return;
   try {
     await api('/api/admin/shutdown', { method: 'POST', body: {} });
   } catch (e) {
@@ -2158,7 +2290,7 @@ $('#btnShutdown').onclick = async () => {
   }
   // Le lanceur ferme la fenêtre ; ce message ne reste visible que dans un navigateur ordinaire.
   document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>Borne éteinte</h1>
-    <p class="sub">Pour la relancer : icône « Cheesy » sur le bureau.</p></div></div>`;
+    <p class="sub">Pour la relancer : icône « Cheeesy » sur le bureau.</p></div></div>`;
 };
 // Redémarrer : le logiciel se ferme proprement (caméra, Stream Deck) et se relance tout seul sur l'accueil.
 $('#btnRestart').onclick = async () => {
