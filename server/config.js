@@ -14,7 +14,7 @@ export const DEFAULTS = {
     menuIdleSec: 30,       // choix du cadre et galerie : retour à l'accueil sans interaction (0 = jamais)
     mirrorPreview: true,
     // Filtres proposés à l'invité sur « On la garde ? » (public/filters.js), appliqués aux photos seulement
-    filters: { enabled: false, available: ['none', 'bw', 'noir', 'sepia', 'vintage', 'warm', 'cool', 'vivid'] },
+    filters: { enabled: false, available: ['none', 'bw', 'noir', 'sepia', 'vintage', 'warm', 'cool', 'vivid'], default: 'none' },
     lensPosition: 'top',   // où est l'objectif par rapport à l'écran : top | bottom | left | right (sens de la flèche « Regardez l'objectif »)
     showName: true,        // affiche le nom à côté du logo
     cursor: 'show',        // curseur de la souris sur la borne : show | idle (masqué après 3 s sans mouvement) | hide

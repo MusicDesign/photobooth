@@ -230,4 +230,7 @@ label.ctl-mode small { margin: 0 !important; color: var(--muted); }
 
 /* Filtres proposés à l'invité (Parcours invité) */
 .filters-title { margin-top: 22px; }
-.filter-picks { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 8px; }
+.filter-table { border-collapse: collapse; margin: 10px 0 6px; font-size: 14px; }
+.filter-table th { font-size: 12px; font-weight: 600; color: var(--muted); text-align: left; padding: 4px 18px 4px 0; }
+.filter-table td { padding: 4px 18px 4px 0; }
+.filter-table td + td, .filter-table th + th { text-align: center; }
