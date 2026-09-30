@@ -56,7 +56,7 @@ export function apiRouter({ booth }) {
   r.post('/session/:id/restart', (req, res) => res.json(booth.restartShots(req.params.id)));
 
   r.post('/session/:id/compose', async (req, res) => {
-    res.json(await booth.composeSession(req.params.id));
+    res.json(await booth.composeSession(req.params.id, { filter: req.body?.filter })); // filter : choisi sur « On la garde ? »
   });
 
   r.post('/session/:id/unlock', (req, res) => {

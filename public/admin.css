@@ -227,3 +227,7 @@ label.ctl-mode small { margin: 0 !important; color: var(--muted); }
 /* Mot de passe masqué + bouton Afficher */
 .pw-row { display: flex; gap: 8px; align-items: center; }
 .pw-row input { flex: 1; }
+
+/* Filtres proposés à l'invité (Parcours invité) */
+.filters-title { margin-top: 22px; }
+.filter-picks { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 8px; }

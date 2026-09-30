@@ -324,3 +324,21 @@ body.deck-ui .gallery-nav .shot-label { margin: 0 auto; } /* compteur de pages s
 body.deck-ui #screen-capture .capture-layout, body.deck-ui #screen-review .review-layout, body.deck-ui #screen-copies .review-layout { flex-direction: column; gap: 20px; }
 body.deck-ui #screen-capture .side, body.deck-ui #screen-review .side, body.deck-ui #screen-copies .side { min-width: 0; width: min(100%, 720px); flex: none; gap: 12px; }
 body.deck-ui #screen-review .final-wrap { flex: 1 1 auto; min-height: 0; }
+
+/* Filtres sur « On la garde ? » : vignettes de la 1re photo, le filtre choisi entouré */
+/* Autant de filtres par ligne que la largeur le permet (vignettes de 64 px au moins), 4 au plus, sur toute la
+   largeur ; 400 px au plus en tout pour ne pas prendre la place de la photo */
+.filter-bar { --gap: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(max(64px, calc((100% - 3 * var(--gap)) / 4)), 1fr)); /* auto-fit : moins de 4 filtres, ils se partagent toute la largeur */ gap: var(--gap); width: 100%; max-width: 400px; }
+.filter-chip { appearance: none; border: 3px solid transparent; background: none; padding: 0; border-radius: 12px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--text); font: inherit; font-size: 12px; font-weight: 700; }
+.filter-chip img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 9px; display: block; pointer-events: none; }
+.filter-chip span { line-height: 1.1; text-align: center; padding: 0 2px 4px; }
+.filter-chip.active { border-color: var(--accent); }
+.filter-chip:focus-visible { outline: 4px solid var(--accent); outline-offset: 2px; }
+/* Montage en cours avec le nouveau filtre : photo assombrie, jamais transparente (le fond ne doit pas apparaître) */
+#screen-review.filtering .final-img { filter: brightness(0.55); transition: filter 0.2s; }
+/* Portrait avec filtres : photo un peu plus petite, pour que filtres et boutons tiennent sous elle */
+@media (orientation: portrait) {
+  #screen-review:has(#filterBar:not(.hidden)) .final-wrap { max-height: 36vh; }
+  #screen-review:has(#filterBar:not(.hidden)) .side { gap: 14px; }
+  #screen-review .filter-bar { max-width: min(400px, 40vh); } /* vignettes à la mesure de la hauteur restante */
+}

@@ -493,6 +493,23 @@ async function runSteps(app, camera) {
     assert.equal((await j(`/api/admin/templates/${g.id}`, { method: 'DELETE', headers: ADMIN })).status, 200);
   });
 
+  await step('filtres : refusés tant que désactivés, noir & blanc sur les photos seulement, gardé à la reprise', async () => {
+    const s = (await post('/api/session', { templateId: tplA.id })).data;
+    await shot(s.id, 0);
+    assert.equal((await post(`/api/session/${s.id}/compose`, { filter: 'bw' })).data.error, 'FILTER', 'filtres désactivés');
+    await put('/api/admin/config', { booth: { filters: { enabled: true, available: ['none', 'bw', 'sepia'] } } }, ADMIN);
+    assert.equal((await post(`/api/session/${s.id}/compose`, { filter: 'vivid' })).data.error, 'FILTER', 'filtre non proposé');
+    const c = (await post(`/api/session/${s.id}/compose`, { filter: 'bw' })).data;
+    assert.equal(c.filter, 'bw');
+    const file = path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s.id, 'final.jpg');
+    const px = async (x, y) => [...await sharp(file).extract({ left: x, top: y, width: 1, height: 1 }).raw().toBuffer()];
+    const photo = await px(900, 500); assert.ok(Math.max(...photo) - Math.min(...photo) <= 3, `photo en gris : ${photo}`);
+    const band = await px(50, 1100); assert.ok(band[0] > 200 && band[1] < 60, `cadre gardé en couleur (bande rouge) : ${band}`);
+    const back = (await post(`/api/session/${s.id}/compose`, { filter: 'none' })).data;
+    assert.equal(back.filter, 'none');
+    await put('/api/admin/config', { booth: { filters: { enabled: false } } }, ADMIN);
+  });
+
   await step('boomerang : vidéo filmée, aller-retour, jamais imprimé, nouvelle vidéo = reprise', async () => {
     const b = (await post('/api/admin/templates', { name: 'Boomerang soirée', kind: 'boomerang', format: '10x15-paysage' }, ADMIN)).data;
     assert.equal(b.kind, 'boomerang');
@@ -538,6 +555,10 @@ async function runSteps(app, camera) {
       assert.equal(dl.headers.get('content-type'), 'video/mp4');
     }
     assert.ok(!phone.includes(`Session ${s.id}`), 'numéro de session caché aux invités');
+    // Vignette des filtres : l'adresse de la 1re image de la vidéo (sous-dossier clip-…) doit répondre
+    const firstFrame = (await j(`/api/session/${s.id}`)).data.shots[0].url;
+    assert.ok(/\/clip-\d+\/f-001\.jpg$/.test(firstFrame), firstFrame);
+    assert.equal((await fetch(`${base}${firstFrame}`)).status, 200, `image introuvable : ${firstFrame}`);
     const again = (await post(`/api/session/${s.id}/clip`, {})).data;
     assert.equal(again.session.retakes, 1, 'nouvelle vidéo comptée comme reprise');
     await post(`/api/session/${s.id}/compose`, {});

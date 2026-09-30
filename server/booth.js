@@ -7,6 +7,7 @@ import { wifiStatus } from './network.js';
 import { samplePhotos } from './samples.js';
 import { compose, composeGif, composeBoomerang, thumbnail, normalizeShot } from './compositor.js';
 import { BOOMERANG_FPS, isAnimatedKind } from './templates.js';
+import { FILTER_IDS } from '../public/filters.js';
 import { shotMatte } from './cutout-ai.js';
 
 /**
@@ -35,7 +36,7 @@ function removeShotFiles(sh) {
 /** Version du code de la borne (date de modification des fichiers servis) : la page se recharge si elle change. */
 function clientVersion() {
   let v = 0;
-  for (const f of ['index.html', 'booth.js', 'booth.css', 'template-render.js', 'cutout.js', 'cutout-live.js']) {
+  for (const f of ['index.html', 'booth.js', 'booth.css', 'template-render.js', 'cutout.js', 'cutout-live.js', 'filters.js']) {
     try { v = Math.max(v, fs.statSync(path.join(PUBLIC_DIR, f)).mtimeMs); } catch { /* absent */ }
   }
   return Math.round(v);
@@ -352,7 +353,8 @@ export class Booth {
   view(s) {
     const cfg = this.cfg();
     const template = this.templates.items.get(s.templateId);
-    const urlFor = (file) => (file ? `/output/sessions/${s.id}/${path.basename(file)}` : null);
+    // Chemin depuis le dossier de la session : les images d'un boomerang sont dans un sous-dossier clip-…
+    const urlFor = (file) => (file ? `/output/sessions/${s.id}/${path.relative(this.sessionDir(s.id), file).split(path.sep).join('/')}` : null);
     return {
       id: s.id,
       eventId: s.eventId,
@@ -360,6 +362,7 @@ export class Booth {
       templateId: s.templateId,
       templateName: template?.name || s.templateId,
       gif: isAnimatedKind(s.kind), // GIF ou boomerang : numérique uniquement
+      filter: s.filter || 'none',
       kind: s.kind || 'photo',
       status: s.status,
       shotsExpected: template?.shots ?? s.shots.length,
@@ -519,9 +522,21 @@ export class Booth {
     return { session: this.view(s) };
   }
 
-  async composeSession(id) {
+  /**
+   * Montage final. filter : filtre choisi par l'invité sur « On la garde ? » (photos seulement), parmi ceux
+   * proposés dans l'admin ; sans lui, on garde celui de la session (couleur au départ).
+   */
+  async composeSession(id, { filter } = {}) {
     const s = this.load(id);
     const template = this.templates.get(s.templateId);
+    if (filter !== undefined) {
+      const f = this.cfg().booth.filters || {};
+      if (filter !== 'none' && (!f.enabled || !FILTER_IDS.includes(filter) || !(f.available || FILTER_IDS).includes(filter))) {
+        throw new HttpError(400, 'FILTER', 'Filtre non proposé');
+      }
+      s.filter = filter;
+    }
+    const opts = { mirror: !!s.mirror, filter: s.filter || 'none' };
     const missing = s.shots.findIndex((sh) => !sh);
     if (missing >= 0) throw new HttpError(409, 'SHOTS_MISSING', `Il manque la photo ${missing + 1}`);
     const dir = this.sessionDir(s.id);
@@ -532,14 +547,14 @@ export class Booth {
     if (boomerang) {
       const poster = path.join(dir, 'poster.jpg');
       const frames = s.shots[0].frames?.length ? s.shots[0].frames : [s.shots[0].file];
-      finalFile = await composeBoomerang(template, frames, path.join(dir, 'final'), { mirror: !!s.mirror, posterFile: poster });
+      finalFile = await composeBoomerang(template, frames, path.join(dir, 'final'), { ...opts, posterFile: poster });
       await thumbnail(poster, thumbFile);
     } else if (gif) {
       const poster = path.join(dir, 'poster.jpg');
-      await composeGif(template, s.shots.map((sh) => sh.file), finalFile, { mirror: !!s.mirror, posterFile: poster });
+      await composeGif(template, s.shots.map((sh) => sh.file), finalFile, { ...opts, posterFile: poster });
       await thumbnail(poster, thumbFile); // miniature fixe : la galerie reste légère
     } else {
-      await compose(template, s.shots.map((sh) => sh.file), finalFile, { mirror: !!s.mirror });
+      await compose(template, s.shots.map((sh) => sh.file), finalFile, opts);
       await thumbnail(finalFile, thumbFile);
     }
     s.final = { file: finalFile, thumb: thumbFile, composedAt: new Date().toISOString() };
