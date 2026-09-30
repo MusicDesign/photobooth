@@ -1,6 +1,7 @@
 /* Interface tactile de la borne. Vanilla JS, aucune dépendance. */
 import { renderTemplate, loadAssets } from './template-render.js';
 import { createCutter, preloadAi } from './cutout-live.js';
+import { FILTERS } from './filters.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -953,8 +954,14 @@ function showReview() {
   $('#btnKeep').textContent = (s.gif && texts.keepGif) || texts.keep || '';
   $('#btnRetake').classList.toggle('hidden', s.retakesLeft !== null && s.retakesLeft <= 0); // null = reprises illimitées
   $('#retakeChooser').classList.add('hidden');
+  renderFilterBar();
   showScreen('review');
+  startReviewTimeout();
+}
 
+/** Validation automatique de la relecture : barre qui se vide, puis « Je la garde ». Relancée à chaque filtre choisi. */
+function startReviewTimeout() {
+  clearTimer('reviewTimeout');
   const total = (state.boot.limits.reviewTimeoutSec || 0) * 1000;
   const fill = $('#timeoutFill');
   fill.style.transition = 'none';
@@ -987,6 +994,46 @@ function onRetakeClick() {
     ch.appendChild(b);
   });
   ch.classList.remove('hidden');
+}
+
+/**
+ * Filtres sur « On la garde ? » (option de l'admin) : une vignette par filtre (la 1re photo, filtre CSS
+ * approché) ; au choix, le serveur refait le montage avec le vrai filtre, sur les photos seulement.
+ */
+function renderFilterBar() {
+  const bar = $('#filterBar');
+  const f = state.boot.booth.filters || {};
+  const list = f.enabled ? FILTERS.filter((x) => (f.available || []).includes(x.id)) : [];
+  bar.classList.toggle('hidden', list.length < 2);
+  if (list.length < 2) { bar.innerHTML = ''; return; }
+  const s = state.session;
+  const src = s.shots.find(Boolean)?.url;
+  const current = s.filter || 'none';
+  bar.innerHTML = list.map((x) => `<button class="filter-chip${x.id === current ? ' active' : ''}" data-filter="${x.id}">
+      <img src="${src}" alt="" style="filter:${x.css};${s.mirror ? 'transform:scaleX(-1);' : ''}"><span>${x.name}</span></button>`).join('');
+  bar.querySelectorAll('.filter-chip').forEach((b) => b.addEventListener('click', () => chooseFilter(b.dataset.filter)));
+}
+
+async function chooseFilter(id) {
+  const s = state.session;
+  if (state.filtering || (s.filter || 'none') === id) return;
+  state.filtering = true;
+  clearTimer('reviewTimeout');
+  $('#screen-review').classList.add('filtering');
+  $('#btnKeep').disabled = true;
+  $$('.filter-chip').forEach((b) => b.classList.toggle('active', b.dataset.filter === id));
+  try {
+    state.session = await api(`/api/session/${s.id}/compose`, { method: 'POST', body: { filter: id } });
+    showMedia($('#finalImg'), $('#finalVideo'), `${state.session.final.url}?t=${Date.now()}`, state.session.final.video);
+  } catch (e) {
+    toast(e.message, 5000);
+  } finally {
+    state.filtering = false;
+    $('#screen-review').classList.remove('filtering');
+    $('#btnKeep').disabled = false;
+    renderFilterBar();
+    if (state.screen === 'review') startReviewTimeout();
+  }
 }
 
 /** GIF : toutes les poses sont reprises. */
@@ -1345,7 +1392,7 @@ function bindPhotoSwipe() {
 // La borne décrit ses actions visibles au serveur (qui les dessine), et exécute les appuis reçus
 // comme des clics. Même chemin que le tactile : aucune logique propre au Stream Deck.
 
-const CHOICE_CLASSES = ['template-card', 'retake-thumb', 'gallery-thumb'];
+const CHOICE_CLASSES = ['template-card', 'retake-thumb', 'gallery-thumb', 'filter-chip'];
 
 function deckKind(el) {
   if (CHOICE_CLASSES.some((c) => el.classList.contains(c))) return 'choice';
@@ -1478,7 +1525,8 @@ function deckItems() {
     const glyph = { minus: '−', plus: '+' }[el.dataset.icon]; // boutons dont l'icône est dessinée en CSS
     const label = glyph || (el.querySelector('.template-name, span')?.textContent || el.textContent || el.getAttribute('aria-label') || '').trim();
     // Miniature sur la touche, sauf pour les cadres : leur nom, plus lisible qu'un cadre réduit à 72 px
-    const image = CHOICE_CLASSES.some((c) => el.classList.contains(c)) && !el.classList.contains('template-card') ? deckThumb(el) : null;
+    // Cadres et filtres : leur nom sur la touche, plus lisible qu'une vignette réduite à 72 px
+    const image = CHOICE_CLASSES.some((c) => el.classList.contains(c)) && !el.classList.contains('template-card') && !el.classList.contains('filter-chip') ? deckThumb(el) : null;
     let icon = DECK_ICONS[el.id] || { del: 'delete', ok: 'check' }[el.dataset.k] || null; // pavé du code : ⌫ et OK en pictogrammes
     // « Sans impression » : QR code seulement s'il s'affichera vraiment (Wi-Fi, option active), sinon retour à l'accueil
     if (el.id === 'btnNoPrint' && state.boot.share?.qrOnDone === false) icon = 'home';
@@ -1529,7 +1577,7 @@ function onKeyDown(e) {
       e.preventDefault();
       return;
     }
-    const choices = [...root.querySelectorAll('.template-card, .retake-thumb, .gallery-thumb')].filter(visible);
+    const choices = [...root.querySelectorAll('.template-card, .retake-thumb, .gallery-thumb, .filter-chip')].filter(visible);
     if (e.key === ' ' || e.key === 'Enter') {
       if (root.id === 'screen-idle') { onIdleTap(); done = true; }
       else if (choices.includes(document.activeElement)) done = act(document.activeElement);

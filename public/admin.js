@@ -1,5 +1,6 @@
 /* Page d'administration : réglages, thème, templates (éditeur de calques), compteurs, sessions. */
 import { renderTemplate, loadAssets, loadImage } from './template-render.js';
+import { FILTERS } from './filters.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -162,6 +163,10 @@ function flow() {
         <label>Validation automatique de la relecture (secondes, 0 = jamais) <input name="reviewTimeoutSec" type="number" min="0" max="300" value="${l.reviewTimeoutSec}"></label>
         <label class="inline"><input name="mirrorPreview" type="checkbox" ${b.mirrorPreview ? 'checked' : ''}> Aperçu en miroir (plus naturel pour l'invité)</label>
         <small>La photo finale est retournée elle aussi : chacun reste là où il s'est vu par rapport aux éléments du template. Un texte dans la scène (t-shirt, pancarte) sort à l'envers.</small>
+        <h3 class="filters-title">Filtres</h3>
+        <label class="inline"><input name="filtersEnabled" type="checkbox" ${b.filters?.enabled ? 'checked' : ''}> Proposer des filtres à l'invité</label>
+        <small>Sur « On la garde ? » : l'invité choisit un filtre sous sa photo avant de la garder ou de l'imprimer. Il s'applique à ses photos, pas au cadre du template. GIF et boomerangs compris.</small>
+        <div class="filter-picks">${FILTERS.filter((f) => f.id !== 'none').map((f) => `<label class="inline"><input type="checkbox" name="filter_${f.id}" ${(b.filters?.available || FILTERS.map((x) => x.id)).includes(f.id) ? 'checked' : ''}> ${esc(f.name)}</label>`).join('')}</div>
       </div>
       <div>
         <h3>Retours automatiques à l'accueil</h3>
@@ -2043,7 +2048,11 @@ function bindSettingsForms() {
       reviewTimeoutSec: num(fd, 'reviewTimeoutSec'),
       captureTimeoutSec: num(fd, 'captureTimeoutSec')
     },
-    booth: { mirrorPreview: fd.get('mirrorPreview') === 'on', idleReturnSec: num(fd, 'idleReturnSec'), menuIdleSec: num(fd, 'menuIdleSec') }
+    booth: {
+      mirrorPreview: fd.get('mirrorPreview') === 'on', idleReturnSec: num(fd, 'idleReturnSec'), menuIdleSec: num(fd, 'menuIdleSec'),
+      // « Couleur » (sans filtre) toujours proposée, en premier
+      filters: { enabled: fd.get('filtersEnabled') === 'on', available: ['none', ...FILTERS.filter((f) => f.id !== 'none' && fd.get(`filter_${f.id}`) === 'on').map((f) => f.id)] }
+    }
   }));
   form('#formPrintLimits', (fd) => saveConfig({ limits: {
     maxCopiesPerSession: num(fd, 'maxCopiesPerSession'),

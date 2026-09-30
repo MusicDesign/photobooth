@@ -4,6 +4,7 @@ import { FONTS, GIF_MAX_SIDE, BOOMERANG_SPEEDS, BOOMERANG_MAX_SIDE } from './tem
 import { chromaKey, applyMatte, aiMatteRange } from '../public/cutout.js';
 import { shotMatte, adjustContour, cleanEdges } from './cutout-ai.js';
 import { ffmpegPath, encodeMp4 } from './video.js';
+import { applyFilter } from '../public/filters.js';
 
 /**
  * Rendu du template pour l'impression : chaque calque est dessiné dans l'ordre,
@@ -100,7 +101,7 @@ async function cutout(img, l, file, mirror) {
   return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
 }
 
-async function renderLayer(l, { template, shotFiles, mirror }) {
+async function renderLayer(l, { template, shotFiles, mirror, filter }) {
   const W = template.width;
   const H = template.height;
   switch (l.type) {
@@ -111,6 +112,7 @@ async function renderLayer(l, { template, shotFiles, mirror }) {
       if (mirror) img = img.flop(); // photo en miroir, comme l'aperçu : chacun reste là où il s'est vu par rapport au cadre
       img = img.resize(l.width, l.height, { fit: 'cover', position: 'centre' });
       let buf = l.cutout && l.cutout !== 'none' ? await cutout(img, l, file, mirror) : await img.png().toBuffer();
+      if (filter && filter !== 'none') buf = await filtered(buf, filter); // après le détourage : fond vert reconnu en couleur
       buf = await roundCorners(buf, l.width, l.height, l.radius);
       buf = await withOpacity(buf, l.opacity);
       return placeLayer(buf, l, W, H);
@@ -132,19 +134,26 @@ async function renderLayer(l, { template, shotFiles, mirror }) {
 }
 
 /** Tous les calques assemblés sur le fond (sharp prêt à écrire). */
-async function render(template, shotFiles, mirror) {
+/** Filtre de l'invité (public/filters.js) sur une photo, transparence du détourage gardée. */
+async function filtered(buf, filter) {
+  const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  applyFilter(data, filter);
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
+}
+
+async function render(template, shotFiles, mirror, filter = 'none') {
   const layers = [];
   for (const l of template.layers) {
     if (l.visible === false) continue;
-    const placed = await renderLayer(l, { template, shotFiles, mirror });
+    const placed = await renderLayer(l, { template, shotFiles, mirror, filter });
     if (placed) layers.push(placed);
   }
   return sharp({ create: { width: template.width, height: template.height, channels: 3, background: template.background || '#ffffff' } })
     .composite(layers);
 }
 
-export async function compose(template, shotFiles, outFile, { mirror = false } = {}) {
-  await (await render(template, shotFiles, mirror)).jpeg({ quality: 92, chromaSubsampling: '4:4:4' }).toFile(outFile);
+export async function compose(template, shotFiles, outFile, { mirror = false, filter = 'none' } = {}) {
+  await (await render(template, shotFiles, mirror, filter)).jpeg({ quality: 92, chromaSubsampling: '4:4:4' }).toFile(outFile);
   return outFile;
 }
 
@@ -153,12 +162,12 @@ export async function compose(template, shotFiles, outFile, { mirror = false } =
  * à GIF_MAX_SIDE, puis assemblée en animation qui boucle. Aller-retour : 1 2 3 2, puis on recommence.
  * posterFile : première image en JPEG (miniatures de la galerie).
  */
-export async function composeGif(template, frameFiles, outFile, { mirror = false, posterFile = null } = {}) {
+export async function composeGif(template, frameFiles, outFile, { mirror = false, posterFile = null, filter = 'none' } = {}) {
   const k = Math.min(1, GIF_MAX_SIDE / Math.max(template.width, template.height));
   const w = Math.round(template.width * k), h = Math.round(template.height * k);
   const frames = [];
   for (const file of frameFiles) {
-    const full = await (await render(template, [file], mirror)).jpeg({ quality: 95 }).toBuffer();
+    const full = await (await render(template, [file], mirror, filter)).jpeg({ quality: 95 }).toBuffer();
     frames.push(await sharp(full).resize(w, h).jpeg({ quality: 95 }).toBuffer());
   }
   if (posterFile) await sharp(frames[0]).toFile(posterFile);
@@ -185,13 +194,13 @@ export async function normalizeShot(inputBuffer, outFile) {
  * d'une image à l'autre réutilisés) : environ 1 Mo au lieu de 10.
  * outBase : chemin sans extension. Rend le fichier écrit (.mp4 ou .gif). posterFile : image du milieu (miniatures).
  */
-export async function composeBoomerang(template, frameFiles, outBase, { mirror = false, posterFile = null } = {}) {
+export async function composeBoomerang(template, frameFiles, outBase, { mirror = false, posterFile = null, filter = 'none' } = {}) {
   const video = !!ffmpegPath();
   const side = video ? BOOMERANG_MAX_SIDE : 480;
   const small = scaleTemplate(template, Math.min(1, side / Math.max(template.width, template.height)));
   const frames = [];
   for (const file of frameFiles) {
-    let img = await (await render(small, [file], mirror)).jpeg({ quality: 92 }).toBuffer();
+    let img = await (await render(small, [file], mirror, filter)).jpeg({ quality: 92 }).toBuffer();
     if (!video) img = await sharp(img).median(3).jpeg({ quality: 92 }).toBuffer(); // bruit du capteur : le GIF le compresse mal
     frames.push(img);
   }
