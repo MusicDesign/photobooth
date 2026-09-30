@@ -1,5 +1,6 @@
 /* Page d'administration : réglages, thème, templates (éditeur de calques), compteurs, sessions. */
 import { renderTemplate, loadAssets, loadImage } from './template-render.js';
+import { FILTERS } from './filters.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -104,6 +105,7 @@ function dashboard() {
   const stat = (v, l, cls = '') => `<div class="stat ${cls}"><div class="v">${v}</div><div class="l">${l}</div></div>`;
   return `
   <h2>Tableau de bord</h2>
+  ${(S.dataWarnings || []).map((w) => `<div class="alert">${esc(w)}</div>`).join('')}
   <p class="sub">Événement en cours : <b>${esc(c.eventName)}</b> · <a href="#sessions">changer ou en créer un</a></p>
   <div class="grid">
     ${stat(c.printed, 'tirages imprimés')}
@@ -161,6 +163,20 @@ function flow() {
         <label>Validation automatique de la relecture (secondes, 0 = jamais) <input name="reviewTimeoutSec" type="number" min="0" max="300" value="${l.reviewTimeoutSec}"></label>
         <label class="inline"><input name="mirrorPreview" type="checkbox" ${b.mirrorPreview ? 'checked' : ''}> Aperçu en miroir (plus naturel pour l'invité)</label>
         <small>La photo finale est retournée elle aussi : chacun reste là où il s'est vu par rapport aux éléments du template. Un texte dans la scène (t-shirt, pancarte) sort à l'envers.</small>
+        <h3 class="filters-title">Filtres</h3>
+        <label class="inline"><input name="filtersEnabled" type="checkbox" ${b.filters?.enabled ? 'checked' : ''}> Proposer des filtres à l'invité</label>
+        <small>Sur « On la garde ? » : l'invité choisit un filtre sous sa photo avant de la garder ou de l'imprimer. Il s'applique à ses photos, pas au cadre du template. GIF et boomerangs compris.</small>
+        <table class="filter-table">
+          <thead><tr><th>Filtre</th><th>Proposé</th><th>Par défaut</th></tr></thead>
+          <tbody>${FILTERS.map((f) => {
+            const avail = b.filters?.available || FILTERS.map((x) => x.id);
+            const def = b.filters?.default || 'none';
+            return `<tr><td>${esc(f.name)}</td>
+              <td><input type="checkbox" name="filter_${f.id}" ${avail.includes(f.id) ? 'checked' : ''} aria-label="Proposer ${esc(f.name)}"></td>
+              <td><input type="radio" name="filterDefault" value="${f.id}" ${def === f.id ? 'checked' : ''} aria-label="${esc(f.name)} par défaut"></td></tr>`;
+          }).join('')}</tbody>
+        </table>
+        <small>Le filtre par défaut est appliqué d'emblée à la photo ; l'invité peut en choisir un autre parmi ceux proposés (le défaut l'est d'office). Sans choix proposé à l'invité, le filtre par défaut s'applique à toutes les photos.</small>
       </div>
       <div>
         <h3>Retours automatiques à l'accueil</h3>
@@ -538,6 +554,9 @@ function discardCalibration() {
 function closeCalibration() {
   if (['running', 'results', 'error'].includes(CAL.stage)) discardCalibration();
   clearInterval(CAL.timer);
+  // Aperçu rendu tout de suite : sans ça, la connexion peut rester ouverte et le live view du boîtier continuer
+  const live = $('#coLive');
+  if (live) { live.src = ''; live.removeAttribute('src'); }
   $('#calibOverlay')?.remove();
   document.removeEventListener('keydown', calibKeys);
   CAL.stage = null;
@@ -558,7 +577,7 @@ function renderCalibration() {
   const c = CTL.calibration;
   const head = (title, sub = '') => `<header class="co-head"><div><h2>${title}</h2>${sub ? `<p>${sub}</p>` : ''}</div>
     ${['preview', 'results', 'error'].includes(CAL.stage) ? '<button class="btn ghost" type="button" id="coClose">Fermer</button>' : ''}</header>`;
-  const live = `<div class="co-live"><img id="coLive" src="/api/live.mjpeg?t=${Date.now()}" alt="Aperçu du boîtier"></div>`;
+  const live = `<div class="co-live"><img id="coLive" src="/api/live.mjpeg?calib=1&t=${Date.now()}" alt="Aperçu du boîtier"></div>`;
 
   if (CAL.stage === 'preview') {
     ov.innerHTML = `${head('Calibrage du boîtier', 'Cadre la photo comme pour l\'événement, puis lance : un décompte laisse le temps de se placer.')}
@@ -673,12 +692,16 @@ function openLightbox(url, alt = 'Photo de test', list = null, index = 0) {
   lb.id = 'calibLightbox';
   lb.className = 'co-lightbox';
   const nav = items.length > 1;
-  lb.innerHTML = `<img alt="">
+  lb.innerHTML = `<img alt=""><video class="hidden" autoplay loop muted playsinline></video>
     ${nav ? '<button class="lb-arrow prev" type="button" aria-label="Photo précédente">‹</button><button class="lb-arrow next" type="button" aria-label="Photo suivante">›</button>' : ''}
     <div class="lb-bar">${nav ? '<span class="lb-count"></span>' : ''}<button class="btn" type="button">Fermer</button></div>`;
   const img = lb.querySelector('img');
+  const video = lb.querySelector('video');
   const show = () => {
-    img.src = items[i].url;
+    const isVideo = /\.mp4(\?|$)/i.test(items[i].url); // boomerang
+    img.classList.toggle('hidden', isVideo);
+    video.classList.toggle('hidden', !isVideo);
+    if (isVideo) { img.removeAttribute('src'); video.src = items[i].url; } else { video.removeAttribute('src'); img.src = items[i].url; }
     img.alt = items[i].alt || '';
     if (!nav) return;
     lb.querySelector('.lb-count').textContent = `${i + 1} / ${items.length}`;
@@ -783,7 +806,7 @@ function sessions() {
       <td><span class="badge ${s.status === 'done' ? 'ok' : s.status === 'error' ? 'err' : ''}">${esc(s.status)}</span>${s.error ? `<br><small>${esc(s.error)}</small>` : ''}</td>
       <td>${s.copies}</td>
       <td>${S.events.length > 1 ? `<select class="small" data-move="${esc(s.id)}" title="Déplacer vers un autre événement">${moveOptions(s)}</select>` : ''}</td>
-      <td class="actions">${s.final ? `${s.gif ? '' : `<button class="btn small secondary" data-reprint="${esc(s.id)}">Réimprimer</button> `}<button class="btn small" type="button" data-view="${esc(s.final.url)}" data-alt="${s.gif ? 'GIF' : 'Photo'} ${esc(s.id)}">Voir</button> ` : ''}<button class="btn small danger" data-del-session="${esc(s.id)}" ${s.status === 'printing' ? 'disabled title="Impression en cours"' : ''}>Supprimer</button></td>
+      <td class="actions">${s.final ? `${s.gif || S.printer?.available === false ? '' : `<button class="btn small secondary" data-reprint="${esc(s.id)}">Réimprimer</button> `}<button class="btn small" type="button" data-view="${esc(s.final.url)}" data-alt="${s.gif ? 'GIF' : 'Photo'} ${esc(s.id)}">Voir</button> ` : ''}<button class="btn small danger" data-del-session="${esc(s.id)}" ${s.status === 'printing' ? 'disabled title="Impression en cours"' : ''}>Supprimer</button></td>
     </tr>`).join('');
 
   const exp = (content, label, n) => n
@@ -902,7 +925,7 @@ function wifiCard() {
           <option value="WPA" ${open ? '' : 'selected'}>WPA / WPA2 (mot de passe)</option>
           <option value="nopass" ${open ? 'selected' : ''}>Réseau ouvert (sans mot de passe)</option>
         </select></label>
-        <label>Mot de passe <input name="password" value="${esc(w.password)}" autocomplete="off" ${open ? 'disabled' : ''}></label>
+        <label>Mot de passe <span class="pw-row"><input name="password" type="password" value="${esc(w.password)}" autocomplete="off" ${open ? 'disabled' : ''}><button type="button" class="btn small" data-pw-toggle>Afficher</button></span></label>
       </div>
     </div>
     ${w.enabled && (!w.ssid || (!open && !w.password)) ? '<div class="alert">Nom du réseau ou mot de passe manquant : le QR code n\'est pas affiché.</div>' : ''}
@@ -1871,6 +1894,12 @@ function bindSection(sec) {
   }
 
   bindSettingsForms();
+  // Mots de passe masqués : un bouton pour les afficher le temps de les vérifier
+  document.querySelectorAll('[data-pw-toggle]').forEach((b) => b.addEventListener('click', () => {
+    const input = b.previousElementSibling;
+    input.type = input.type === 'password' ? 'text' : 'password';
+    b.textContent = input.type === 'password' ? 'Afficher' : 'Masquer';
+  }));
 
   if (sec === 'theme') {
     const form = $('#formTheme');
@@ -2029,7 +2058,15 @@ function bindSettingsForms() {
       reviewTimeoutSec: num(fd, 'reviewTimeoutSec'),
       captureTimeoutSec: num(fd, 'captureTimeoutSec')
     },
-    booth: { mirrorPreview: fd.get('mirrorPreview') === 'on', idleReturnSec: num(fd, 'idleReturnSec'), menuIdleSec: num(fd, 'menuIdleSec') }
+    booth: {
+      mirrorPreview: fd.get('mirrorPreview') === 'on', idleReturnSec: num(fd, 'idleReturnSec'), menuIdleSec: num(fd, 'menuIdleSec'),
+      // Le filtre par défaut est forcément proposé
+      filters: (() => {
+        const def = fd.get('filterDefault') || 'none';
+        const available = FILTERS.filter((f) => f.id === def || fd.get(`filter_${f.id}`) === 'on').map((f) => f.id);
+        return { enabled: fd.get('filtersEnabled') === 'on', available, default: def };
+      })()
+    }
   }));
   form('#formPrintLimits', (fd) => saveConfig({ limits: {
     maxCopiesPerSession: num(fd, 'maxCopiesPerSession'),
@@ -2081,7 +2118,7 @@ function showLogin() {
     try {
       await api('/api/admin/login', { method: 'POST', body: { pin: $('#loginPin').value } });
       await boot();
-    } catch (err) { $('#loginError').textContent = err.message; }
+    } catch (err) { $('#loginError').textContent = err.message; $('#loginPin').value = ''; } // nouvelle saisie (clavier ou Stream Deck)
   };
 }
 
@@ -2205,14 +2242,24 @@ function sendDeckUi() {
     deckSock.send(JSON.stringify({ type: 'ui', screen: `admin-calib-${CAL.stage}`, items: calibDeckItems(), colors: S?.theme?.colors || {} }));
     return;
   }
+  // Écran de connexion : pavé du code sur les touches (comme le code opérateur de la borne), puis retour
+  if (!shell && !$('#login').classList.contains('hidden')) {
+    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'].map((k) => (
+      k === 'del' ? { id: 'pin-del', label: '⌫', icon: 'delete', kind: 'ghost' }
+        : k === 'ok' ? { id: 'pin-ok', label: 'OK', icon: 'check', kind: 'primary' }
+          : { id: `pin-${k}`, label: k, kind: 'ghost' }));
+    keys.push({ id: 'btnBooth', label: 'Retour à la borne', icon: 'back', kind: 'ghost' });
+    deckSock.send(JSON.stringify({ type: 'ui', screen: 'pin', items: keys, colors: S?.theme?.colors || {} }));
+    return;
+  }
   let items;
   if (dlg.open) {
     items = [{ id: 'cfOk', label: $('#cfOk').textContent, icon: $('#cfOk').dataset.icon || 'power', kind: 'primary', style: DECK_DANGER }, { id: 'cfCancel', label: 'Annuler', icon: 'x', kind: 'ghost' }];
   } else {
     items = [{ id: 'btnBooth', label: 'Retour à la borne', icon: 'back', kind: 'ghost' }];
     if (shell) items.push({ id: 'btnLogout', label: 'Déconnexion', icon: 'logout', kind: 'ghost' });
-    // Calibrage du boîtier lançable depuis le Stream Deck (boîtier gphoto2 branché)
-    if (shell && S?.camera?.driver === 'gphoto2') items.push({ id: 'deckCalib', label: 'Calibrer', icon: 'camera', kind: 'ghost' });
+    // Calibrage du boîtier lançable depuis le Stream Deck : toujours là, grisé tant qu'aucun boîtier n'est branché
+    if (shell) items.push({ id: 'deckCalib', label: 'Calibrer', icon: 'camera', kind: 'ghost', disabled: !calibReady() });
     // Redémarrer et éteindre sur la rangée du haut, retour et déconnexion en bas
     if (shell && !$('#btnRestart').classList.contains('hidden')) items.push({ id: 'btnRestart', label: 'Redémarrer', icon: 'retake', kind: 'primary', style: { bg: '#2f6fdd', fg: '#ffffff', border: null } });
     if (shell && !$('#btnShutdown').classList.contains('hidden')) items.push({ id: 'btnShutdown', label: 'Éteindre', icon: 'power', kind: 'primary', style: DECK_DANGER });
@@ -2220,8 +2267,39 @@ function sendDeckUi() {
   deckSock.send(JSON.stringify({ type: 'ui', screen: dlg.open ? 'admin-confirm' : 'admin', items, colors: S?.theme?.colors || {} }));
 }
 
+/** Boîtier gphoto2 branché et joignable : le calibrage peut se lancer. */
+const calibReady = () => S?.camera?.driver === 'gphoto2' && S.camera.ok !== false;
+
+/**
+ * Matériel branché ou débranché : état relu (en mémoire côté serveur, rien n'est envoyé au boîtier), touche du
+ * calibrage mise à jour sans recharger. Au message du serveur, et toutes les 5 s (boîtier rebranché sans
+ * changement de pilote, par exemple pilote « gphoto2 » imposé).
+ */
+async function refreshDevices() {
+  if (!S) return;
+  const before = calibReady();
+  try {
+    const d = await api('/api/admin/devices');
+    S.camera = d.camera;
+    S.devices = d.devices;
+  } catch { return; }
+  if (calibReady() !== before) sendDeckUi();
+}
+setInterval(() => { if (document.visibilityState === 'visible') refreshDevices(); }, 5000);
+
+/** Touche du pavé du Stream Deck sur l'écran de connexion : tape dans le champ du code, ⌫ efface, OK valide. */
+function deckPinKey(id) {
+  const input = $('#loginPin');
+  const k = id.slice(4);
+  $('#loginError').textContent = '';
+  if (k === 'del') input.value = input.value.slice(0, -1);
+  else if (k === 'ok') $('#loginForm').requestSubmit();
+  else if (input.value.length < 12) input.value += k;
+}
+
 function onDeckPress(id) {
-  if (id === 'deckCalib') { if (!CAL.stage) openCalibration('preview'); return; }
+  if (id.startsWith('pin-')) { if (!$('#login').classList.contains('hidden')) deckPinKey(id); return; }
+  if (id === 'deckCalib') { if (!CAL.stage && calibReady()) openCalibration('preview'); return; }
   if (CAL.stage === 'preview' && (id === 'btnMinus' || id === 'btnPlus')) { // délai du décompte, un cran à la fois
     const i = CALIB_DELAYS.indexOf(CAL.countdown) + (id === 'btnPlus' ? 1 : -1);
     if (i >= 0 && i < CALIB_DELAYS.length) setCalibDelay(CALIB_DELAYS[i]);
@@ -2242,6 +2320,7 @@ function onDeckPress(id) {
     try { msg = JSON.parse(ev.data); } catch { /* ignoré */ }
     if (msg?.type === 'deck') return onDeckPress(msg.id);
     if (msg?.type === 'deckInfo') return;
+    if (msg?.type === 'config') refreshDevices(); // pilote de caméra changé (boîtier branché / débranché), entre autres
     if (S && ['dashboard', 'sessions'].includes(currentSection())) refresh().catch(() => {});
   };
   sock.onclose = () => setTimeout(ws, 3000);

@@ -8,7 +8,8 @@ export function apiRouter({ booth }) {
 
   r.get('/bootstrap', (req, res) => res.json(booth.bootstrap()));
 
-  r.get('/live.mjpeg', (req, res) => booth.camera.attachLiveClient(res));
+  // ?calib=1 : aperçu de l'écran du calibrage (flash pas levé : les premières photos de test sont sans flash)
+  r.get('/live.mjpeg', (req, res) => booth.camera.attachLiveClient(res, { noFlash: req.query.calib === '1' }));
 
   r.post('/session', async (req, res) => {
     res.json(await booth.createSession(req.body?.templateId || null));
@@ -55,7 +56,7 @@ export function apiRouter({ booth }) {
   r.post('/session/:id/restart', (req, res) => res.json(booth.restartShots(req.params.id)));
 
   r.post('/session/:id/compose', async (req, res) => {
-    res.json(await booth.composeSession(req.params.id));
+    res.json(await booth.composeSession(req.params.id, { filter: req.body?.filter })); // filter : choisi sur « On la garde ? »
   });
 
   r.post('/session/:id/unlock', (req, res) => {

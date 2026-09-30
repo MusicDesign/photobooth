@@ -1,44 +1,56 @@
 /**
  * Écran déporté (page /remote, un iPad par exemple) : l'image de la fenêtre de la borne et ses touchers.
  *
- * Image : la fenêtre n'est capturée que si un écran distant la regarde, à chaque changement à l'écran,
- * 12 images par seconde au plus, réduite à 1024 px de large et envoyée en JPEG.
+ * Image : la fenêtre n'est capturée que si un écran distant la regarde, environ 10 fois par seconde, réduite à
+ * 1024 px de large et envoyée en JPEG (une image identique à la précédente n'est pas renvoyée). Capture forcée
+ * (capturePage) plutôt qu'à chaque dessin : fenêtre réduite, recouverte ou écran du Mac en veille, le système
+ * ne dessine plus la fenêtre et l'écran distant restait figé sur une image à moitié chargée.
  * Toucher : rejoué comme un vrai toucher d'écran tactile (protocole de débogage de Chrome), pas comme
  * un clic de souris : la borne se comporte comme sur un écran tactile (boutons affichés, gestes).
  */
+import crypto from 'node:crypto';
+import { powerSaveBlocker } from 'electron';
+
 const MAX_WIDTH = 1024;
-const FRAME_MS = 80;
+const FRAME_MS = 100;
 
 export function createRemoteScreen() {
   let win = null;
   const listeners = new Set();
-  let latest = null; // dernière image peinte, pas encore envoyée
   let timer = null;
-  let subscribed = false;
+  let busy = false;
+  let lastHash = null;
 
-  const encode = () => {
-    if (!latest || !listeners.size) return;
-    let img = latest;
-    latest = null;
-    const { width } = img.getSize();
-    if (width > MAX_WIDTH) img = img.resize({ width: MAX_WIDTH, quality: 'good' });
-    const jpeg = img.toJPEG(65);
-    for (const fn of listeners) fn(jpeg);
+  const grab = async () => {
+    if (busy || !listeners.size || !win || win.isDestroyed()) return;
+    busy = true;
+    try {
+      let img = await win.webContents.capturePage();
+      if (img.isEmpty()) return;
+      const { width } = img.getSize();
+      if (width > MAX_WIDTH) img = img.resize({ width: MAX_WIDTH, quality: 'good' });
+      const jpeg = img.toJPEG(65);
+      const hash = crypto.createHash('md5').update(jpeg).digest('hex');
+      if (hash === lastHash) return; // rien n'a bougé
+      lastHash = hash;
+      for (const fn of listeners) fn(jpeg);
+    } catch { /* fenêtre en cours de fermeture */ } finally {
+      busy = false;
+    }
   };
 
+  let blocker = null; // écran distant connecté : le Mac ne se met pas en veille (la borne s'arrêterait)
   const start = () => {
-    if (subscribed || !win || win.isDestroyed()) return;
-    subscribed = true;
-    win.webContents.beginFrameSubscription(false, (image) => { latest = image; });
-    win.webContents.invalidate(); // une première image tout de suite, même si rien ne bouge
-    timer = setInterval(encode, FRAME_MS);
+    if (timer || !win || win.isDestroyed()) return;
+    if (blocker === null) blocker = powerSaveBlocker.start('prevent-app-suspension');
+    lastHash = null; // une première image tout de suite pour le nouvel écran
+    grab();
+    timer = setInterval(grab, FRAME_MS);
   };
   const stop = () => {
-    if (!subscribed) return;
-    subscribed = false;
     clearInterval(timer);
-    latest = null;
-    try { win.webContents.endFrameSubscription(); } catch { /* fenêtre fermée */ }
+    timer = null;
+    if (blocker !== null) { powerSaveBlocker.stop(blocker); blocker = null; }
   };
 
   const touchDebugger = () => {

@@ -179,6 +179,13 @@ export async function calibrate(cam, { dir, onStep = () => {} }) {
   else best = flashed || shots.slice().sort(byScore)[0];
   const silentNote = flashSilent ? ' Le flash n\'est parti sur aucune photo de la série avec flash : vérifie qu\'il est levé et que « Émission de l\'éclair » est activée dans le menu Contrôle du flash du boîtier, puis recommence.' : '';
   if (flashSilent && !ambient) return { profile: null, shots, reason: `Pas de réglage fiable.${silentNote}` };
+  // Trop sombre sans flash et série avec flash impossible (flash non pilotable, pas levé à la main) : on ne
+  // garde pas une photo noire comme « la lumière du lieu suffit »
+  if (!ambient && !flashed) {
+    const dark = shots.map((sh) => `luminosité ${sh.mean}/255`).join(', ');
+    const why = cam.flashControl ? '' : ' La borne n\'a pas pu lever le flash (flash pas encore reconnu comme pilotable par USB : le boîtier vient peut-être d\'être rallumé, réessayez dans 30 s), et il n\'était pas levé à la main.';
+    return { profile: null, shots, reason: `Pas de réglage fiable : trop sombre sans flash (${dark}).${why} Levez le flash à la main puis recommencez, ou éclairez le lieu.` };
+  }
   if (!best) return { profile: null, shots, reason: 'Aucune photo exploitable.' };
   best.best = true;
   const ambientNote = flashUp ? 'Flash levé à la main dès le départ : pas de vraie photo sans flash.'

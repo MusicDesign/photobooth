@@ -9,5 +9,10 @@ export function parseAutoDetect(stdout) {
   return String(stdout).split('\n').map((l) => /^(.*?)\s+(usb:\S*)\s*$/i.exec(l)).filter(Boolean).map((m) => ({ model: displayName(m[1].trim()) || 'Boîtier', port: m[2] }));
 }
 
-// gphoto2 n'a qu'une fiche pour tous les iPhone, « Apple iPhone 5 (PTP mode) », quel que soit le modèle branché
-const displayName = (model) => model.replace(/^Apple iPhone \d+[a-z]*\s*\(PTP mode\)$/i, 'iPhone (mode PTP)');
+// Noms plus justes que ceux de gphoto2 :
+//  - une seule fiche pour tous les iPhone, « Apple iPhone 5 (PTP mode) », quel que soit le modèle branché ;
+//  - le 2000D (Europe) s'annonce sous son nom indien, 1500D (même boîtier, même identifiant USB, aussi
+//    Rebel T7 / Kiss X90) ; les règles du flash reconnaissent les deux noms.
+const displayName = (model) => model
+  .replace(/^Apple iPhone \d+[a-z]*\s*\(PTP mode\)$/i, 'iPhone (mode PTP)')
+  .replace(/^Canon EOS 1500D$/i, 'Canon EOS 2000D (1500D)');

@@ -16,3 +16,6 @@ data/models/
 # Miniatures des templates : recalculées au démarrage et à chaque enregistrement
 data/templates/*/preview*.jpg
 data/templates/*/preview.json
+# Sauvegardes automatiques de la base et de la configuration
+data/backups/
+data/*.illisible-*

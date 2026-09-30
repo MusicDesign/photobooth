@@ -47,7 +47,7 @@
     <div class="review-layout">
       <div class="photo-stage">
         <button id="btnPhotoPrev" class="btn btn-ghost btn-nav" aria-label="Photo précédente"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
-        <div id="photoWrap" class="final-wrap"><img id="photoImg" class="final-img" alt="" draggable="false"></div>
+        <div id="photoWrap" class="final-wrap"><img id="photoImg" class="final-img" alt="" draggable="false"><video id="photoVideo" class="final-img hidden" autoplay loop muted playsinline></video></div>
         <button id="btnPhotoNext" class="btn btn-ghost btn-nav" aria-label="Photo suivante"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
       </div>
       <div class="side">
@@ -110,9 +110,11 @@
   <section class="screen" id="screen-review">
     <h2 id="txtReview" class="title"></h2>
     <div class="review-layout">
-      <div class="final-wrap"><img id="finalImg" class="final-img" alt="Votre photo"></div>
+      <div class="final-wrap"><img id="finalImg" class="final-img" alt="Votre photo"><video id="finalVideo" class="final-img hidden" autoplay loop muted playsinline></video></div>
       <div class="side">
         <div id="retakeChooser" class="retake-chooser hidden"></div>
+        <!-- Filtres (option de l'admin) : le montage est refait avec le filtre choisi -->
+        <div id="filterBar" class="filter-bar hidden"></div>
         <button id="btnKeep" class="btn btn-primary btn-xl"></button>
         <button id="btnRetake" class="btn btn-secondary btn-xl"></button>
         <div class="timeout-bar"><div id="timeoutFill"></div></div>

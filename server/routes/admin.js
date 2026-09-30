@@ -99,6 +99,9 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     if (booth.camera.name !== 'gphoto2' || !booth.camera.readSettings) throw new HttpError(409, 'NO_CAMERA_CONTROL', 'Réglages disponibles seulement avec un boîtier branché (pilote gphoto2)');
     return booth.camera;
   };
+  /** État du matériel, léger (lu en mémoire, rien n'est envoyé au boîtier) : l'admin le relit au branchement. */
+  r.get('/devices', async (req, res) => res.json({ camera: await booth.cameraStatus(), devices: devices.status() }));
+
   r.get('/camera/settings', async (req, res) => {
     try { res.json({ settings: await camera().readSettings() }); } catch (e) { throw e instanceof HttpError ? e : new HttpError(409, 'CAMERA_BUSY', e.message); }
   });
@@ -175,6 +178,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       cameraSettings: MANUAL_SETTINGS, // réglages du mode manuel, dans l'ordre, avec leur libellé
       canShutdown: !!shutdown,
       canRestart: !!restart,
+      dataWarnings: [store.warning, config.warning].filter(Boolean), // base ou configuration reprise d'une sauvegarde
       subjectModel: modelStatus('subject'), // modèle de détourage précis : installé ou à télécharger
       events: store.listEvents().map((ev) => booth.eventView(ev)),
       activeEventId: store.data.activeEventId,

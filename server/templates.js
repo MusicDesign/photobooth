@@ -51,7 +51,7 @@ export const BOOMERANG_DEFAULTS = { durationSec: 2, speed: 2 };
 /** Vitesse de lecture → durée d'une image (ms, multiple de 10 comme dans un GIF). ×2 : effet accéléré. */
 export const BOOMERANG_SPEEDS = { 1: 80, 1.5: 50, 2: 40, 3: 30 };
 export const BOOMERANG_FPS = 12.5; // 80 ms par image : un pas exact des GIF (1/100 s)
-export const BOOMERANG_MAX_SIDE = 640;
+export const BOOMERANG_MAX_SIDE = 960; // vidéo MP4 (le GIF de secours est réduit à 480)
 /** Types animés : numérique uniquement, jamais imprimés, tous les calques photo montrent la même image. */
 export const ANIMATED_KINDS = ['gif', 'boomerang'];
 export const isAnimatedKind = (kind) => ANIMATED_KINDS.includes(kind);

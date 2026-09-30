@@ -149,6 +149,11 @@ export class StreamDeckRemote {
     const id = this.keyMap.get(control.index) || this.ui?.anyKey; // anyKey : écran où toute touche agit (fin)
     const run = () => {
       if (!id) return;
+      if (id === '__cycle') { // pages de l'écran à valider : en boucle
+        this.page = (this.page + 1) % (this.cyclePages || 1);
+        this.onPress(id);
+        return this.draw();
+      }
       if (id === '__next' || id === '__prev') {
         this.page = Math.max(0, this.page + (id === '__next' ? 1 : -1));
         this.onPress(id); // la borne compte l'appui comme une interaction (retour à l'accueil repoussé)
@@ -196,6 +201,8 @@ export class StreamDeckRemote {
     const at = (r, c) => keys.find((k) => k.row === r && k.column === c);
     const nav = NAV_ROWS[this.ui?.screen];
     if (nav && rows > 1 && cols >= 3) return this.navLayout(items, keys, nav, { cols, rows, at });
+    const pair = ACTION_PAIRS[this.ui?.screen];
+    if (pair && rows > 1 && cols >= 3 && items.some((it) => it.id === pair.ok)) return this.pairLayout(items, keys, pair, { cols, rows, at });
     const mainRow = Math.floor((rows - 1) / 2);
     const belowRow = Math.min(rows - 1, mainRow + 1);
     const bottom = rows - 1;
@@ -253,6 +260,41 @@ export class StreamDeckRemote {
     items.slice(this.page * perPage, (this.page + 1) * perPage).forEach((it, i) => slots.set(keys[i].index, it));
     slots.set(keys[keys.length - 2].index, { id: '__prev', label: '‹', kind: 'ghost', disabled: this.page === 0 });
     slots.set(keys[keys.length - 1].index, { id: '__next', label: '›', kind: 'ghost', disabled: this.page >= pages - 1 });
+    return slots;
+  }
+
+  /**
+   * Écran avec une action à valider (« Je la garde », « C'est parti ! ») : validation collée en bas à droite,
+   * son retour (« Refaire », « Annuler ») juste à sa gauche, retour au choix du cadre en bas à gauche. Le reste
+   * (filtres, photos à refaire, décompte) sur les rangées du dessus puis les places libres du bas ; par pages
+   * seulement si tout ne tient pas : la touche de pages (en boucle) prend alors la 1re place libre du bas.
+   */
+  pairLayout(items, keys, pair, { cols, rows, at }) {
+    const bottom = rows - 1;
+    const slots = new Map();
+    const byId = new Map(items.map((it) => [it.id, it]));
+    const fixed = [[pair.ok, cols - 1], [pair.back, cols - 2], ['btnCaptureBack', 0]];
+    for (const [id, c] of fixed) if (byId.has(id)) slots.set(at(bottom, c).index, byId.get(id));
+    const rest = items.filter((it) => !fixed.some(([id]) => id === it.id));
+    const above = keys.filter((k) => k.row < bottom);
+    const freeBottom = [...Array(cols).keys()].map((c) => at(bottom, c)).filter((k) => k && !slots.has(k.index));
+    // Tout tient (touches du dessus + places libres de la rangée du bas) : pas de pages
+    if (rest.length <= above.length + freeBottom.length) {
+      if (rest.length <= cols) { // une seule rangée : juste au-dessus de la validation, centrée
+        const start = Math.floor((cols - rest.length) / 2);
+        rest.forEach((it, i) => slots.set(at(bottom - 1, start + i).index, it));
+      } else [...above, ...freeBottom].slice(0, rest.length).forEach((k, i) => slots.set(k.index, rest[i]));
+      this.cyclePages = 1;
+      return slots;
+    }
+    // Sinon, par pages : la 1re place libre du bas tourne les pages (en boucle), les autres servent aussi
+    const perPage = above.length + freeBottom.length - 1;
+    const pages = Math.ceil(rest.length / perPage);
+    this.page %= pages;
+    this.cyclePages = pages;
+    const page = rest.slice(this.page * perPage, (this.page + 1) * perPage);
+    [...above, ...freeBottom.slice(1)].slice(0, page.length).forEach((k, i) => slots.set(k.index, page[i]));
+    slots.set(freeBottom[0].index, { id: '__cycle', label: `${this.page + 1}/${pages}`, kind: 'ghost', icon: 'chevronRight' });
     return slots;
   }
 
@@ -469,6 +511,12 @@ export class StreamDeckRemote {
 
 const SECRET_CODE = ['G', 'D', 'G', 'D']; // touches du haut : gauche, droite, gauche, droite → admin
 const SECRET_STEP_MS = 1500; // délai maximum entre deux appuis du code
+
+// Écrans à valider (voir pairLayout) : validation en bas à droite, son retour juste à gauche.
+const ACTION_PAIRS = {
+  review: { ok: 'btnKeep', back: 'btnRetake' },
+  capture: { ok: 'btnStart', back: 'btnCancel' }
+};
 
 // Rangée de navigation fixe des écrans de galerie (voir navLayout). paged : les flèches tournent les pages.
 const NAV_ROWS = {

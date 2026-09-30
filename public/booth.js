@@ -1,6 +1,7 @@
 /* Interface tactile de la borne. Vanilla JS, aucune dépendance. */
 import { renderTemplate, loadAssets } from './template-render.js';
 import { createCutter, preloadAi } from './cutout-live.js';
+import { FILTERS } from './filters.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -242,6 +243,7 @@ async function reloadBoot() {
 function showScreen(name) {
   for (const s of $$('.screen')) s.classList.toggle('active', s.id === `screen-${name}`);
   state.screen = name;
+  for (const v of $$('video.final-img')) if (!v.closest(`#screen-${name}`)) v.pause(); // boomerang hors écran : arrêté
   document.body.dataset.screen = name; // styles propres à un écran (ex. bandeau au-dessus de la flèche de l'accueil)
   clearTimer('idleReturn');
   clearTimer('reviewTimeout');
@@ -757,9 +759,13 @@ async function recordClip() {
   const durationMs = state.template.boomerang.durationSec * 1000;
   enterLookMode();
   const cd = $('#countdown');
-  if (state.focusing) { // mise au point pas encore finie : on l'annonce le temps qu'elle se termine
-    cd.textContent = state.boot.texts.focusing || 'Mise au point…';
-    cd.classList.add('msg');
+  if (state.focusing) {
+    // Mise au point pas encore finie : annoncée seulement si elle dure (sinon le texte clignote une fraction de seconde)
+    const done = await Promise.race([state.focusing.then(() => true), sleep(400).then(() => false)]);
+    if (!done) {
+      cd.textContent = state.boot.texts.focusing || 'Mise au point…';
+      cd.classList.add('msg');
+    }
     await state.focusing;
     state.focusing = null;
     if (state.screen !== 'capture') return;
@@ -925,25 +931,46 @@ async function finishShots() {
 
 // ---------- Relecture ----------
 
+/** Photo ou GIF dans l'image, boomerang (MP4) dans le lecteur vidéo (en boucle, muet) ; l'autre est vidé. */
+function showMedia(img, video, url, isVideo) {
+  img.classList.toggle('hidden', !!isVideo);
+  video.classList.toggle('hidden', !isVideo);
+  if (isVideo) {
+    img.removeAttribute('src');
+    if (video.getAttribute('src') !== url) { video.src = url; video.play().catch(() => {}); }
+  } else {
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    img.src = url;
+  }
+}
+
 function showReview() {
   const s = state.session;
   const { texts } = state.boot;
-  $('#finalImg').src = `${s.final.url}?t=${Date.now()}`;
+  showMedia($('#finalImg'), $('#finalVideo'), `${s.final.url}?t=${Date.now()}`, s.final.video);
   $('#txtReview').textContent = (s.gif && texts.reviewGif) || texts.review || '';
   $('#btnKeep').textContent = (s.gif && texts.keepGif) || texts.keep || '';
   $('#btnRetake').classList.toggle('hidden', s.retakesLeft !== null && s.retakesLeft <= 0); // null = reprises illimitées
   $('#retakeChooser').classList.add('hidden');
+  renderFilterBar();
   showScreen('review');
+  startReviewTimeout();
+}
 
+/** Validation automatique de la relecture : barre qui se vide, puis « Je la garde ». Relancée à chaque filtre choisi. */
+function startReviewTimeout() {
+  clearTimer('reviewTimeout');
   const total = (state.boot.limits.reviewTimeoutSec || 0) * 1000;
   const fill = $('#timeoutFill');
   fill.style.transition = 'none';
   fill.style.width = '100%';
   if (total > 0) {
-    requestAnimationFrame(() => {
-      fill.style.transition = `width ${total}ms linear`;
-      fill.style.width = '0%';
-    });
+    // Barre pleine prise en compte avant l'animation : sinon le navigateur saute directement à 0 % (barre vide)
+    void fill.offsetWidth;
+    fill.style.transition = `width ${total}ms linear`;
+    fill.style.width = '0%';
     setTimer('reviewTimeout', keepPhoto, total);
   }
 }
@@ -967,6 +994,46 @@ function onRetakeClick() {
     ch.appendChild(b);
   });
   ch.classList.remove('hidden');
+}
+
+/**
+ * Filtres sur « On la garde ? » (option de l'admin) : une vignette par filtre (la 1re photo, filtre CSS
+ * approché) ; au choix, le serveur refait le montage avec le vrai filtre, sur les photos seulement.
+ */
+function renderFilterBar() {
+  const bar = $('#filterBar');
+  const f = state.boot.booth.filters || {};
+  const list = f.enabled ? FILTERS.filter((x) => (f.available || []).includes(x.id)) : [];
+  bar.classList.toggle('hidden', list.length < 2);
+  if (list.length < 2) { bar.innerHTML = ''; return; }
+  const s = state.session;
+  const src = s.shots.find(Boolean)?.url;
+  const current = s.filter || 'none';
+  bar.innerHTML = list.map((x) => `<button class="filter-chip${x.id === current ? ' active' : ''}" data-filter="${x.id}">
+      <img src="${src}" alt="" style="filter:${x.css};${s.mirror ? 'transform:scaleX(-1);' : ''}"><span>${x.name}</span></button>`).join('');
+  bar.querySelectorAll('.filter-chip').forEach((b) => b.addEventListener('click', () => chooseFilter(b.dataset.filter)));
+}
+
+async function chooseFilter(id) {
+  const s = state.session;
+  if (state.filtering || (s.filter || 'none') === id) return;
+  state.filtering = true;
+  clearTimer('reviewTimeout');
+  $('#screen-review').classList.add('filtering');
+  $('#btnKeep').disabled = true;
+  $$('.filter-chip').forEach((b) => b.classList.toggle('active', b.dataset.filter === id));
+  try {
+    state.session = await api(`/api/session/${s.id}/compose`, { method: 'POST', body: { filter: id } });
+    showMedia($('#finalImg'), $('#finalVideo'), `${state.session.final.url}?t=${Date.now()}`, state.session.final.video);
+  } catch (e) {
+    toast(e.message, 5000);
+  } finally {
+    state.filtering = false;
+    $('#screen-review').classList.remove('filtering');
+    $('#btnKeep').disabled = false;
+    renderFilterBar();
+    if (state.screen === 'review') startReviewTimeout();
+  }
 }
 
 /** GIF : toutes les poses sont reprises. */
@@ -1086,7 +1153,8 @@ async function showDone() {
     toast((gif && state.boot.gallery?.enabled ? texts.gifInGallery : texts.thanksNoQr) || '', 5000);
     return;
   }
-  $('#txtThanks').textContent = (gif ? texts.thanksGif || texts.thanks : texts.thanks) || '';
+  const video = !!state.session?.final?.video;
+  $('#txtThanks').textContent = (video ? texts.thanksVideo || texts.thanksGif : gif ? texts.thanksGif : null) || texts.thanks || '';
   try {
     const q = await api(`/api/session/${state.session.id}/qr`);
     $('#qrImg').src = q.dataUrl;
@@ -1225,7 +1293,9 @@ function showPhoto(index) {
   state.gallery.index = Math.max(0, Math.min(items.length - 1, index));
   state.gallery.copies = 1;
   const it = items[state.gallery.index];
-  $('#photoImg').src = it.url;
+  showMedia($('#photoImg'), $('#photoVideo'), it.url, it.video);
+  const { texts } = state.boot; // légende du QR selon ce qu'on récupère
+  $('#txtGalleryQr').textContent = (it.video ? texts.galleryQrVideo : it.gif ? texts.galleryQrGif : null) || texts.galleryQr || '';
   $('#photoCount').textContent = `${state.gallery.index + 1} / ${items.length}`;
   $('#btnPhotoPrev').disabled = state.gallery.index === 0;
   $('#btnPhotoNext').disabled = state.gallery.index === items.length - 1;
@@ -1322,7 +1392,7 @@ function bindPhotoSwipe() {
 // La borne décrit ses actions visibles au serveur (qui les dessine), et exécute les appuis reçus
 // comme des clics. Même chemin que le tactile : aucune logique propre au Stream Deck.
 
-const CHOICE_CLASSES = ['template-card', 'retake-thumb', 'gallery-thumb'];
+const CHOICE_CLASSES = ['template-card', 'retake-thumb', 'gallery-thumb', 'filter-chip'];
 
 function deckKind(el) {
   if (CHOICE_CLASSES.some((c) => el.classList.contains(c))) return 'choice';
@@ -1374,10 +1444,22 @@ function mix(a, b, t) {
   const [x, y] = [n(a), n(b)];
   return `#${x.map((v, i) => Math.round(v * t + y[i] * (1 - t)).toString(16).padStart(2, '0')).join('')}`;
 }
+/**
+ * Fond réellement situé derrière un élément : le premier parent à fond non transparent (carte, fenêtre du
+ * code, panneau), sinon la page. Un bouton semi-transparent se lit sur ce fond-là, pas sur celui de la page.
+ */
+function backdropOf(el, page) {
+  for (let p = el.parentElement; p && p !== document.documentElement; p = p.parentElement) {
+    const c = getComputedStyle(p).backgroundColor;
+    if (c && c !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(c)) return solid(c, page);
+  }
+  return page;
+}
+
 function deckStyle(el) {
   const page = solid(getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || getComputedStyle(document.body).backgroundColor, '#000');
   const cs = getComputedStyle(el);
-  const bg = solid(cs.backgroundColor, page);
+  const bg = solid(cs.backgroundColor, backdropOf(el, page));
   let fg = solid(cs.color, bg);
   const hasBorder = parseFloat(cs.borderTopWidth) > 0 && cs.borderTopStyle !== 'none';
   let border = hasBorder ? solid(cs.borderTopColor, bg) : null;
@@ -1443,7 +1525,8 @@ function deckItems() {
     const glyph = { minus: '−', plus: '+' }[el.dataset.icon]; // boutons dont l'icône est dessinée en CSS
     const label = glyph || (el.querySelector('.template-name, span')?.textContent || el.textContent || el.getAttribute('aria-label') || '').trim();
     // Miniature sur la touche, sauf pour les cadres : leur nom, plus lisible qu'un cadre réduit à 72 px
-    const image = CHOICE_CLASSES.some((c) => el.classList.contains(c)) && !el.classList.contains('template-card') ? deckThumb(el) : null;
+    // Cadres et filtres : leur nom sur la touche, plus lisible qu'une vignette réduite à 72 px
+    const image = CHOICE_CLASSES.some((c) => el.classList.contains(c)) && !el.classList.contains('template-card') && !el.classList.contains('filter-chip') ? deckThumb(el) : null;
     let icon = DECK_ICONS[el.id] || { del: 'delete', ok: 'check' }[el.dataset.k] || null; // pavé du code : ⌫ et OK en pictogrammes
     // « Sans impression » : QR code seulement s'il s'affichera vraiment (Wi-Fi, option active), sinon retour à l'accueil
     if (el.id === 'btnNoPrint' && state.boot.share?.qrOnDone === false) icon = 'home';
@@ -1494,7 +1577,7 @@ function onKeyDown(e) {
       e.preventDefault();
       return;
     }
-    const choices = [...root.querySelectorAll('.template-card, .retake-thumb, .gallery-thumb')].filter(visible);
+    const choices = [...root.querySelectorAll('.template-card, .retake-thumb, .gallery-thumb, .filter-chip')].filter(visible);
     if (e.key === ' ' || e.key === 'Enter') {
       if (root.id === 'screen-idle') { onIdleTap(); done = true; }
       else if (choices.includes(document.activeElement)) done = act(document.activeElement);

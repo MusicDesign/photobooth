@@ -493,6 +493,38 @@ async function runSteps(app, camera) {
     assert.equal((await j(`/api/admin/templates/${g.id}`, { method: 'DELETE', headers: ADMIN })).status, 200);
   });
 
+  await step('filtres : refusés tant que désactivés, noir & blanc sur les photos seulement, gardé à la reprise', async () => {
+    const s = (await post('/api/session', { templateId: tplA.id })).data;
+    await shot(s.id, 0);
+    assert.equal((await post(`/api/session/${s.id}/compose`, { filter: 'bw' })).data.error, 'FILTER', 'filtres désactivés');
+    await put('/api/admin/config', { booth: { filters: { enabled: true, available: ['none', 'bw', 'sepia'] } } }, ADMIN);
+    assert.equal((await post(`/api/session/${s.id}/compose`, { filter: 'vivid' })).data.error, 'FILTER', 'filtre non proposé');
+    const c = (await post(`/api/session/${s.id}/compose`, { filter: 'bw' })).data;
+    assert.equal(c.filter, 'bw');
+    const file = path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s.id, 'final.jpg');
+    const px = async (x, y) => [...await sharp(file).extract({ left: x, top: y, width: 1, height: 1 }).raw().toBuffer()];
+    const photo = await px(900, 500); assert.ok(Math.max(...photo) - Math.min(...photo) <= 3, `photo en gris : ${photo}`);
+    const band = await px(50, 1100); assert.ok(band[0] > 200 && band[1] < 60, `cadre gardé en couleur (bande rouge) : ${band}`);
+    const back = (await post(`/api/session/${s.id}/compose`, { filter: 'none' })).data;
+    assert.equal(back.filter, 'none');
+    // Filtre par défaut : appliqué d'emblée au premier montage ; « Couleur » peut ne pas être proposée
+    await put('/api/admin/config', { booth: { filters: { enabled: true, available: ['bw', 'sepia'], default: 'sepia' } } }, ADMIN);
+    const s2 = (await post('/api/session', { templateId: tplA.id })).data;
+    await shot(s2.id, 0);
+    assert.equal((await post(`/api/session/${s2.id}/compose`, {})).data.filter, 'sepia', 'filtre par défaut');
+    assert.equal((await post(`/api/session/${s2.id}/compose`, { filter: 'none' })).data.error, 'FILTER', 'couleur non proposée');
+    await put('/api/admin/config', { booth: { filters: { enabled: true, available: ['bw', 'sepia'], default: 'vivid' } } }, ADMIN);
+    const s3 = (await post('/api/session', { templateId: tplA.id })).data;
+    await shot(s3.id, 0);
+    assert.equal((await post(`/api/session/${s3.id}/compose`, {})).data.filter, 'bw', 'défaut non proposé : le premier proposé');
+    await put('/api/admin/config', { booth: { filters: { enabled: false, available: ['none', 'bw'], default: 'vintage' } } }, ADMIN);
+    const s4 = (await post('/api/session', { templateId: tplA.id })).data;
+    await shot(s4.id, 0);
+    assert.equal((await post(`/api/session/${s4.id}/compose`, {})).data.filter, 'vintage', 'choix désactivé : défaut imposé');
+    assert.equal((await post(`/api/session/${s4.id}/compose`, { filter: 'bw' })).data.error, 'FILTER', 'choix désactivé : pas d\'autre filtre');
+    await put('/api/admin/config', { booth: { filters: { enabled: false, available: ['none', 'bw', 'noir', 'sepia', 'vintage', 'warm', 'cool', 'vivid'], default: 'none' } } }, ADMIN);
+  });
+
   await step('boomerang : vidéo filmée, aller-retour, jamais imprimé, nouvelle vidéo = reprise', async () => {
     const b = (await post('/api/admin/templates', { name: 'Boomerang soirée', kind: 'boomerang', format: '10x15-paysage' }, ADMIN)).data;
     assert.equal(b.kind, 'boomerang');
@@ -510,11 +542,38 @@ async function runSteps(app, camera) {
     if (app.booth.camera.mode === 'browser') { assert.equal(clip.data.error, 'FRAMES_REQUIRED'); return; }
     assert.equal(clip.status, 200, JSON.stringify(clip.data));
     const c = (await post(`/api/session/${s.id}/compose`, {})).data;
-    assert.ok(c.final.url.endsWith('/final.gif') && c.final.gif);
-    const meta = await sharp(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s.id, 'final.gif'), { animated: true }).metadata();
-    const n = Math.round(1 * 12.5); // 1 s filmée à 12,5 i/s
-    assert.equal(meta.delay.reduce((a, x) => a + x, 0), (2 * n - 2) * 40, `aller-retour de ${n} images, lecture ×2 (40 ms) : ${meta.delay}`);
-    assert.equal(meta.width, 640, 'boomerang réduit à 640 px');
+    const n = Math.round(1 * 12.5); // 1 s filmée à 12,5 i/s, aller-retour de 2n-2 images, lecture ×2 (40 ms)
+    const { ffmpegPath } = await import('../server/video.js');
+    if (ffmpegPath()) {
+      // Vidéo MP4 : durée de l'aller-retour, 960 px, H.264
+      assert.ok(c.final.url.endsWith('/final.mp4') && c.final.video && c.final.gif, JSON.stringify(c.final));
+      const { spawnSync } = await import('node:child_process');
+      const info = spawnSync(ffmpegPath(), ['-hide_banner', '-i', path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s.id, 'final.mp4')], { encoding: 'utf8' }).stderr;
+      const [, mm, ss] = /Duration: 00:(\d+):([\d.]+)/.exec(info) || [];
+      assert.ok(Math.abs(Number(mm) * 60 + Number(ss) - (2 * n - 2) * 0.04) < 0.1, `durée de la vidéo : ${mm}:${ss}`);
+      assert.ok(/h264/.test(info) && /960x\d+/.test(info), info.split('\n').find((l) => /Video:/.test(l)));
+    } else {
+      assert.ok(c.final.url.endsWith('/final.gif') && c.final.gif);
+      const meta = await sharp(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s.id, 'final.gif'), { animated: true }).metadata();
+      assert.equal(meta.delay.reduce((a, x) => a + x, 0), (2 * n - 2) * 40, `aller-retour : ${meta.delay}`);
+      assert.equal(meta.width, 480, 'GIF de secours réduit à 480 px');
+    }
+    // Page téléphone : lecteur vidéo, flèches lisibles, pas de numéro de session
+    const phone = await (await fetch(`${base}/g/${s.id}`)).text();
+    if (c.final.video) {
+      assert.ok(phone.includes('<video') && phone.includes('Enregistrer la vidéo'));
+      // Bouton d'enregistrement : le fichier arrive en téléchargement (Safari ne propose pas d'enregistrer un MP4 ouvert)
+      await post(`/api/session/${s.id}/keep`, {});
+      const dl = await fetch(`${base}/g/${s.id}/fichier`);
+      assert.equal(dl.status, 200);
+      assert.ok(/attachment/.test(dl.headers.get('content-disposition') || '') && /\.mp4/.test(dl.headers.get('content-disposition')), dl.headers.get('content-disposition'));
+      assert.equal(dl.headers.get('content-type'), 'video/mp4');
+    }
+    assert.ok(!phone.includes(`Session ${s.id}`), 'numéro de session caché aux invités');
+    // Vignette des filtres : l'adresse de la 1re image de la vidéo (sous-dossier clip-…) doit répondre
+    const firstFrame = (await j(`/api/session/${s.id}`)).data.shots[0].url;
+    assert.ok(/\/clip-\d+\/f-001\.jpg$/.test(firstFrame), firstFrame);
+    assert.equal((await fetch(`${base}${firstFrame}`)).status, 200, `image introuvable : ${firstFrame}`);
     const again = (await post(`/api/session/${s.id}/clip`, {})).data;
     assert.equal(again.session.retakes, 1, 'nouvelle vidéo comptée comme reprise');
     await post(`/api/session/${s.id}/compose`, {});

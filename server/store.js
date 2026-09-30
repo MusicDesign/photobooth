@@ -1,6 +1,5 @@
-import fs from 'node:fs';
 import { DB_FILE } from './paths.js';
-import { readJson, writeJsonAtomic } from './util.js';
+import { loadJsonSafe, writeJsonAtomic, backupJson } from './util.js';
 
 const EMPTY = () => ({
   counters: { printed: 0, paperRemaining: null, sessionsCount: 0 }, // printed : total historique, tous événements
@@ -13,18 +12,22 @@ const EMPTY = () => ({
 const slug = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'evenement';
 
 /**
- * Persistance simple dans un fichier JSON. Suffisant pour le POC ; à remplacer
- * par SQLite quand le volume de sessions grossira.
+ * Persistance dans un fichier JSON, largement suffisant pour une borne (5 000 sessions : 4,5 Mo réécrits en
+ * quelques ms). Écriture sûre (voir writeJsonAtomic), lecture protégée (fichier illisible : dernière
+ * sauvegarde), sauvegardes dans backups/ au démarrage puis toutes les heures.
  */
 export class Store {
   constructor(file = DB_FILE) {
     this.file = file;
     this.data = EMPTY();
-    if (fs.existsSync(file)) {
-      const saved = readJson(file, {});
-      this.data = { ...EMPTY(), ...saved, counters: { ...EMPTY().counters, ...(saved.counters || {}) } };
-    }
+    const { data: saved, warning } = loadJsonSafe(file, 'Base des sessions');
+    this.warning = warning; // affiché dans le tableau de bord
+    if (saved) this.data = { ...EMPTY(), ...saved, counters: { ...EMPTY().counters, ...(saved.counters || {}) } };
     this.migrateEvents();
+    if (saved && !warning) backupJson(file); // copie saine au démarrage
+    else if (warning) this.save(); // reprise d'une sauvegarde (ou départ à neuf) : la base est réécrite tout de suite
+    this.backupTimer = setInterval(() => { try { backupJson(this.file); } catch (e) { console.warn(`[données] sauvegarde : ${e.message}`); } }, 60 * 60 * 1000);
+    this.backupTimer.unref?.();
   }
 
   /**
