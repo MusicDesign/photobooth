@@ -73,6 +73,7 @@ export class Booth {
     this.purgeTimer.unref?.();
     this.onJob = (job) => this.onPrinterJob(job);
     printer.on('job', this.onJob);
+    this.resumePrintJobs();
     this.onLive = (streaming) => this.broadcast({ type: 'live', streaming });
     this.onFlashStray = (stray) => this.broadcast({ type: 'flashStray', stray });
     camera.onLive = this.onLive;
@@ -91,6 +92,26 @@ export class Booth {
     this.printer?.off('job', this.onJob);
     this.printer = printer;
     printer.on('job', this.onJob);
+    this.resumePrintJobs(); // tirages suivis par l'ancien pilote : le nouveau les reprend (ou les clôt)
+  }
+
+  /**
+   * Tirages en cours au moment d'un arrêt ou d'un changement d'imprimante : leur suivi (jobToSession) était en
+   * mémoire, la photo restait « en cours d'impression » pour toujours (réimpression bloquée dans la galerie).
+   */
+  resumePrintJobs() {
+    for (const s of this.store.sessionsWithStatus('printing')) {
+      const pending = (s.printJobs || []).filter((j) => j.status !== 'done' && j.status !== 'error');
+      if (!pending.length) {
+        s.status = s.printJobs?.some((j) => j.status === 'error') ? 'error' : 'done';
+        this.store.saveSession(s);
+        continue;
+      }
+      for (const j of pending) {
+        this.jobToSession.set(j.jobId, s.id);
+        this.printer.resume?.(j.jobId);
+      }
+    }
   }
 
   printing() {

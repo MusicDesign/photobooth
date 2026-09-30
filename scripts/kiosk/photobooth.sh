@@ -25,7 +25,7 @@ rm -f "$RUN_DIR/stop"
 # Lancé depuis le bureau, le shell ne charge pas ~/.bashrc : Node installé via nvm n'est pas dans le PATH.
 NODE="${NODE:-$(command -v node || true)}"
 if [ -z "$NODE" ] && [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh" >/dev/null; NODE="$(command -v node || true)"; fi
-if [ -z "$NODE" ]; then log "node introuvable"; notify-send "Cheesy" "Node.js introuvable" 2>/dev/null; exit 1; fi
+if [ -z "$NODE" ]; then log "node introuvable"; notify-send "Cheeesy" "Node.js introuvable" 2>/dev/null; exit 1; fi
 
 BROWSER=()
 if [ -n "${BOOTH_BROWSER:-}" ]; then BROWSER=("$BOOTH_BROWSER")
@@ -35,7 +35,7 @@ else
   done
   if [ ${#BROWSER[@]} -eq 0 ] && flatpak info org.chromium.Chromium >/dev/null 2>&1; then BROWSER=(flatpak run org.chromium.Chromium); fi
 fi
-if [ ${#BROWSER[@]} -eq 0 ]; then log "Chromium introuvable"; notify-send "Cheesy" "Chromium introuvable (sudo dnf install chromium)" 2>/dev/null; exit 1; fi
+if [ ${#BROWSER[@]} -eq 0 ]; then log "Chromium introuvable"; notify-send "Cheeesy" "Chromium introuvable (sudo dnf install chromium)" 2>/dev/null; exit 1; fi
 
 # ---------- Serveur (relancé s'il plante) ----------
 run_server() {

@@ -16,6 +16,14 @@ export class BasePrinter extends EventEmitter {
     throw new Error(`print() non disponible pour le pilote ${this.name}`);
   }
 
+  /**
+   * Tirage lancé avant un redémarrage de la borne : son suivi était en mémoire. Un pilote qui peut interroger
+   * sa file (CUPS) le reprend ; les autres ne peuvent plus rien savoir et le considèrent comme sorti.
+   */
+  resume(jobId) {
+    setImmediate(() => this.emit('job', { jobId, status: 'done', message: 'Suivi perdu au redémarrage : considéré comme sorti' }));
+  }
+
   async status() {
     return { driver: this.name, ok: true, message: '' };
   }

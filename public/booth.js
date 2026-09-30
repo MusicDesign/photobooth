@@ -249,6 +249,7 @@ function showScreen(name) {
   clearTimer('reviewTimeout');
   clearTimer('autoNext');
   clearTimer('arm');
+  if (name !== 'copies') { clearTimer('copiesTimeout'); clearInterval(state.copiesTick); }
   if (name !== 'capture' && state.armedSession) {
     // Départ pendant le décompte : on annule le déclenchement programmé côté boîtier.
     api(`/api/session/${state.armedSession}/disarm`, { method: 'POST' }).catch(() => {});
@@ -261,7 +262,7 @@ function showScreen(name) {
   if (name === 'idle' && state.pendingConfigReload) reloadBoot().catch(() => {});
   else if (name === 'idle') renderIdleGallery(); // nouvelle photo validée depuis le dernier passage
   // Sécurité : un écran laissé sans interaction revient à l'accueil.
-  if (name === 'copies') setTimer('idleReturn', goIdle, 120000);
+  if (name === 'copies' && !state.boot.limits.copiesTimeoutSec) setTimer('idleReturn', goIdle, 120000); // sinon : startCopiesTimeout
   if (MENU_SCREENS.includes(name)) menuActivity();
 }
 
@@ -962,6 +963,7 @@ function showReview() {
 /** Validation automatique de la relecture : barre qui se vide, puis « Je la garde ». Relancée à chaque filtre choisi. */
 function startReviewTimeout() {
   clearTimer('reviewTimeout');
+  state.keepAfterFilter = false;
   const total = (state.boot.limits.reviewTimeoutSec || 0) * 1000;
   const fill = $('#timeoutFill');
   fill.style.transition = 'none';
@@ -971,7 +973,8 @@ function startReviewTimeout() {
     void fill.offsetWidth;
     fill.style.transition = `width ${total}ms linear`;
     fill.style.width = '0%';
-    setTimer('reviewTimeout', keepPhoto, total);
+    // Changer de filtre ne relance pas le délai ; s'il expire pendant le montage, la photo est gardée juste après
+    setTimer('reviewTimeout', () => { if (state.filtering) state.keepAfterFilter = true; else keepPhoto(); }, total);
   }
 }
 
@@ -1018,7 +1021,6 @@ async function chooseFilter(id) {
   const s = state.session;
   if (state.filtering || (s.filter || 'none') === id) return;
   state.filtering = true;
-  clearTimer('reviewTimeout');
   $('#screen-review').classList.add('filtering');
   $('#btnKeep').disabled = true;
   $$('.filter-chip').forEach((b) => b.classList.toggle('active', b.dataset.filter === id));
@@ -1032,7 +1034,7 @@ async function chooseFilter(id) {
     $('#screen-review').classList.remove('filtering');
     $('#btnKeep').disabled = false;
     renderFilterBar();
-    if (state.screen === 'review') startReviewTimeout();
+    if (state.keepAfterFilter && state.screen === 'review') keepPhoto();
   }
 }
 
@@ -1091,9 +1093,48 @@ function keepPhoto() {
     renderCopies();
   }
   showScreen('copies');
+  startCopiesTimeout();
+}
+
+/**
+ * « Combien de tirages ? » laissé sans action : impression du nombre affiché, ou fin sans impression (réglage
+ * Impression → Limites). Barre et secondes restantes sous les boutons ; changer le nombre ne relance pas le délai.
+ */
+function startCopiesTimeout() {
+  clearTimer('copiesTimeout');
+  clearInterval(state.copiesTick);
+  const { limits } = state.boot;
+  const total = (limits.copiesTimeoutSec || 0) * 1000;
+  const box = $('#copiesAuto');
+  box.classList.toggle('hidden', !total);
+  if (!total || state.screen !== 'copies') return;
+  const noPrint = state.maxCopies <= 0;
+  const skip = noPrint || (limits.copiesTimeoutAction === 'skip' && limits.allowZeroCopies);
+  const fill = $('#copiesTimeoutFill');
+  fill.style.transition = 'none';
+  fill.style.width = '100%';
+  void fill.offsetWidth; // barre pleine prise en compte avant l'animation
+  fill.style.transition = `width ${total}ms linear`;
+  fill.style.width = '0%';
+  const end = Date.now() + total;
+  const label = () => {
+    const sec = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+    $('#copiesAutoText').textContent = noPrint ? `Retour à l'accueil dans ${sec} s`
+      : skip ? `Fin sans impression dans ${sec} s` : `Impression automatique dans ${sec} s`;
+  };
+  label();
+  state.copiesTick = setInterval(label, 250);
+  setTimer('copiesTimeout', () => {
+    clearInterval(state.copiesTick);
+    if (state.screen !== 'copies') return;
+    if ($('#pinDialog').open) { startCopiesTimeout(); return; } // opérateur en train de taper son code
+    if (skip) finishWithoutPrint(); else doPrint(state.copies);
+  }, total);
 }
 
 async function finishWithoutPrint() {
+  clearTimer('copiesTimeout');
+  clearInterval(state.copiesTick);
   try {
     state.session = await api(`/api/session/${state.session.id}/print`, { method: 'POST', body: { copies: 0 } });
   } catch (e) {
@@ -1109,6 +1150,8 @@ function renderCopies() {
 }
 
 async function doPrint(copies) {
+  clearTimer('copiesTimeout');
+  clearInterval(state.copiesTick);
   try {
     showScreen('printing');
     $('#printStatus').textContent = copies ? `${copies} tirage${copies > 1 ? 's' : ''}` : '';
@@ -1304,7 +1347,26 @@ function showPhoto(index) {
   photoLayout();
   if (state.screen !== 'photo') showScreen('photo');
   else menuActivity();
+  requestAnimationFrame(fitPhoto); // mise en page (solo ou non) appliquée ; média déjà en cache compris
 }
+
+/**
+ * Visionneuse de la galerie : le média au plus grand dans son cadre, en gardant ses proportions. Sans ça, un
+ * GIF (480 px) ou un boomerang (960 px) restait à sa taille native, plus petit qu'une photo.
+ */
+function fitPhoto() {
+  const wrap = $('#photoWrap');
+  const el = [$('#photoImg'), $('#photoVideo')].find((x) => !x.classList.contains('hidden'));
+  const w = el?.naturalWidth || el?.videoWidth, h = el?.naturalHeight || el?.videoHeight;
+  const W = wrap.clientWidth, H = wrap.clientHeight;
+  if (!w || !h || !W || !H) return;
+  const k = Math.min(W / w, H / h);
+  el.style.width = `${Math.floor(w * k)}px`;
+  el.style.height = `${Math.floor(h * k)}px`;
+}
+$('#photoImg').addEventListener('load', fitPhoto);
+$('#photoVideo').addEventListener('loadedmetadata', fitPhoto);
+window.addEventListener('resize', fitPhoto);
 
 /** Ni QR code ni réimpression : la colonne de droite ne sert plus, photo centrée et compteur dessous. */
 function photoLayout() {

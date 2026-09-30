@@ -110,6 +110,11 @@ export class Store {
     writeJsonAtomic(this.file, this.data);
   }
 
+  /** Sessions dans cet état, tous événements confondus. */
+  sessionsWithStatus(status) {
+    return Object.values(this.data.sessions).filter((s) => s.status === status);
+  }
+
   getSession(id) {
     return this.data.sessions[id] || null;
   }

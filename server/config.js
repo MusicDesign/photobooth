@@ -8,7 +8,7 @@ import { clone, deepMerge, loadJsonSafe, writeJsonAtomic, backupJson } from './u
  */
 export const DEFAULTS = {
   booth: {
-    name: 'Cheesy',
+    name: 'Cheeesy',
     language: 'fr',
     idleReturnSec: 20,
     menuIdleSec: 30,       // choix du cadre et galerie : retour à l'accueil sans interaction (0 = jamais)
@@ -72,6 +72,10 @@ export const DEFAULTS = {
     eventQuota: 200,          // 0 = illimité
     maxRetakesPerSession: 2,  // 0 = aucune reprise, -1 = illimité
     reviewTimeoutSec: 30,
+    // « Combien de tirages ? » laissé sans action : après ce délai (0 = jamais), print imprime le nombre affiché,
+    // skip termine sans impression (seulement si l'invité a le droit de ne pas imprimer)
+    copiesTimeoutSec: 30,
+    copiesTimeoutAction: 'print',
     captureTimeoutSec: 30,    // personne ne lance la photo : retour à l'accueil (0 = jamais)
     countdownSec: 3,
     lowPaperThreshold: 20,
@@ -160,6 +164,17 @@ export const DEFAULTS = {
     web: false,            // page /galerie pour les téléphones connectés au Wi-Fi de la borne
     reprint: 'operator',   // réimpression depuis la galerie de la borne : off | operator (code opérateur) | guest (libre)
     qr: true               // QR code de la photo affichée dans la visionneuse de la borne
+  },
+  // Appareils connectés : lumières Govee du réseau local (server/lights). devices : id Govee → { name, sku, ip,
+  // ambiance, shooting } (rôles de chaque lumière), rempli par les recherches.
+  lights: {
+    enabled: false,
+    devices: {},
+    // Accueil : ambiance (effet fixed | cycle | breathe) | keep (lumières laissées telles quelles) | off (éteintes).
+    // sync : cycle et respiration identiques sur toutes les lumières (sinon décalés entre elles)
+    idle: { mode: 'ambiance', effect: 'cycle', color: '#ff7a1a', brightness: 60, periodSec: 20, sync: false },
+    // Du choix du template à la dernière photo, et pendant le calibrage
+    shooting: { kelvin: 5000, brightness: 100 }
   }
 };
 
@@ -207,6 +222,18 @@ export class Config extends EventEmitter {
     const cfg = this.get();
     this.emit('change', cfg);
     return cfg;
+  }
+
+  /** Retire une clé, ex. remove(['lights', 'devices', id]) : deepMerge ne sait qu'ajouter ou remplacer. */
+  remove(keys) {
+    const last = keys.at(-1);
+    const parent = keys.slice(0, -1).reduce((o, k) => o?.[k], this.data);
+    if (parent && typeof parent === 'object' && last in parent) {
+      delete parent[last];
+      this.save();
+      this.emit('change', this.get());
+    }
+    return this.get();
   }
 
   setRuntime(patch) {

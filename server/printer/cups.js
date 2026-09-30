@@ -45,6 +45,11 @@ export class CupsPrinter extends BasePrinter {
     return { jobId };
   }
 
+  /** Tirage lancé avant un redémarrage : la file CUPS dit s'il est sorti ou pas encore. */
+  resume(jobId) {
+    this.watch(jobId);
+  }
+
   watch(jobId) {
     const started = Date.now();
     let stalled = false;

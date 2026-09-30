@@ -17,10 +17,10 @@ import { buildPreviews } from '../template-previews.js';
 import { MjpegBroadcaster } from '../camera/mjpeg.js';
 import { OUTPUT_DIR as OUT } from '../paths.js';
 
-const EDITABLE_SECTIONS = ['booth', 'camera', 'printer', 'limits', 'templates', 'theme', 'texts', 'admin', 'share', 'gallery'];
+const EDITABLE_SECTIONS = ['booth', 'camera', 'printer', 'limits', 'templates', 'theme', 'texts', 'admin', 'share', 'gallery', 'lights'];
 const IMAGE_EXT = { 'image/png': '.png', 'image/svg+xml': '.svg', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
 
-export function adminRouter({ booth, config, store, templates, themes, devices, deck, shutdown, restart, kioskScreen = () => null, remoteScreen = null }) {
+export function adminRouter({ booth, config, store, templates, themes, devices, deck, lights = null, shutdown, restart, kioskScreen = () => null, remoteScreen = null }) {
   const r = express.Router();
   const tokens = new Set();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024 } });
@@ -125,7 +125,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   });
   r.post('/camera/calibrate', (req, res) => {
     const cam = camera();
-    if (cam.calibrating) throw new HttpError(409, 'CALIBRATING', 'Calibrage déjà en cours');
+    if (cam.calibrating || calibration?.state === 'running') throw new HttpError(409, 'CALIBRATING', 'Calibrage déjà en cours');
     // Refus seulement si la borne affiche vraiment un écran de séance (admin ouverte sur la borne : aucun invité)
     const screen = kioskScreen();
     if (['template', 'capture', 'review', 'copies', 'printing', 'done'].includes(screen)) {
@@ -136,7 +136,14 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     calibration = { id, state: 'running', step: 0, label: 'Préparation du boîtier', shots: [], maxShots: MAX_SHOTS };
     res.json({ calibration });
     console.log('[booth] calibrage du boîtier lancé depuis l\'admin');
-    cam.calibrateVenue(path.join(calibDir, id), (s) => { calibration = { ...calibration, step: s.step, label: s.label, shots: s.shots.map(shotView) }; }, { evictViewers: true })
+    // Lumières de prise de vue allumées et stabilisées avant la première mesure : le calibrage (et sa décision
+    // de sortir le flash) se fait dans la lumière des vraies photos
+    if (lights?.running) calibration = { ...calibration, label: 'Allumage des lumières' };
+    const lit = lights ? lights.hold('calibration').catch(() => false) : Promise.resolve(false);
+    lit.then((on) => {
+      if (on) calibration = { ...calibration, lights: true };
+      return cam.calibrateVenue(path.join(calibDir, id), (s) => { calibration = { ...calibration, step: s.step, label: s.label, shots: s.shots.map(shotView) }; }, { evictViewers: true });
+    })
       .then((result) => {
         calibration = { ...calibration, state: 'done', profile: result.profile, reason: result.reason, shots: result.shots.map(shotView), flashRaised: result.shots.some((s) => s.flashFired) };
         console.log(`[booth] calibrage terminé : ${result.reason}`);
@@ -145,7 +152,10 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
         calibration = { ...calibration, state: 'error', error: e.message };
         console.warn(`[booth] calibrage : ${e.message}`);
       })
-      .finally(() => { if (calibration?.discard) { calibration = null; wipeCalibDir(); } }); // écran quitté pendant le calibrage
+      .finally(() => {
+        lights?.release('calibration');
+        if (calibration?.discard) { calibration = null; wipeCalibDir(); } // écran quitté pendant le calibrage
+      });
   });
 
   r.post('/restart', (req, res) => {
@@ -175,6 +185,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       printer: await booth.printerStatus(),
       devices: devices.status(),
       streamDeck: deck.status(),
+      lights: lights?.status() || null,
       cameraSettings: MANUAL_SETTINGS, // réglages du mode manuel, dans l'ordre, avec leur libellé
       canShutdown: !!shutdown,
       canRestart: !!restart,
@@ -199,6 +210,26 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     if (patch.printer?.fallback && !PRINTER_FALLBACKS.includes(patch.printer.fallback)) throw new HttpError(400, 'DRIVER', 'Repli imprimante inconnu');
     if (patch.templates?.defaultFormat && !FORMATS[patch.templates.defaultFormat]) throw new HttpError(400, 'FORMAT', 'Format inconnu');
     res.json({ config: config.update(patch) });
+  });
+
+  // Appareils connectés (lumières Govee du réseau local)
+  const lightsOrFail = () => { if (!lights) throw new HttpError(409, 'LIGHTS_OFF', 'Appareils connectés indisponibles'); return lights; };
+  r.get('/lights', (req, res) => res.json({ lights: lightsOrFail().status() }));
+  r.post('/lights/discover', async (req, res) => {
+    try { res.json({ lights: await lightsOrFail().discover() }); } catch (e) { throw e instanceof HttpError ? e : new HttpError(409, 'LIGHTS', e.message); }
+  });
+  r.post('/lights/identify', async (req, res) => {
+    try { await lightsOrFail().identify(String(req.body?.id || '')); } catch (e) { throw e instanceof HttpError ? e : new HttpError(404, 'LIGHT', e.message); }
+    res.json({ ok: true });
+  });
+  r.post('/lights/try-shooting', async (req, res) => {
+    await lightsOrFail().tryShooting();
+    res.json({ lights: lights.status() });
+  });
+  /** Oublie une lumière (vendue, remplacée) : elle reviendra si elle répond encore à une recherche. */
+  r.delete('/lights/:id', (req, res) => {
+    config.remove(['lights', 'devices', req.params.id]);
+    res.json({ lights: lightsOrFail().status() });
   });
 
   /** Relance la détection caméra / imprimante sans attendre le prochain passage. */

@@ -189,7 +189,10 @@ body[data-font="serif"] { font-family: Georgia, "Times New Roman", serif; }
 .retake-thumb:active { border-color: var(--accent); }
 .retake-thumb img { width: 110px; height: 82px; object-fit: cover; border-radius: 10px; }
 .timeout-bar { width: 300px; height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--text) 12%, transparent); overflow: hidden; }
-#timeoutFill { height: 100%; width: 100%; background: var(--accent); }
+#timeoutFill, .timeout-fill { height: 100%; width: 100%; background: var(--accent); }
+.copies-auto { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 6px; }
+.copies-auto .timeout-bar { width: 240px; }
+.copies-auto .hint { margin: 0; font-size: 16px; }
 .stepper { display: flex; align-items: center; gap: 26px; }
 .copies-value { font-size: 96px; font-weight: 900; min-width: 120px; text-align: center; color: var(--secondary); line-height: 1; }
 
@@ -274,7 +277,9 @@ body[data-screen="idle"] .toast { bottom: calc(3vh + clamp(64px, 9vmin, 120px) +
 .photo-qr img { width: 180px; height: 180px; border-radius: 12px; background: #fff; padding: 8px; box-shadow: var(--shadow); }
 .photo-qr figcaption { font-size: 16px; opacity: 0.75; text-align: center; max-width: 24ch; }
 .photo-stage { flex: 1 1 auto; min-width: 0; height: 100%; display: flex; align-items: center; gap: 24px; }
-#photoWrap { touch-action: pan-y; min-width: 0; }
+#photoWrap { touch-action: pan-y; min-width: 0; flex: 1 1 0; align-self: stretch; height: auto; }
+/* Taille fixée par fitPhoto() : photo, GIF et boomerang remplissent le même cadre, agrandis s'il le faut */
+#photoWrap .final-img { max-width: none; max-height: none; }
 /* Ni QR code ni réimpression (.solo) : photo centrée sur l'écran, compteur sous la photo */
 #screen-photo.solo .review-layout { flex-direction: column; gap: 16px; }
 #screen-photo.solo .photo-stage { width: 100%; height: auto; flex: 1 1 auto; min-height: 0; justify-content: center; }

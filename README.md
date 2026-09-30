@@ -1,4 +1,4 @@
-# Cheesy
+# Cheeesy
 
 Borne photo tactile pensée pour tourner **hors ligne sur un PC Linux** (tablette ou
 mini-PC tactile, Fedora ou Ubuntu), avec un **Canon EOS 2000D** piloté par gphoto2 et une
@@ -29,7 +29,7 @@ navigateur) : ouvrez la borne en local, pas via l'adresse IP.
 npm run smoke                 # test de bout en bout, sans matériel (51 étapes, données temporaires)
 npm run app                   # la borne en app de bureau plein écran (Electron), Ctrl+Maj+Q pour quitter
 npm run remote                # page distante de l'adresse publique → output/remote (TUTORIEL.md, étape 10.8)
-scripts/make-mac-app.sh       # régénère « Cheesy.app » (raccourci Mac : double-clic = npm run app)
+scripts/make-mac-app.sh       # régénère « Cheeesy.app » (raccourci Mac : double-clic = npm run app)
 node scripts/screenshots.js   # capture tous les écrans avec Chrome headless → output/screenshots/
 BOOTH_CAMERA=mock npm start   # caméra simulée côté serveur (flux MJPEG), utile sans webcam
 ```
@@ -43,7 +43,7 @@ scripts/kiosk/install-linux.sh --no-sleep   # icône bureau + lancement auto en 
 ```
 
 Au démarrage de la session, la borne s'ouvre seule en plein écran. **Éteindre la borne**
-(admin, en bas du menu) ferme le logiciel ; l'icône **Cheesy** du bureau le relance.
+(admin, en bas du menu) ferme le logiciel ; l'icône **Cheeesy** du bureau le relance.
 Deux lanceurs au choix, même comportement :
 
 - **Chromium en kiosque** (défaut) : `scripts/kiosk/photobooth.sh`, serveur relancé s'il plante.
