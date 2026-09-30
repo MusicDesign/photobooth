@@ -507,7 +507,22 @@ async function runSteps(app, camera) {
     const band = await px(50, 1100); assert.ok(band[0] > 200 && band[1] < 60, `cadre gardé en couleur (bande rouge) : ${band}`);
     const back = (await post(`/api/session/${s.id}/compose`, { filter: 'none' })).data;
     assert.equal(back.filter, 'none');
-    await put('/api/admin/config', { booth: { filters: { enabled: false } } }, ADMIN);
+    // Filtre par défaut : appliqué d'emblée au premier montage ; « Couleur » peut ne pas être proposée
+    await put('/api/admin/config', { booth: { filters: { enabled: true, available: ['bw', 'sepia'], default: 'sepia' } } }, ADMIN);
+    const s2 = (await post('/api/session', { templateId: tplA.id })).data;
+    await shot(s2.id, 0);
+    assert.equal((await post(`/api/session/${s2.id}/compose`, {})).data.filter, 'sepia', 'filtre par défaut');
+    assert.equal((await post(`/api/session/${s2.id}/compose`, { filter: 'none' })).data.error, 'FILTER', 'couleur non proposée');
+    await put('/api/admin/config', { booth: { filters: { enabled: true, available: ['bw', 'sepia'], default: 'vivid' } } }, ADMIN);
+    const s3 = (await post('/api/session', { templateId: tplA.id })).data;
+    await shot(s3.id, 0);
+    assert.equal((await post(`/api/session/${s3.id}/compose`, {})).data.filter, 'bw', 'défaut non proposé : le premier proposé');
+    await put('/api/admin/config', { booth: { filters: { enabled: false, available: ['none', 'bw'], default: 'vintage' } } }, ADMIN);
+    const s4 = (await post('/api/session', { templateId: tplA.id })).data;
+    await shot(s4.id, 0);
+    assert.equal((await post(`/api/session/${s4.id}/compose`, {})).data.filter, 'vintage', 'choix désactivé : défaut imposé');
+    assert.equal((await post(`/api/session/${s4.id}/compose`, { filter: 'bw' })).data.error, 'FILTER', 'choix désactivé : pas d\'autre filtre');
+    await put('/api/admin/config', { booth: { filters: { enabled: false, available: ['none', 'bw', 'noir', 'sepia', 'vintage', 'warm', 'cool', 'vivid'], default: 'none' } } }, ADMIN);
   });
 
   await step('boomerang : vidéo filmée, aller-retour, jamais imprimé, nouvelle vidéo = reprise', async () => {

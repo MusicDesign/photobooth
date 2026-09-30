@@ -529,12 +529,12 @@ export class Booth {
   async composeSession(id, { filter } = {}) {
     const s = this.load(id);
     const template = this.templates.get(s.templateId);
+    const offered = this.offeredFilters();
     if (filter !== undefined) {
-      const f = this.cfg().booth.filters || {};
-      if (filter !== 'none' && (!f.enabled || !FILTER_IDS.includes(filter) || !(f.available || FILTER_IDS).includes(filter))) {
-        throw new HttpError(400, 'FILTER', 'Filtre non proposé');
-      }
+      if (!offered.list.includes(filter)) throw new HttpError(400, 'FILTER', 'Filtre non proposé');
       s.filter = filter;
+    } else if (s.filter === undefined) {
+      s.filter = offered.default; // premier montage : le filtre par défaut de l'admin
     }
     const opts = { mirror: !!s.mirror, filter: s.filter || 'none' };
     const missing = s.shots.findIndex((sh) => !sh);
@@ -561,6 +561,18 @@ export class Booth {
     s.status = 'review';
     this.store.saveSession(s);
     return this.view(s);
+  }
+
+  /**
+   * Filtres proposés à l'invité (admin → Parcours invité) et celui appliqué d'emblée. Choix désactivé : le
+   * filtre par défaut seul, imposé à toutes les photos. Filtre par défaut absent de la liste : le premier proposé.
+   */
+  offeredFilters() {
+    const f = this.cfg().booth.filters || {};
+    if (!f.enabled) { const def = FILTER_IDS.includes(f.default) ? f.default : 'none'; return { list: [def], default: def }; }
+    const list = (f.available || FILTER_IDS).filter((id) => FILTER_IDS.includes(id));
+    if (!list.length) return { list: ['none'], default: 'none' };
+    return { list, default: list.includes(f.default) ? f.default : list[0] };
   }
 
   unlock(id, pin) {
