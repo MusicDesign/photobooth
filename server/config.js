@@ -9,7 +9,7 @@ import { clone, deepMerge, readJson, writeJsonAtomic } from './util.js';
  */
 export const DEFAULTS = {
   booth: {
-    name: 'Photo Booth',
+    name: 'Cheesy',
     language: 'fr',
     idleReturnSec: 20,
     menuIdleSec: 30,       // choix du cadre et galerie : retour à l'accueil sans interaction (0 = jamais)

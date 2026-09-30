@@ -24,10 +24,14 @@ if (process.platform === 'darwin') {
   process.env.PATH = dirs.join(':');
 }
 
+// L'app s'appelait « Photo Booth » : une borne déjà installée garde son dossier de données (avant le verrou, qui y vit)
+const legacyData = path.join(app.getPath('appData'), 'Photo Booth');
+if (app.isPackaged && !fs.existsSync(app.getPath('userData')) && fs.existsSync(legacyData)) app.setPath('userData', legacyData);
+
 // Une seule borne : relancer l'icône ramène la fenêtre existante.
 if (!app.requestSingleInstanceLock()) app.quit();
 else start().catch((e) => {
-  dialog.showErrorBox('Photo Booth', `Démarrage impossible : ${e.message}`);
+  dialog.showErrorBox('Cheesy', `Démarrage impossible : ${e.message}`);
   app.exit(1);
 });
 

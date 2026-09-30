@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Installe la borne pour l'utilisateur courant (Fedora / Ubuntu, bureau GNOME) :
-# icône « Photo Booth » sur le bureau et dans les applications, lancement automatique à l'ouverture de session.
+# icône « Cheesy » sur le bureau et dans les applications, lancement automatique à l'ouverture de session.
 #
 #   scripts/kiosk/install-linux.sh                    lanceur script + Chromium (par défaut)
 #   scripts/kiosk/install-linux.sh --electron         app Electron du dépôt (npm run app)
@@ -43,7 +43,7 @@ entry() {
   cat <<EOF
 [Desktop Entry]
 Type=Application
-Name=Photo Booth
+Name=Cheesy
 Comment=Lancer la borne photo en plein écran
 Exec="$EXEC"
 Icon=$DIR/build/icon.png

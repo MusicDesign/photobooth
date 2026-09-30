@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Régénère « Photo Booth.app » à la racine du dépôt : raccourci macOS qui lance l'app Electron
+# Régénère « Cheesy.app » à la racine du dépôt : raccourci macOS qui lance l'app Electron
 # (npm run app) sans fenêtre Terminal. Le raccourci cherche l'app dans son propre dossier :
 # il reste valable après un git clone, une fois npm install fait.
 #   scripts/make-mac-app.sh
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$DIR/Photo Booth.app"
+APP="$DIR/Cheesy.app"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -18,7 +18,7 @@ set electronBin to rootDir & "/node_modules/electron/dist/Electron.app/Contents/
 try
 	do shell script "test -x " & quoted form of electronBin
 on error
-	display dialog "Electron n'est pas installé. Dans le dossier du projet, lancer : npm install" buttons {"OK"} default button 1 with icon stop with title "Photo Booth"
+	display dialog "Electron n'est pas installé. Dans le dossier du projet, lancer : npm install" buttons {"OK"} default button 1 with icon stop with title "Cheesy"
 	return
 end try
 do shell script "cd " & quoted form of rootDir & " && env -u ELECTRON_RUN_AS_NODE " & quoted form of electronBin & " . > /dev/null 2>&1 &"
@@ -27,7 +27,7 @@ EOF
 rm -rf "$APP"
 osacompile -o "$APP" "$WORK/launcher.applescript"
 
-# Icône appareil photo (build/icon.png) à la place de celle d'AppleScript
+# Icône de la borne (build/icon.png, tirée du logo Cheesy) à la place de celle d'AppleScript
 mkdir -p "$WORK/icon.iconset"
 for size in 16 32 128 256 512; do
   sips -z $size $size "$DIR/build/icon.png" --out "$WORK/icon.iconset/icon_${size}x${size}.png" >/dev/null

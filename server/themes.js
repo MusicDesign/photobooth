@@ -3,7 +3,7 @@ import path from 'node:path';
 import { THEMES_DIR } from './paths.js';
 import { readJson } from './util.js';
 
-export const DEFAULT_LOGO = '/assets/logo-default.svg';
+export const DEFAULT_LOGO = '/assets/cheesy_logo.svg';
 
 const FALLBACK = {
   id: 'default-light',
