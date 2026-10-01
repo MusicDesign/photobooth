@@ -1,6 +1,7 @@
 {
   "id": "default-light",
   "name": "Clair",
+  "order": 1,
   "colors": {
     "primary": "#1d3557",
     "secondary": "#1d3557",

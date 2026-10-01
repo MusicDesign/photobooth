@@ -1,0 +1,14 @@
+{
+  "id": "mariage",
+  "name": "Mariage",
+  "order": 4,
+  "colors": {
+    "primary": "#a2763a",
+    "secondary": "#55624f",
+    "background": "#faf6ee",
+    "surface": "#ffffff",
+    "text": "#3a342c",
+    "onPrimary": "#ffffff"
+  },
+  "font": "serif"
+}

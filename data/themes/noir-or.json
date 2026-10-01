@@ -1,0 +1,14 @@
+{
+  "id": "noir-or",
+  "name": "Noir & or",
+  "order": 5,
+  "colors": {
+    "primary": "#d4af37",
+    "secondary": "#e9d8a6",
+    "background": "#121212",
+    "surface": "#1f1f1f",
+    "text": "#f3eee4",
+    "onPrimary": "#1a1a1a"
+  },
+  "font": "serif"
+}

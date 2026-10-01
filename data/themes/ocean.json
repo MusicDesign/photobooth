@@ -1,0 +1,14 @@
+{
+  "id": "ocean",
+  "name": "Océan",
+  "order": 7,
+  "colors": {
+    "primary": "#0077b6",
+    "secondary": "#023e8a",
+    "background": "#e9f4f9",
+    "surface": "#ffffff",
+    "text": "#0d1b2a",
+    "onPrimary": "#ffffff"
+  },
+  "font": "system"
+}

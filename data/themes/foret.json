@@ -1,0 +1,14 @@
+{
+  "id": "foret",
+  "name": "Forêt",
+  "order": 8,
+  "colors": {
+    "primary": "#2d6a4f",
+    "secondary": "#1b4332",
+    "background": "#f2f6ee",
+    "surface": "#ffffff",
+    "text": "#1f2a22",
+    "onPrimary": "#ffffff"
+  },
+  "font": "system"
+}

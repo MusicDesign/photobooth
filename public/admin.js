@@ -26,13 +26,41 @@ function toast(msg, isError = false) {
   toast.t = setTimeout(() => t.classList.add('hidden'), 3500);
 }
 
+/** Indicateur d'enregistrement (en haut à droite) : saving → saved (s'efface), ou error. */
+function saveState(state) {
+  const el = $('#saveState');
+  clearTimeout(saveState.t);
+  el.className = `save-state ${state}`;
+  el.textContent = { saving: 'Enregistrement…', saved: '✓ Enregistré', error: 'Non enregistré' }[state];
+  if (state === 'saved') saveState.t = setTimeout(() => { el.className = 'save-state'; }, 1800);
+}
+
+let quietSave = false; // enregistrement automatique : l'indicateur suffit, pas de message en bas
 async function saveConfig(patch, okMsg = 'Enregistré') {
+  const quiet = quietSave;
+  saveState('saving');
   try {
     const r = await api('/api/admin/config', { method: 'PUT', body: patch });
     S.config = r.config;
-    toast(okMsg);
+    saveState('saved');
+    if (!quiet) toast(okMsg);
     await refresh();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { saveState('error'); toast(e.message, true); }
+}
+
+/**
+ * Enregistrement automatique d'un formulaire de réglages : à chaque changement (case, liste, couleur, et champ
+ * texte quand on le quitte), fn(FormData, form) construit et envoie le patch. Entrée dans un champ : pareil.
+ */
+function autoSave(f, fn) {
+  if (!f) return;
+  const run = () => { quietSave = true; try { fn(new FormData(f), f); } finally { quietSave = false; } };
+  f.onsubmit = (e) => { e.preventDefault(); run(); };
+  f.addEventListener('change', (e) => {
+    if (e.target.type === 'file' || e.target.closest('[data-nosave]')) return;
+    clearTimeout(f.saveTimer);
+    f.saveTimer = setTimeout(run, 250); // plusieurs changements d'affilée (flèches d'un nombre) : un seul envoi
+  });
 }
 
 async function refresh() {
@@ -77,19 +105,6 @@ function deckState() {
   return `<span class="badge">aucun Stream Deck</span>${d.error ? ` <small>${esc(d.error)}</small>` : ' <small>recherché toutes les 3 s</small>'}`;
 }
 
-/** Tableau de bord : lumières connectées (Appareils connectés), une par ligne avec leur état. */
-function lightsSummary() {
-  const L = S.lights;
-  if (!L?.available) return '';
-  if (!L.enabled) return '<p>Lumières <span class="badge">désactivées</span> <small><a href="#lights">Appareils connectés</a></small></p>';
-  const on = L.devices.filter((d) => d.online).length;
-  const badge = !L.devices.length ? '<span class="badge">aucune trouvée</span>'
-    : `<span class="badge ${on === L.devices.length ? 'ok' : on ? 'warn' : 'err'}">${on} / ${L.devices.length} connectée${on > 1 ? 's' : ''}</span>`;
-  const scene = { idle: 'accueil', shooting: 'prise de vue' }[L.scene];
-  const rows = L.devices.map((d) => `<br><small>${esc(d.name || `${d.type[0].toUpperCase()}${d.type.slice(1)} ${d.ip.split('.').pop()}`)} · ${esc(d.sku)} · ${esc(d.ip)} · ${d.online ? 'en ligne' : '<b>hors ligne</b>'}</small>`).join('');
-  return `<p>Lumières ${badge}${scene ? ` <small>scène : ${scene}</small>` : ''}${L.error ? `<br><small><b>${esc(L.error)}</b></small>` : ''}${rows}</p>`;
-}
-
 /** Le flash est-il parti sur la dernière photo ? (EXIF, le boîtier ne dit rien de fiable avant) */
 /** Ce qui s'est passé sur la dernière photo (lu dans son EXIF) : avec ou sans flash. */
 function flashState() {
@@ -112,6 +127,76 @@ function flashSummary() {
   return `${mode} · ${flashState()}${stray}`;
 }
 
+// ---------- Tableau de bord : liste du matériel ----------
+
+const HW_ICONS = {
+  camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  printer: '<path d="M7 9V4h10v5M7 17H4v-8h16v8h-3"/><path d="M7 14h10v6H7z"/>',
+  wifi: '<path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="1"/>',
+  deck: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7.5 10h2M11 10h2M14.5 10h2M7.5 14h2M11 14h2M14.5 14h2"/>',
+  lights: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9V16h7v-2.1A6 6 0 0 0 12 3z"/>',
+  screen: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'
+};
+/** Une ligne d'appareil : icône, pastille d'état (ok, warn, err, off), nom, état, détail, lien vers ses réglages. */
+function hwRow(icon, title, state, status, detail, href) {
+  return `<a class="hw-row" href="${href}">
+    <svg class="hw-icon" viewBox="0 0 24 24" aria-hidden="true">${HW_ICONS[icon]}</svg>
+    <span class="hw-main"><span class="hw-head"><b>${title}</b><span class="hw-dot ${state}"></span><span class="hw-status">${status}</span></span>${detail ? `<span class="hw-detail">${detail}</span>` : ''}</span>
+    <span class="hw-go" aria-hidden="true">›</span></a>`;
+}
+
+function hardwareList() {
+  const cam = S.camera || {};
+  const camDev = S.devices.camera || {};
+  const camName = cam.driver === 'gphoto2'
+    ? esc((camDev.reason || '').replace(/ détecté en USB.*$/, '') || cam.model || 'Boîtier')
+    : { browser: 'Webcam du navigateur', mock: 'Simulation (photos d\'exemple)', starting: 'En préparation…' }[cam.driver] || esc(cam.driver);
+  const camState = !cam.ok ? 'err' : cam.driver === 'gphoto2' ? 'ok' : 'warn';
+  const camErr = cam.lastCaptureError ? `<b class="hw-err">Dernier échec (${new Date(cam.lastCaptureError.at).toLocaleTimeString('fr-FR')}) : ${esc(cam.lastCaptureError.message)}</b>` : cam.lastError ? `<b class="hw-err">${esc(cam.lastError)}</b>` : '';
+  const camDetail = [cam.driver === 'gphoto2' ? (cam.liveview ? 'aperçu en cours' : cam.standby ? 'aperçu en veille, obturateur fermé' : '') : '', cam.driver === 'gphoto2' ? `flash : ${flashSummary()}` : '', camErr].filter(Boolean).join('<br>');
+
+  const pr = S.printer || {};
+  const noPrinter = pr.driver === 'none';
+  const prName = noPrinter ? 'Aucune' : pr.driver === 'mock' ? 'Simulation' : esc(S.config.printer.cups?.name || pr.driver);
+  const prState = noPrinter ? 'off' : !pr.ok ? 'err' : pr.driver === 'mock' ? 'warn' : 'ok';
+  const prDetail = noPrinter ? 'impression désactivée, QR code seulement' : esc(pr.message || '');
+
+  const n = S.devices.network;
+  const wifi = n ? hwRow('wifi', 'Wi-Fi', n.wifi ? 'ok' : 'err', n.wifi ? `connecté · ${esc(n.ip)}` : 'absent',
+    n.wifi ? `QR codes vers <code>${esc(S.shareBaseUrl)}</code>` : S.config.share.requireWifi === false ? 'QR codes affichés quand même' : 'QR codes des photos masqués', '#sharing') : '';
+
+  const d = S.streamDeck || {};
+  const deck = hwRow('deck', 'Stream Deck', !d.enabled ? 'off' : d.connected ? 'ok' : 'off',
+    !d.enabled ? 'désactivé' : d.connected ? `${esc(d.model)} · ${d.keys} touches` : 'non branché',
+    d.enabled && !d.connected ? (d.error ? esc(d.error) : 'recherché toutes les 3 s') : '', '#control');
+
+  const L = S.lights;
+  let lights = '';
+  if (L?.available) {
+    const on = L.devices.filter((x) => x.online).length;
+    const state = !L.enabled ? 'off' : !L.devices.length ? 'warn' : on === L.devices.length ? 'ok' : on ? 'warn' : 'err';
+    const scene = { idle: 'accueil', shooting: 'prise de vue' }[L.scene];
+    const status = !L.enabled ? 'désactivées' : !L.devices.length ? 'aucune trouvée' : `${on} / ${L.devices.length} en ligne${scene ? ` · scène ${scene}` : ''}`;
+    const chips = L.enabled && L.devices.length ? `<span class="hw-chips">${L.devices.map((x) => `<span class="hw-chip ${x.online ? '' : 'off'}" title="${esc(`${x.sku} · ${x.ip}`)}"><span class="hw-dot ${x.online ? 'ok' : 'err'}"></span>${esc(x.name || `${x.type[0].toUpperCase()}${x.type.slice(1)} ${x.ip.split('.').pop()}`)}</span>`).join('')}</span>` : '';
+    lights = hwRow('lights', 'Lumières', state, status, (L.error ? `<b class="hw-err">${esc(L.error)}</b>` : '') + chips, '#lights');
+  }
+  // Écran de la borne en DDC/CI (luminosité, volume), voir screenSection()
+  const sc = S.screen;
+  let screen = '';
+  if (sc && !sc.off) {
+    const name = sc.display ? esc(sc.display.name || 'Écran externe') : sc.available ? 'Aucun écran pilotable' : 'Non disponible';
+    const state = !sc.available ? 'err' : !sc.display ? 'off' : sc.error ? 'warn' : 'ok';
+    const values = sc.display ? [sc.brightness != null ? `luminosité ${sc.brightness} %` : '', sc.volumeOk && sc.volume != null ? `volume ${sc.volume} %` : ''].filter(Boolean).join(' · ') : '';
+    const how = sc.display ? `DDC/CI (${esc(sc.tool)}), ${sc.managed ? 'réglé par la borne' : 'réglages de l\'écran laissés tels quels'}` : sc.available ? `${esc(sc.tool)} prêt : aucun écran externe ne répond en DDC/CI` : '';
+    screen = hwRow('screen', 'Écran', state, values ? `${name} · ${values}` : name, [sc.error ? `<b class="hw-err">${esc(sc.error)}</b>` : '', how].filter(Boolean).join('<br>'), '#control');
+  }
+  return `<div class="hw-list">
+    ${hwRow('camera', 'Appareil photo', camState, camName, camDetail, '#camera')}
+    ${hwRow('printer', 'Imprimante', prState, prName, prDetail, '#printing')}
+    ${screen}${wifi}${deck}${lights}
+  </div>`;
+}
+
 function dashboard() {
   const c = S.counters;
   const cfg = S.config;
@@ -129,12 +214,7 @@ function dashboard() {
   <div class="grid-2" style="margin-top:22px">
     <div class="card">
       <h3>Matériel</h3>
-      <p>Caméra <code>${esc(S.camera.driver)}</code> <span class="badge ${S.camera.ok ? 'ok' : 'err'}">${S.camera.ok ? 'OK' : 'problème'}</span>${S.camera.standby ? ' <small>live view en veille, obturateur fermé</small>' : ''}${S.camera.driver === 'gphoto2' ? `<br><small>Flash : ${flashSummary()}</small>` : ''}${S.devices.camera.requested === 'auto' ? `<br><small>auto · ${esc(S.devices.camera.reason)}</small>` : ''}${S.camera.lastError ? `<br><small>${esc(S.camera.lastError)}</small>` : ''}${S.camera.lastCaptureError ? `<br><small><b>Dernier échec de photo</b> (${new Date(S.camera.lastCaptureError.at).toLocaleTimeString('fr-FR')}) : ${esc(S.camera.lastCaptureError.message)}</small>` : ''}</p>
-      <p>Imprimante <code>${esc(S.printer.driver)}</code> ${S.printer.driver === 'none' ? '<span class="badge">aucune</span>' : `<span class="badge ${S.printer.ok ? 'ok' : 'err'}">${S.printer.ok ? 'OK' : 'problème'}</span>`}${S.devices.printer.requested === 'auto' ? `<br><small>auto · ${esc(S.devices.printer.reason)}</small>` : ''}<br><small>${esc(S.printer.message)}</small></p>
-      ${S.devices.network ? `<p>Wi-Fi <span class="badge ${S.devices.network.wifi ? 'ok' : 'err'}">${S.devices.network.wifi ? 'connecté' : 'absent'}</span><br><small>${S.devices.network.wifi ? `${esc(S.devices.network.iface)} · ${esc(S.devices.network.ip)}` : S.config.share.requireWifi === false ? 'QR codes affichés quand même (réglage <a href="#sharing">Partage</a>)' : 'QR codes des photos masqués'}</small></p>` : ''}
-      <p>Stream Deck ${deckState()}</p>
-      ${lightsSummary()}
-      <p>Partage : <code>${esc(S.shareBaseUrl)}</code></p>
+      ${hardwareList()}
     </div>
     <div class="card">
       <h3>Consommables</h3>
@@ -164,45 +244,58 @@ function flow() {
   const b = S.config.booth;
   return `
   <h2>Parcours invité</h2>
-  <p class="sub">Le déroulé d'un passage à la borne, de l'accueil à la fin, et la galerie de l'événement.</p>
-  <form id="formFlow" class="card">
-    <div class="grid-2">
-      <div>
-        <h3>Séance photo</h3>
-        <label>Décompte avant la photo (secondes) <input name="countdownSec" type="number" min="1" max="10" value="${l.countdownSec}"></label>
-        <label>Reprises de photo autorisées (0 = aucune)
-          <div class="row"><input name="maxRetakesPerSession" type="number" min="0" max="50" value="${Math.max(0, l.maxRetakesPerSession)}" ${l.maxRetakesPerSession < 0 ? 'disabled' : ''} style="width:120px">
-          <label class="inline"><input name="retakesUnlimited" type="checkbox" ${l.maxRetakesPerSession < 0 ? 'checked' : ''} onchange="this.form.maxRetakesPerSession.disabled = this.checked"> Illimité</label></div>
-        </label>
-        <label>Validation automatique de la relecture (secondes, 0 = jamais) <input name="reviewTimeoutSec" type="number" min="0" max="300" value="${l.reviewTimeoutSec}"></label>
-        <label class="inline"><input name="mirrorPreview" type="checkbox" ${b.mirrorPreview ? 'checked' : ''}> Aperçu en miroir (plus naturel pour l'invité)</label>
-        <small>La photo finale est retournée elle aussi : chacun reste là où il s'est vu par rapport aux éléments du template. Un texte dans la scène (t-shirt, pancarte) sort à l'envers.</small>
-        <h3 class="filters-title">Filtres</h3>
-        <label class="inline"><input name="filtersEnabled" type="checkbox" ${b.filters?.enabled ? 'checked' : ''}> Proposer des filtres à l'invité</label>
-        <small>Sur « On la garde ? » : l'invité choisit un filtre sous sa photo avant de la garder ou de l'imprimer. Il s'applique à ses photos, pas au cadre du template. GIF et boomerangs compris.</small>
-        <table class="filter-table">
-          <thead><tr><th>Filtre</th><th>Proposé</th><th>Par défaut</th></tr></thead>
-          <tbody>${FILTERS.map((f) => {
-            const avail = b.filters?.available || FILTERS.map((x) => x.id);
-            const def = b.filters?.default || 'none';
-            return `<tr><td>${esc(f.name)}</td>
-              <td><input type="checkbox" name="filter_${f.id}" ${avail.includes(f.id) ? 'checked' : ''} aria-label="Proposer ${esc(f.name)}"></td>
-              <td><input type="radio" name="filterDefault" value="${f.id}" ${def === f.id ? 'checked' : ''} aria-label="${esc(f.name)} par défaut"></td></tr>`;
-          }).join('')}</tbody>
-        </table>
-        <small>Le filtre par défaut est appliqué d'emblée à la photo ; l'invité peut en choisir un autre parmi ceux proposés (le défaut l'est d'office). Sans choix proposé à l'invité, le filtre par défaut s'applique à toutes les photos.</small>
-      </div>
-      <div>
-        <h3>Retours automatiques à l'accueil</h3>
-        <label>Personne ne lance la photo (secondes, 0 = jamais) <input name="captureTimeoutSec" type="number" min="0" max="600" value="${l.captureTimeoutSec ?? 30}"></label>
-        <label>Choix du cadre et galerie sans interaction (secondes, 0 = jamais) <input name="menuIdleSec" type="number" min="0" max="600" value="${b.menuIdleSec ?? 30}"></label>
-        <label>Après l'écran final (secondes) <input name="idleReturnSec" type="number" min="5" max="300" value="${b.idleReturnSec}"></label>
-        <small>Un toucher, une touche du clavier ou du Stream Deck repousse le retour.</small>
+  <p class="sub">Le déroulé d'un passage à la borne, de l'accueil à la fin. Chaque changement est enregistré tout de suite.</p>
+  <form id="formFlow">
+    <div class="card">
+      <h3>Séance photo</h3>
+      <div class="grid-2">
+        <div>
+          <label>Décompte avant la photo (secondes) <input name="countdownSec" type="number" min="1" max="10" value="${l.countdownSec}"></label>
+          <label>Reprises de photo autorisées (0 = aucune)
+            <div class="row"><input name="maxRetakesPerSession" type="number" min="0" max="50" value="${Math.max(0, l.maxRetakesPerSession)}" ${l.maxRetakesPerSession < 0 ? 'disabled' : ''} style="width:120px">
+            <label class="inline"><input name="retakesUnlimited" type="checkbox" ${l.maxRetakesPerSession < 0 ? 'checked' : ''} onchange="this.form.maxRetakesPerSession.disabled = this.checked"> Illimité</label></div>
+          </label>
+        </div>
+        <div>
+          <label class="inline"><input name="mirrorPreview" type="checkbox" ${b.mirrorPreview ? 'checked' : ''}> Aperçu en miroir (plus naturel pour l'invité)</label>
+          <small>La photo finale est retournée elle aussi : chacun reste là où il s'est vu par rapport aux éléments du template. Un texte dans la scène (t-shirt, pancarte) sort à l'envers.</small>
+        </div>
       </div>
     </div>
-    <button class="btn primary" type="submit">Enregistrer</button>
-  </form>
-  ${galleryCard()}`;
+    <div class="card">
+      <h3>Filtres</h3>
+      <label class="inline"><input name="filtersEnabled" type="checkbox" ${b.filters?.enabled ? 'checked' : ''}> Proposer des filtres à l'invité</label>
+      <small>Sur « On la garde ? » : l'invité choisit un filtre sous sa photo avant de la garder ou de l'imprimer. Il s'applique à tout le montage : photos, cadre, textes et logo. GIF et boomerangs compris.</small>
+      <table class="filter-table">
+        <thead><tr><th>Filtre</th><th>Proposé</th><th>Par défaut</th></tr></thead>
+        <tbody>${FILTERS.map((f) => {
+          const avail = b.filters?.available || FILTERS.map((x) => x.id);
+          const def = b.filters?.default || 'none';
+          return `<tr><td>${esc(f.name)}</td>
+            <td><input type="checkbox" name="filter_${f.id}" ${avail.includes(f.id) ? 'checked' : ''} aria-label="Proposer ${esc(f.name)}"></td>
+            <td><input type="radio" name="filterDefault" value="${f.id}" ${def === f.id ? 'checked' : ''} aria-label="${esc(f.name)} par défaut"></td></tr>`;
+        }).join('')}</tbody>
+      </table>
+      <small>Le filtre par défaut est appliqué d'emblée à la photo ; l'invité peut en choisir un autre parmi ceux proposés (le défaut l'est d'office). Sans choix proposé à l'invité, le filtre par défaut s'applique à toutes les photos.</small>
+    </div>
+    <div class="card">
+      <h3>Délais</h3>
+      <p class="sub">En secondes, 0 = jamais. Un toucher, une touche du clavier ou du Stream Deck repousse les retours à l'accueil ; changer de filtre ou de nombre de tirages ne relance pas les délais des écrans « ${esc(S.config.texts.review)} » et « ${esc(S.config.texts.copies)} ».</p>
+      <div class="grid-2">
+        <div>
+          <label>« ${esc(S.config.texts.review)} » : photo gardée toute seule après <input name="reviewTimeoutSec" type="number" min="0" max="300" value="${l.reviewTimeoutSec}"></label>
+          <label>« ${esc(S.config.texts.copies)} » sans action, après <input name="copiesTimeoutSec" type="number" min="0" max="600" value="${l.copiesTimeoutSec ?? 30}"></label>
+          <label>… la borne <select name="copiesTimeoutAction">${[['print', 'imprime le nombre affiché'], ['skip', 'termine sans impression']].map(([v, lb]) => `<option value="${v}" ${(l.copiesTimeoutAction || 'print') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select></label>
+          <small>« termine sans impression » seulement si l'invité a le droit de ne pas imprimer (<a href="#printing">Impression</a>), sinon la borne imprime.</small>
+        </div>
+        <div>
+          <label>Personne ne lance la photo : retour à l'accueil après <input name="captureTimeoutSec" type="number" min="0" max="600" value="${l.captureTimeoutSec ?? 30}"></label>
+          <label>Choix du cadre et galerie sans interaction : retour après <input name="menuIdleSec" type="number" min="0" max="600" value="${b.menuIdleSec ?? 30}"></label>
+          <label>Écran de fin : retour à l'accueil après <input name="idleReturnSec" type="number" min="5" max="300" value="${b.idleReturnSec}"></label>
+        </div>
+      </div>
+    </div>
+  </form>`;
 }
 
 function printing() {
@@ -210,7 +303,7 @@ function printing() {
   const l = cfg.limits;
   return `
   <h2>Impression</h2>
-  <p class="sub">Sans imprimante détectée, la borne n'affiche rien de l'impression : l'invité termine directement (avec le QR code en Wi-Fi). Les changements s'appliquent sans redémarrage.</p>
+  <p class="sub">Sans imprimante détectée, la borne n'affiche rien de l'impression : l'invité termine directement (avec le QR code en Wi-Fi). Chaque changement est enregistré et appliqué tout de suite.</p>
   <form id="formPrinter" class="card">
     <h3>Imprimante</h3>
     <div class="grid-2">
@@ -227,7 +320,6 @@ function printing() {
       </div>
     </div>
     <div class="row">
-      <button class="btn primary" type="submit">Enregistrer</button>
       <button class="btn btn-detect" type="button">Détecter maintenant</button>
     </div>
   </form>
@@ -239,18 +331,35 @@ function printing() {
         <label>Copies maximum avec le code opérateur <input name="operatorMaxCopies" type="number" min="1" max="100" value="${l.operatorMaxCopies}"></label>
         <label class="inline"><input name="allowZeroCopies" type="checkbox" ${l.allowZeroCopies ? 'checked' : ''}> L'invité peut terminer sans imprimer</label>
         <small>Bouton « ${esc(cfg.texts.noPrint)} » sur l'écran des copies, quand une imprimante est branchée. Décoché : au moins un tirage par passage.</small>
-        <label>Sans action sur « ${esc(cfg.texts.copies)} », après (secondes, 0 = jamais) <input name="copiesTimeoutSec" type="number" min="0" max="600" value="${l.copiesTimeoutSec ?? 30}" style="width:120px"></label>
-        <select name="copiesTimeoutAction">${[['print', 'Imprimer le nombre affiché'], ['skip', 'Terminer sans impression']].map(([v, lb]) => `<option value="${v}" ${(l.copiesTimeoutAction || 'print') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select>
-        <small>Une barre et un compte à rebours préviennent l'invité ; changer le nombre de tirages ne relance pas le délai. « Terminer sans impression » ne vaut que si l'invité peut terminer sans imprimer, sinon la borne imprime.</small>
+        <small>Ce qui se passe si l'invité ne choisit rien : <a href="#flow">Parcours invité → Délais</a>.</small>
       </div>
       <div>
         <label>Quota de tirages de l'événement (0 = illimité) <input name="eventQuota" type="number" min="0" value="${l.eventQuota}"></label>
         <label>Alerte papier en dessous de (feuilles) <input name="lowPaperThreshold" type="number" min="0" value="${l.lowPaperThreshold}"></label>
-        <small>Le stock de papier se met à jour depuis le tableau de bord.</small>
+        <small>Le stock de papier se met à jour depuis le <a href="#dashboard">tableau de bord</a>.</small>
       </div>
     </div>
-    <button class="btn primary" type="submit">Enregistrer</button>
   </form>`;
+}
+
+/** Polices de la borne (booth.css, body[data-font]) pour les aperçus de l'admin. */
+const TP_FONTS = { system: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', rounded: '"Arial Rounded MT Bold", "Nunito", "Quicksand", -apple-system, sans-serif', serif: 'Georgia, "Times New Roman", serif' };
+/** Variables CSS (--tp-*) d'un aperçu de la borne, pour un jeu de couleurs et une police. */
+function tpVars(colors, font) {
+  const c = colors;
+  // Texte des cartes : la couleur la plus lisible sur « Cartes », même règle que la borne (booth.js, readableOn)
+  const onSurface = [c.text, c.background, c.secondary, '#ffffff', '#000000'].reduce((best, x) => (contrast(c.surface, x) > contrast(c.surface, best) ? x : best));
+  return `${['primary', 'secondary', 'background', 'surface', 'text', 'onPrimary'].map((k) => `--tp-${k}:${c[k]}`).join(';')};--tp-on-surface:${onSurface};--tp-font:${TP_FONTS[font] || TP_FONTS.system}`;
+}
+/** Logo pour un jeu de couleurs : le logo Cheeesy par défaut suit l'accent et le texte des boutons, un logo importé reste tel quel. */
+const logoFor = (colors) => (S.theme.defaultLogo ? `/logo.svg?c=${String(colors.primary).replace('#', '')}&t=${String(colors.onPrimary).replace('#', '')}` : S.theme.logo);
+/** Accueil de la borne en miniature : carte d'un thème, et premier écran de l'aperçu. */
+function tpIdleScreen(t, logo, sample) {
+  return `<div class="tp-screen tp-idle">
+    <img class="tp-logo" src="${esc(logo)}" alt="">
+    <div class="tp-headline">${esc(t.welcome)}</div>
+    <div class="tp-gal"><span class="tp-stack">${[0, 1, 2].map(() => `<i${sample ? ` style="background-image:url('${esc(sample)}')"` : ''}></i>`).join('')}</span><span><b>${esc(t.gallery)}</b><small>24 photos ›</small></span></div>
+  </div>`;
 }
 
 function themeSection() {
@@ -259,68 +368,94 @@ function themeSection() {
   const colors = custom.colors;
   const logo = S.theme.logo;
   const bg = S.theme.backgroundImage;
-  const options = S.themes.map((t) => `<option value="${esc(t.id)}" ${cfg.theme.active === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
   // Nom de la couleur, puis où elle apparaît sur la borne
   const colorField = (k, label, where) => `<label class="swatch"><span>${label}</span><input type="color" name="color_${k}" value="${esc(colors[k])}"><small>${where}</small></label>`;
-  const textFields = Object.entries(cfg.texts).map(([k, v]) => `<label>${esc(k)}<input name="text_${k}" value="${esc(v)}"></label>`).join('');
+  const isCustom = cfg.theme.active === 'custom';
+  const t = cfg.texts;
+  const sample = S.samples?.[0];
+  // Une carte par thème livré, puis « Personnalisé » : l'accueil de la borne dans les couleurs du thème
+  const themeCard = (id, name, style, checked, cardLogo) => `<label class="theme-pick"${id === 'custom' ? ' id="themePickCustom"' : ''} style="${esc(style)}">
+      <input type="radio" name="active" value="${esc(id)}" ${checked ? 'checked' : ''}>${tpIdleScreen(t, cardLogo, sample)}<span class="theme-name">${esc(name)}</span></label>`;
+  const cards = S.themes.map((th) => themeCard(th.id, th.name, tpVars(th.colors, th.font), cfg.theme.active === th.id, logoFor(th.colors))).join('')
+    + themeCard('custom', 'Personnalisé : mes couleurs', tpVars(colors, custom.font), isCustom, logoFor(colors));
   return `
   <h2>Apparence</h2>
-  <p class="sub">Le nom, le logo et l'image de fond s'appliquent quel que soit le thème. Les changements arrivent sur la borne en direct.</p>
-  <form id="formTheme" class="card">
-    <div class="grid-2">
-      <div>
-        <h3>Identité de la borne</h3>
-        <label>Nom de la borne <input name="boothName" value="${esc(cfg.booth.name)}"></label>
-        <label class="inline"><input name="showName" type="checkbox" ${cfg.booth.showName !== false ? 'checked' : ''}> Afficher le nom à côté du logo sur la borne</label>
-        <label>Curseur de la souris sur la borne <select name="cursor">${[['show', 'Toujours visible'], ['idle', 'Masqué quand la souris ne bouge pas (3 s)'], ['hide', 'Toujours masqué']].map(([v, l]) => `<option value="${v}" ${(cfg.booth.cursor || 'show') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-        <h3 style="margin-top:18px">Couleurs</h3>
-        <label>Thème actif <select name="active">${options}<option value="custom" ${cfg.theme.active === 'custom' ? 'selected' : ''}>Personnalisé (couleurs ci-contre)</option></select></label>
-      </div>
-      <div>
-        <h3>Couleurs personnalisées</h3>
+  <p class="sub">Le nom, le logo et l'image de fond s'appliquent quel que soit le thème. Chaque changement arrive sur la borne en direct. Les textes affichés à l'invité sont dans <a href="#texts">Textes des écrans</a>.</p>
+  <form id="formTheme">
+    <div class="card">
+      <h3>Identité de la borne</h3>
+      <label>Nom de la borne <input name="boothName" value="${esc(cfg.booth.name)}"></label>
+      <label class="inline"><input name="showName" type="checkbox" ${cfg.booth.showName !== false ? 'checked' : ''}> Afficher le nom à côté du logo sur la borne</label>
+      <small>Écran tactile, curseur de la souris, Stream Deck : <a href="#control">Écran &amp; contrôle</a>.</small>
+    </div>
+    <div class="card">
+      <h3>Thème</h3>
+      <div class="theme-grid">${cards}</div>
+      <div id="customTheme" class="${isCustom ? '' : 'hidden'}">
         <div class="swatches">
-          ${colorField('primary', 'Accent', 'Boutons principaux, décompte, cercle de l\'accueil')}
-          ${colorField('onPrimary', 'Texte des boutons', 'Écrit sur la couleur d\'accent')}
-          ${colorField('secondary', 'Titres', 'Titres, nom de la borne, logo SVG, nombre de copies')}
+          ${colorField('primary', 'Accent', 'Boutons principaux, décompte, cercle de l\'accueil, aplat du logo Cheeesy')}
+          ${colorField('onPrimary', 'Texte des boutons', 'Écrit sur la couleur d\'accent, lettres du logo Cheeesy')}
+          ${colorField('secondary', 'Titres', 'Titres, nom de la borne, nombre de copies, logo SVG importé')}
           ${colorField('background', 'Fond d\'écran', 'Arrière-plan de tous les écrans')}
           ${colorField('surface', 'Cartes', 'Cadres à choisir, photos de la galerie, pavé du code')}
           ${colorField('text', 'Texte courant', 'Consignes, boutons secondaires')}
         </div>
-        <label>Police <select name="font">
-          ${['system', 'rounded', 'serif'].map((f) => `<option value="${f}" ${custom.font === f ? 'selected' : ''}>${f}</option>`).join('')}
-        </select></label>
-        <small>Ces couleurs sont utilisées quand le thème actif est « Personnalisé ».</small>
-        <div id="themePreview" class="preview-theme" style="background:${esc(colors.background)};color:${esc(colors.text)}">
-          <img class="logo-prev" src="${esc(logo)}" alt="">
-          <span style="font-weight:800;color:${esc(colors.secondary)}">${esc(cfg.booth.name)}</span>
-          <span class="pbtn" style="background:${esc(colors.primary)};color:${esc(colors.onPrimary)}">Bouton</span>
-          <span class="pbtn pbtn-outline" style="border-color:${esc(colors.secondary)};color:${esc(colors.secondary)}">Refaire</span>
-          <span id="contrastWarn" class="badge warn hidden">contraste faible</span>
-        </div>
+        <label>Police <select name="font">${[['system', 'Standard'], ['rounded', 'Arrondie'], ['serif', 'Avec empattements']].map(([v, l]) => `<option value="${v}" ${custom.font === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      </div>
+      <div id="contrastWarn" class="alert hidden"></div>
+      <h3 class="h3-gap">Aperçu sur la borne</h3>
+      <div id="themePreview" class="tp">
+        <figure>${tpIdleScreen(t, logo, sample)}<figcaption>Accueil</figcaption></figure>
+        <figure><div class="tp-screen">
+          <div class="tp-title">${esc(t.chooseTemplate)}</div>
+          <div class="tp-cards">${['Classique', 'Bandelette'].map((n) => `<div class="tp-card"><div class="tp-ph"${sample ? ` style="background-image:url('${esc(sample)}')"` : ''}></div><span>${n}</span></div>`).join('')}</div>
+        </div><figcaption>Choix du cadre</figcaption></figure>
+        <figure><div class="tp-screen">
+          <div class="tp-title">${esc(t.review)}</div>
+          <div class="tp-photo"${sample ? ` style="background-image:url('${esc(sample)}')"` : ''}></div>
+          <div class="tp-btns"><span class="tp-ghost">${esc(t.retake)}</span><span class="tp-primary">${esc(t.keep)}</span></div>
+        </div><figcaption>Relecture</figcaption></figure>
       </div>
     </div>
-    <button class="btn primary" type="submit">Enregistrer</button>
   </form>
   <div class="grid-2">
     <form id="formLogo" class="card upload-card">
       <h3>Logo (PNG transparent, SVG, JPEG)</h3>
-      <div class="upload-current"><img class="logo-prev" src="${esc(logo)}" alt=""><small>Affiché en haut à gauche et sur l'accueil, pour tous les thèmes.</small></div>
-      <input type="file" name="logo" accept="image/png,image/svg+xml,image/jpeg,image/webp" required>
-      <div class="row"><button class="btn secondary" type="submit">Envoyer</button>
-      ${cfg.booth.logo ? '<button class="btn" type="button" id="btnLogoReset">Logo par défaut</button>' : ''}</div>
+      <div class="upload-current"><img class="logo-prev" src="${esc(logo)}" alt=""><small>Affiché en haut à gauche et sur l'accueil, pour tous les thèmes. Sans logo importé, le logo Cheeesy prend les couleurs du thème (accent et texte des boutons).</small></div>
+      <label class="file-pick btn secondary">Choisir un logo…<input type="file" name="logo" accept="image/png,image/svg+xml,image/jpeg,image/webp"></label>
+      ${cfg.booth.logo ? '<button class="btn" type="button" id="btnLogoReset">Logo par défaut</button>' : ''}
     </form>
     <form id="formBg" class="card upload-card">
       <h3>Image de fond (optionnelle)</h3>
       <div class="upload-current">${bg ? `<img class="logo-prev" src="${esc(bg)}" alt="">` : ''}<small>Actuelle : <code>${esc(bg || 'aucune')}</code></small></div>
-      <input type="file" name="image" accept="image/png,image/jpeg,image/webp" required>
-      <div class="row"><button class="btn secondary" type="submit">Envoyer</button>
-      ${cfg.booth.backgroundImage ? '<button class="btn" type="button" id="btnBgReset">Retirer</button>' : ''}</div>
+      <label class="file-pick btn secondary">Choisir une image…<input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>
+      ${cfg.booth.backgroundImage ? '<button class="btn" type="button" id="btnBgReset">Retirer</button>' : ''}
     </form>
-  </div>
-  <form id="formTexts" class="card">
-    <h3>Textes des écrans</h3>
-    <div class="grid">${textFields}</div>
-    <button class="btn primary" type="submit">Enregistrer les textes</button>
+  </div>`;
+}
+
+// Textes des écrans, groupés dans l'ordre du passage d'un invité ; libellé = où le texte apparaît
+const TEXT_GROUPS = [
+  ['Accueil', [['welcome', 'Accueil, écran tactile'], ['welcomeNoTouch', 'Accueil, écran non tactile (Stream Deck)'], ['gallery', 'Bouton de la galerie']]],
+  ['Séance photo', [['chooseTemplate', 'Choix du cadre'], ['getReady', 'Avant le décompte'], ['start', 'Bouton de départ'], ['lookUp', 'Bandeau « regardez l\'objectif »'], ['holdPose', 'Entre le « 0 » et la photo'], ['pleaseWait', 'Pendant le montage (GIF, boomerang)'], ['boomerangGo', 'Boomerang : pendant le film'], ['focusing', 'Boomerang : mise au point en cours']]],
+  ['Relecture', [['review', 'Titre, photo'], ['reviewGif', 'Titre, GIF'], ['retake', 'Bouton refaire'], ['keep', 'Bouton garder, photo'], ['keepGif', 'Bouton garder, GIF']]],
+  ['Impression', [['copies', 'Choix du nombre de tirages'], ['print', 'Bouton imprimer'], ['noPrint', 'Bouton sans impression'], ['printing', 'Impression en cours'], ['quotaReached', 'Quota de l\'événement atteint'], ['paperEmpty', 'Plus de papier'], ['printerUnavailable', 'Imprimante indisponible']]],
+  ['Fin', [['thanks', 'Merci, photo (avec QR code)'], ['thanksGif', 'Merci, GIF'], ['thanksVideo', 'Merci, boomerang'], ['thanksNoQr', 'Merci, sans QR code'], ['gifInGallery', 'GIF sans QR code (pas de Wi-Fi)'], ['finish', 'Bouton terminer']]],
+  ['Galerie', [['galleryTitle', 'Titre'], ['galleryEmpty', 'Galerie vide'], ['galleryQr', 'QR code d\'une photo'], ['galleryQrGif', 'QR code d\'un GIF'], ['galleryQrVideo', 'QR code d\'un boomerang'], ['reprint', 'Bouton réimprimer']]],
+  ['Partage', [['wifiQr', 'Légende du QR code Wi-Fi'], ['remoteTitle', 'Page distante : titre'], ['remoteHint', 'Page distante : consigne']]]
+];
+
+function textsSection() {
+  const texts = S.config.texts;
+  const listed = new Set(TEXT_GROUPS.flatMap(([, f]) => f.map(([k]) => k)));
+  const others = Object.keys(texts).filter((k) => !listed.has(k)).map((k) => [k, k]); // ajoutés plus tard
+  const field = ([k, label]) => (k in texts ? `<label>${esc(label)}<input name="text_${k}" value="${esc(texts[k])}"></label>` : '');
+  return `
+  <h2>Textes des écrans</h2>
+  <p class="sub">Tout ce que lit l'invité sur la borne, dans l'ordre de son passage. Chaque changement est enregistré et arrive sur la borne en direct.</p>
+  <form id="formTexts">
+    ${[...TEXT_GROUPS, ...(others.length ? [['Autres', others]] : [])].map(([title, fields]) => `
+    <div class="card"><h3>${esc(title)}</h3><div class="grid-2">${fields.map(field).join('')}</div></div>`).join('')}
   </form>`;
 }
 
@@ -367,18 +502,18 @@ function templatesSection() {
     <small>Numérique uniquement : un GIF n'est jamais imprimé. L'invité le récupère par QR code, ou le retrouve dans la galerie de la borne. Les templates de type GIF apparaissent parmi les cadres.</small>
     <h3 class="model-title">Détourage précis</h3>
     ${S.subjectModel?.installed
-      ? '<p><span class="badge ok">installé</span> <small>Photos des invités (calques photo « IA ») et bouton « Retirer le fond » des images : tout sujet, bords propres, hors ligne.</small></p>'
+      ? `<p><span class="badge ok">installé</span> <small>Photos des invités (calques photo « IA ») et bouton « Retirer le fond » des images : tout sujet, bords propres, hors ligne.</small></p>${perfNotice()}`
       : modelNotice()}
   </div>
   ${cards ? `<p class="sub">Ordre d'affichage sur la borne : glissez un template par sa poignée ⠿.</p><div id="tplList" class="tpl-list">${cards}</div>` : '<p class="sub">Aucun template. Créez-en un ci-dessus.</p>'}`;
 }
 
-function hardware() {
+function camera() {
   const cfg = S.config;
   const g = cfg.camera.gphoto2;
   return `
-  <h2>Matériel</h2>
-  <p class="sub">Les changements s'appliquent immédiatement, sans redémarrage. En mode <b>auto</b>, la borne surveille le matériel toutes les 10 secondes et bascule toute seule quand un appareil est branché ou débranché. L'imprimante se règle dans <a href="#printing">Impression</a>.</p>
+  <h2>Appareil photo</h2>
+  <p class="sub">Chaque changement s'applique tout de suite, sans redémarrage. En mode <b>auto</b>, la borne surveille le boîtier toutes les 10 secondes et bascule toute seule quand il est branché ou débranché.</p>
   <form id="formCamera" class="card">
     <h3>Caméra</h3>
     <div class="grid-2">
@@ -412,11 +547,33 @@ function hardware() {
       <label>Commande de capture sans préparation (<code>{file}</code> = fichier de sortie) <textarea name="captureCommand">${esc(g.captureCommand)}</textarea></label>
     </details>
     <div class="row">
-      <button class="btn primary" type="submit">Enregistrer</button>
       <button class="btn btn-detect" type="button">Détecter maintenant</button>
     </div>
   </form>
-  ${S.camera.driver === 'gphoto2' ? cameraControlCard() : ''}
+  ${S.camera.driver === 'gphoto2' ? cameraControlCard() : ''}`;
+}
+
+function controlSection() {
+  const cfg = S.config;
+  const b = cfg.booth;
+  const t = cfg.texts;
+  return `
+  <h2>Écran &amp; contrôle</h2>
+  <p class="sub">L'écran de la borne et ce qui la pilote : le toucher, la souris, le Stream Deck. Chaque changement est enregistré et appliqué tout de suite.</p>
+  ${screenSection()}
+  <form id="formControl" class="card">
+    <h3>Tactile et souris</h3>
+    <div class="grid-2">
+      <div>
+        <label>Écran tactile <select name="touchMode">${[['auto', 'Détection automatique'], ['touch', 'Toujours tactile'], ['buttons', 'Jamais tactile : Stream Deck ou clavier']].map(([v, lb]) => `<option value="${v}" ${(b.touch || 'auto') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select></label>
+        <small>Décide de l'accueil (« ${esc(t.welcome)} » avec le cercle, ou « ${esc(t.welcomeNoTouch)} » avec la flèche vers le Stream Deck) et des boutons à l'écran quand un Stream Deck est branché. En automatique, la borne suit ce que le navigateur annonce et passe en tactile au premier toucher ; forcez le mode si elle se trompe (écran tactile vu comme une souris, PC de test sans écran tactile).</small>
+      </div>
+      <div>
+        <label>Curseur de la souris <select name="cursor">${[['show', 'Toujours visible'], ['idle', 'Masqué quand la souris ne bouge pas (3 s)'], ['hide', 'Toujours masqué']].map(([v, lb]) => `<option value="${v}" ${(b.cursor || 'show') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select></label>
+        <small>Sur un écran tactile, « toujours masqué » évite une flèche qui traîne au milieu de l'écran ; « masqué quand la souris ne bouge pas » convient si une souris sert de dépannage.</small>
+      </div>
+    </div>
+  </form>
   <form id="formDeck" class="card">
     <h3>Stream Deck</h3>
     <label class="inline"><input name="deckEnabled" type="checkbox" ${(cfg.booth.streamDeck?.enabled ?? true) ? 'checked' : ''}> Utiliser un Stream Deck Elgato branché en USB comme télécommande</label>
@@ -428,11 +585,76 @@ function hardware() {
     <small>Décoché : quand l'écran n'est pas tactile et que le Stream Deck est branché, les boutons disparaissent de l'écran (retour, flèches, valider…) ; tout se fait sur les touches. Un écran tactile garde toujours ses boutons.</small>
     <label>En ce moment ${deckState()}</label>
     <small>Les touches reprennent les boutons de l'écran affiché, aux couleurs du thème, y compris le pavé du code opérateur. Branché, il pilote aussi la galerie de la borne (autant de photos par page que de touches). Sur Mac, quitter l'application Stream Deck d'Elgato, qui réserve l'appareil.</small>
-    <button class="btn primary" type="submit">Enregistrer</button>
   </form>`;
 }
 
-// ---------- Appareils connectés : lumières Govee du réseau local ----------
+function lightsPage() {
+  return `
+  <h2>Lumières</h2>
+  ${lightsSection()}`;
+}
+
+// ---------- Écran de la borne : luminosité et volume en DDC/CI (section Écran & contrôle) ----------
+
+function screenSection() {
+  const sc = S.screen;
+  const cfg = S.config.screen || {};
+  if (!sc || sc.off) return '<div class="card"><h3>Écran</h3><p class="sub">Non piloté pour cette borne (BOOTH_SCREEN=off).</p></div>';
+  const managed = cfg.brightness != null || cfg.volume != null;
+  const at = sc.checkedAt ? `, lu à ${new Date(sc.checkedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : '';
+  const head = !sc.available ? `<div class="alert">${esc(sc.error || 'Outil DDC/CI absent')}</div>`
+    : !sc.display ? `<p class="sub">Aucun écran externe ne répond en DDC/CI pour le moment${sc.error ? ` (${esc(sc.error)})` : ''}${at}. Écran branché en HDMI, DisplayPort ou USB-C : « Relire l'écran » après le branchement.</p>`
+    : `<p class="sub">Écran <b>${esc(sc.display.name || 'externe')}</b> piloté en DDC/CI par ${esc(sc.tool)}${at}.${sc.error ? ` <b class="hw-err">${esc(sc.error)}</b>` : ''}</p>`;
+  const b = cfg.brightness ?? sc.brightness ?? 100;
+  const v = cfg.volume ?? sc.volume ?? 0;
+  return `
+  <form id="formScreen" class="card">
+    <h3>Écran</h3>
+    ${head}
+    ${sc.display ? `
+    <label class="inline"><input name="screenManaged" type="checkbox" ${managed ? 'checked' : ''}> Régler l'écran depuis la borne</label>
+    <small>Coché : les valeurs ci-dessous sont envoyées à l'écran tout de suite et à chaque démarrage de la borne. Décoché : la borne n'y touche pas, l'écran garde ses propres réglages.</small>
+    <div class="grid-2">
+      <label>Luminosité <output id="screenBrightnessOut" class="kelvin-out">${b} %</output>
+        <input name="screenBrightness" class="kelvin-range plain" type="range" min="0" max="100" step="1" value="${b}" ${managed ? '' : 'disabled'}></label>
+      ${sc.volumeOk ? `<label>Volume des haut-parleurs <output id="screenVolumeOut" class="kelvin-out">${v} %</output>
+        <input name="screenVolume" class="kelvin-range plain" type="range" min="0" max="100" step="1" value="${v}" ${managed ? '' : 'disabled'}></label>`
+    : '<small>Cet écran ne répond pas au réglage du volume : pas de haut-parleurs, ou DDC/CI partiel.</small>'}
+    </div>` : ''}
+    <div class="row"><button class="btn" type="button" id="btnScreenRefresh">Relire l'écran</button></div>
+    <small>DDC/CI : le canal de commande des moniteurs, dans le câble vidéo (HDMI, DisplayPort, USB-C). Sur Mac : <code>brew install m1ddc</code>. Sur la borne Linux : <code>ddcutil</code>, module <code>i2c-dev</code> chargé et utilisateur dans le groupe <code>i2c</code>.</small>
+  </form>`;
+}
+
+function bindScreen() {
+  const f = $('#formScreen');
+  if (!f) return;
+  const live = (name, outId) => { const el = f.elements[name]; el?.addEventListener('input', () => { $(`#${outId}`).textContent = `${el.value} %`; }); };
+  live('screenBrightness', 'screenBrightnessOut');
+  live('screenVolume', 'screenVolumeOut');
+  // Enregistré puis envoyé à l'écran au relâchement du curseur (le DDC/CI est lent : pas pendant le glissement)
+  const send = async () => {
+    const managed = f.elements.screenManaged?.checked;
+    const body = {
+      brightness: managed ? Number(f.elements.screenBrightness.value) : null,
+      volume: managed && f.elements.screenVolume ? Number(f.elements.screenVolume.value) : null
+    };
+    saveState('saving');
+    try { await api('/api/admin/screen', { method: 'POST', body }); saveState('saved'); await refresh(); } catch (e) { saveState('error'); toast(e.message, true); }
+  };
+  f.addEventListener('change', (e) => {
+    if (e.target.name === 'screenManaged') f.querySelectorAll('input[type=range]').forEach((r) => { r.disabled = !e.target.checked; });
+    clearTimeout(f.saveTimer);
+    f.saveTimer = setTimeout(send, 250);
+  });
+  $('#btnScreenRefresh')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try { S.screen = (await api('/api/admin/screen/refresh', { method: 'POST' })).screen; render(); } catch (err) { toast(err.message, true); btn.disabled = false; }
+  });
+}
+
+// ---------- Lumières Govee et Elgato du réseau local (section Stream Deck & lumières) ----------
 
 const LIGHT_EFFECTS = [['cycle', 'Cycle de couleurs'], ['breathe', 'Respiration'], ['fixed', 'Couleur fixe']];
 const LIGHT_MODES = [['ambiance', 'Ambiance', 'Les lumières animent l\'accueil (effet ci-dessous).'], ['keep', 'Laisser telles quelles', 'Elles gardent l\'état qu\'elles avaient avant la borne.'], ['off', 'Éteintes', 'Éteintes à l\'accueil, allumées pour la prise de vue.']];
@@ -452,22 +674,22 @@ function lightsSection() {
   const cfg = S.config.lights || {};
   const idle = cfg.idle || {};
   const shoot = cfg.shooting || {};
+  const sd = cfg.shutdown || {};
   if (!L?.available) {
-    return '<h2>Appareils connectés</h2><div class="card"><p class="sub">Désactivés pour cette borne (BOOTH_LIGHTS=off).</p></div>';
+    return '<div class="card"><p class="sub">Désactivées pour cette borne (BOOTH_LIGHTS=off).</p></div>';
   }
   const rows = L.devices.map((d) => `
       <tr data-light="${esc(d.id)}">
         <td><input name="name_${esc(d.id)}" value="${esc(d.name)}" placeholder="${esc(d.type[0].toUpperCase() + d.type.slice(1))} ${esc(d.ip.split('.').pop() || '')}"></td>
         <td>${esc(d.type)}<br><small>${esc(d.sku)} · ${esc(d.ip)}</small></td>
         <td>${lightState(d)}</td>
-        <td class="c"><input type="checkbox" name="amb_${esc(d.id)}" ${d.ambiance ? 'checked' : ''}></td>
-        <td class="c"><input type="checkbox" name="shoot_${esc(d.id)}" ${d.shooting ? 'checked' : ''}></td>
+        <td class="c" data-label="Ambiance"><input type="checkbox" name="amb_${esc(d.id)}" ${d.ambiance ? 'checked' : ''} aria-label="Ambiance"></td>
+        <td class="c" data-label="Prise de vue"><input type="checkbox" name="shoot_${esc(d.id)}" ${d.shooting ? 'checked' : ''} aria-label="Prise de vue"></td>
         <td class="nowrap"><button class="btn small" type="button" data-light-identify="${esc(d.id)}" ${d.online && L.running ? '' : 'disabled'}>Identifier</button>
           <button class="btn ghost small" type="button" data-light-forget="${esc(d.id)}">Oublier</button></td>
       </tr>`).join('');
   return `
-  <h2>Appareils connectés</h2>
-  <p class="sub">Lumières Govee du réseau local, pilotées directement par la borne (sans internet ni compte) : allumées à son démarrage, ambiance à l'accueil, blanc neutre pour les photos, éteintes quand on éteint la borne. Sur chaque lumière, activer <b>LAN Control</b> dans l'app Govee Home (appareil → réglages). Elles doivent être sur le même réseau que la borne.</p>
+  <p class="sub">Lumières Govee et Elgato du réseau local, pilotées directement par la borne (sans internet ni compte) : allumées à son démarrage, ambiance à l'accueil, blanc neutre pour les photos, blanc chaud doux (réglable) quand on éteint la borne. Govee : activer <b>LAN Control</b> dans l'app Govee Home (appareil → réglages). Elgato (Ring Light, Key Light) : rien à activer, la lumière doit seulement être sur le Wi-Fi (app Elgato Control Center). Toutes doivent être sur le même réseau que la borne.</p>
   <form id="formLights">
     <div class="card">
       <label class="inline"><input name="lightsEnabled" type="checkbox" ${cfg.enabled ? 'checked' : ''}> Piloter les lumières</label>
@@ -479,7 +701,7 @@ function lightsSection() {
         <button class="btn" type="button" id="btnLightsScan" ${L.running ? '' : 'disabled'}>Rechercher</button>
         <button class="btn" type="button" id="btnLightsTry" ${L.running && L.devices.some((d) => d.online && d.shooting) ? '' : 'disabled'}>Essayer la prise de vue (8 s)</button>
       </div>
-      <small>Recherche automatique chaque minute : une lumière rallumée au mur reprend sa place. « Identifier » la fait clignoter en bleu.</small>
+      <small>Recherche automatique chaque minute : une lumière rallumée au mur reprend sa place. « Identifier » la fait clignoter (en bleu, en blanc pour une Elgato). Les Elgato sont blanches : à l'accueil elles gardent leur blanc, à la luminosité de l'ambiance (respiration comprise).</small>
     </div>
     <div class="card">
       <h3>Accueil</h3>
@@ -487,7 +709,13 @@ function lightsSection() {
       <div class="grid-2">
         <label>Effet <select name="lightsEffect">${LIGHT_EFFECTS.map(([v, lb]) => `<option value="${v}" ${(idle.effect || 'cycle') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select>
           <small>Cycle : les lumières font le tour des couleurs. Respiration : la couleur choisie monte et descend doucement.</small></label>
-        <label>Couleur (fixe et respiration) <input name="lightsColor" type="color" value="${esc(idle.color || '#ff7a1a')}"></label>
+        <div>
+          <label>Couleur (fixe et respiration) <input name="lightsColor" type="color" value="${esc(idle.color || '#ff7a1a')}"></label>
+          <label class="inline"><input name="lightsWhite" type="checkbox" ${idle.white ? 'checked' : ''}> Blanc plutôt qu'une couleur</label>
+          <label>Température du blanc <output id="lightsIdleKelvinOut" class="kelvin-out">${idle.kelvin ?? 2700} K</output>
+            <input name="lightsIdleKelvin" class="kelvin-range" type="range" min="2000" max="9000" step="100" value="${idle.kelvin ?? 2700}">
+            <span class="kelvin-scale"><span>Chaud</span><span>Neutre</span><span>Froid</span></span></label>
+        </div>
         <label>Luminosité (%) <input name="lightsBrightness" type="number" min="1" max="100" value="${idle.brightness ?? 60}" style="width:120px"></label>
         <label>Durée d'un cycle ou d'une respiration (secondes) <input name="lightsPeriod" type="number" min="2" max="600" value="${idle.periodSec ?? 20}" style="width:120px"></label>
       </div>
@@ -505,27 +733,37 @@ function lightsSection() {
       </div>
       <small>Refaire le calibrage après avoir changé ces réglages ou déplacé les lumières.</small>
     </div>
-    <button class="btn primary" type="submit">Enregistrer</button>
+    <div class="card">
+      <h3>À l'arrêt de la borne</h3>
+      <div class="ctl-modes">${[['white', 'Blanc chaud doux', 'Pour ranger sans être dans le noir : température et luminosité ci-dessous.'], ['off', 'Éteintes', 'Toutes les lumières s\'éteignent.'], ['keep', 'Comme avant la borne', 'Chaque lumière retrouve l\'état qu\'elle avait avant le démarrage.']].map(([v, t, desc]) => `<label class="inline ctl-mode"><input type="radio" name="lightsOffMode" value="${v}" ${(sd.mode || 'white') === v ? 'checked' : ''}> <span><b>${t}</b><small>${desc}</small></span></label>`).join('')}</div>
+      <div class="grid-2">
+        <label>Température du blanc <output id="lightsOffKelvinOut" class="kelvin-out">${sd.kelvin ?? 2700} K</output>
+          <input name="lightsOffKelvin" class="kelvin-range" type="range" min="2000" max="9000" step="100" value="${sd.kelvin ?? 2700}">
+          <span class="kelvin-scale"><span>Chaud</span><span>Neutre</span><span>Froid</span></span></label>
+        <label>Luminosité (%) <input name="lightsOffBrightness" type="number" min="1" max="100" value="${sd.brightness ?? 20}" style="width:120px"></label>
+      </div>
+    </div>
   </form>`;
 }
 
 function bindLights() {
   const f = $('#formLights');
   if (!f) return;
-  f.onsubmit = (e) => {
-    e.preventDefault();
-    const fd = new FormData(f);
+  autoSave(f, (fd) => {
     const devices = Object.fromEntries((S.lights?.devices || []).map((d) => [d.id, {
       name: String(fd.get(`name_${d.id}`) || '').trim(), ambiance: fd.get(`amb_${d.id}`) === 'on', shooting: fd.get(`shoot_${d.id}`) === 'on'
     }]));
     saveConfig({ lights: {
       enabled: fd.get('lightsEnabled') === 'on', devices,
-      idle: { mode: fd.get('lightsMode') || 'ambiance', effect: fd.get('lightsEffect'), color: fd.get('lightsColor'), brightness: num(fd, 'lightsBrightness'), periodSec: num(fd, 'lightsPeriod'), sync: fd.get('lightsSync') === 'on' },
-      shooting: { kelvin: num(fd, 'lightsKelvin'), brightness: num(fd, 'lightsShootBrightness') }
+      idle: { mode: fd.get('lightsMode') || 'ambiance', effect: fd.get('lightsEffect'), color: fd.get('lightsColor'), white: fd.get('lightsWhite') === 'on', kelvin: num(fd, 'lightsIdleKelvin'), brightness: num(fd, 'lightsBrightness'), periodSec: num(fd, 'lightsPeriod'), sync: fd.get('lightsSync') === 'on' },
+      shooting: { kelvin: num(fd, 'lightsKelvin'), brightness: num(fd, 'lightsShootBrightness') },
+      shutdown: { mode: fd.get('lightsOffMode') || 'white', kelvin: num(fd, 'lightsOffKelvin'), brightness: num(fd, 'lightsOffBrightness') }
     } }, 'Lumières enregistrées');
-  };
-  const kelvin = f.querySelector('[name=lightsKelvin]');
-  kelvin?.addEventListener('input', () => { $('#lightsKelvinOut').textContent = `${kelvin.value} K`; });
+  });
+  for (const [name, out] of [['lightsKelvin', '#lightsKelvinOut'], ['lightsIdleKelvin', '#lightsIdleKelvinOut'], ['lightsOffKelvin', '#lightsOffKelvinOut']]) {
+    const el = f.querySelector(`[name=${name}]`);
+    el?.addEventListener('input', () => { $(out).textContent = `${el.value} K`; });
+  }
   const busy = async (btn, fn) => { btn.disabled = true; try { await fn(); } catch (e) { toast(e.message, true); } finally { btn.disabled = false; } };
   $('#btnLightsScan')?.addEventListener('click', (e) => busy(e.currentTarget, async () => {
     const r = await api('/api/admin/lights/discover', { method: 'POST' });
@@ -689,7 +927,7 @@ function closeCalibration() {
   document.removeEventListener('keydown', calibKeys);
   CAL.stage = null;
   sendDeckUi();
-  if (currentSection() === 'hardware') renderCtlBody();
+  if (currentSection() === 'camera') renderCtlBody();
 }
 
 function calibKeys(e) {
@@ -752,7 +990,7 @@ function renderCalibration() {
         </figcaption>
       </figure>`).join('');
     ov.innerHTML = `${head('Résultat du calibrage', `${esc(c?.reason || '')}<br><small>Note : écart à la luminosité idéale, zones brûlées et bruit (ISO) ; plus elle est basse, mieux c'est.</small>`)}
-      ${c.lights ? '<div class="co-info">Calibré lumières de prise de vue allumées (Appareils connectés) : elles se rallument de la même façon pour chaque séance.</div>' : ''}
+      ${c.lights ? '<div class="co-info">Calibré lumières de prise de vue allumées (Lumières) : elles se rallument de la même façon pour chaque séance.</div>' : ''}
       ${flashAdvice(c, pick)}
       <div class="co-shots">${cards || '<p>Aucune photo.</p>'}</div>
       <footer class="co-foot">
@@ -866,7 +1104,7 @@ function pollCalibration() {
     if (CAL.stage) {
       CAL.stage = st === 'done' ? 'results' : st === 'error' ? 'error' : 'running';
       renderCalibration();
-    } else if (currentSection() === 'hardware') renderCtlBody();
+    } else if (currentSection() === 'camera') renderCtlBody();
     if (st === 'running') pollCalibration();
   }, 800);
 }
@@ -931,9 +1169,9 @@ function sessions() {
     <tr>
       <td>${s.final ? `<img class="thumb" src="${esc(s.final.thumbUrl)}" alt="">` : '<div class="thumb"></div>'}</td>
       <td><code>${esc(s.id)}</code><br><small>${new Date(s.createdAt).toLocaleString('fr-FR')}</small></td>
-      <td>${esc(s.templateName)}</td>
-      <td><span class="badge ${s.status === 'done' ? 'ok' : s.status === 'error' ? 'err' : ''}">${esc(s.status)}</span>${s.error ? `<br><small>${esc(s.error)}</small>` : ''}</td>
-      <td>${s.copies}</td>
+      <td data-label="Template">${esc(s.templateName)}</td>
+      <td data-label="Statut"><span class="badge ${s.status === 'done' ? 'ok' : s.status === 'error' ? 'err' : ''}">${esc(s.status)}</span>${s.error ? `<br><small>${esc(s.error)}</small>` : ''}</td>
+      <td data-label="Copies">${s.copies}</td>
       <td>${S.events.length > 1 ? `<select class="small" data-move="${esc(s.id)}" title="Déplacer vers un autre événement">${moveOptions(s)}</select>` : ''}</td>
       <td class="actions">${s.final ? `${s.gif || S.printer?.available === false ? '' : `<button class="btn small secondary" data-reprint="${esc(s.id)}">Réimprimer</button> `}<button class="btn small" type="button" data-view="${esc(s.final.url)}" data-alt="${s.gif ? 'GIF' : 'Photo'} ${esc(s.id)}">Voir</button> ` : ''}<button class="btn small danger" data-del-session="${esc(s.id)}" ${s.status === 'printing' ? 'disabled title="Impression en cours"' : ''}>Supprimer</button></td>
     </tr>`).join('');
@@ -965,7 +1203,7 @@ function sessions() {
       ${exp('finals', `Montages avec template (${ev.finals})`, ev.finals)}
       ${exp('both', 'Les deux', ev.photos + ev.finals)}
     </div>
-    <table style="margin-top:14px">
+    <table class="sessions-table" style="margin-top:14px">
       <thead><tr><th></th><th>Session</th><th>Template</th><th>Statut</th><th>Copies</th><th>Événement</th><th></th></tr></thead>
       <tbody>${list === null ? '<tr><td colspan="7">Chargement…</td></tr>' : rows || '<tr><td colspan="7">Aucune session dans cet événement.</td></tr>'}</tbody>
     </table>
@@ -993,14 +1231,15 @@ function sharing() {
   const cfg = S.config;
   const n = S.devices.network;
   return `
-  <h2>Partage</h2>
-  <p class="sub">Les invités récupèrent leur photo en scannant un QR code avec leur téléphone.${n ? ` Wi-Fi de la borne : <span class="badge ${n.wifi ? 'ok' : 'err'}">${n.wifi ? `connecté (${esc(n.ip)})` : 'absent'}</span>` : ''}</p>
+  <h2>Galerie &amp; partage</h2>
+  <p class="sub">Les invités récupèrent leur photo en scannant un QR code avec leur téléphone, et retrouvent celles de la soirée dans la galerie.${n ? ` Wi-Fi de la borne : <span class="badge ${n.wifi ? 'ok' : 'err'}">${n.wifi ? `connecté (${esc(n.ip)})` : 'absent'}</span>` : ''}</p>
+  ${galleryCard()}
   <form id="formShare" class="card">
     <div class="grid-2">
       <div>
         <h3>QR code des photos</h3>
         <label class="inline"><input name="qrOnDone" type="checkbox" ${cfg.share.qrOnDone !== false ? 'checked' : ''}> QR code sur l'écran de fin</label>
-        <small>Décoché : pas d'écran de fin, la borne revient à l'accueil avec le texte « thanksNoQr » (Apparence) en bandeau.</small>
+        <small>Décoché : pas d'écran de fin, la borne revient à l'accueil avec le texte « ${esc(cfg.texts.thanksNoQr)} » en bandeau (<a href="#texts">Textes des écrans</a>).</small>
         <label class="inline"><input name="requireWifi" type="checkbox" ${cfg.share.requireWifi !== false ? 'checked' : ''}> QR codes seulement si la borne est en Wi-Fi</label>
         <small>Décoché : QR codes affichés même sans Wi-Fi (borne en Ethernet sur un réseau que les téléphones joignent).</small>
       </div>
@@ -1012,7 +1251,6 @@ function sharing() {
         <small>Remplie : les QR codes de photo y mènent. Hors du Wi-Fi de la borne, la page distante (<code>npm run remote</code>) invite l'invité à s'y connecter, puis affiche sa photo. Voir TUTORIEL.md, étape 10.8.</small>
       </div>
     </div>
-    <button class="btn primary" type="submit">Enregistrer</button>
   </form>
   ${wifiCard()}`;
 }
@@ -1021,6 +1259,7 @@ function security() {
   const cfg = S.config;
   return `
   <h2>Sécurité</h2>
+  <p class="sub">Codes enregistrés dès que vous quittez le champ.</p>
   <form id="formCodes" class="card">
     <div class="grid-2">
       <div>
@@ -1033,7 +1272,6 @@ function security() {
         <small>Sur la borne (écran ou Stream Deck) : lève la limite de copies et le quota, et autorise la réimpression depuis la galerie si elle est réglée ainsi.</small>
       </div>
     </div>
-    <button class="btn primary" type="submit">Enregistrer</button>
   </form>`;
 }
 
@@ -1058,7 +1296,6 @@ function wifiCard() {
       </div>
     </div>
     ${w.enabled && (!w.ssid || (!open && !w.password)) ? '<div class="alert">Nom du réseau ou mot de passe manquant : le QR code n\'est pas affiché.</div>' : ''}
-    <button class="btn primary" type="submit">Enregistrer</button>
   </form>`;
 }
 
@@ -1086,7 +1323,6 @@ function galleryCard() {
         <small>${g.web ? 'Ouverte sur' : 'Adresse une fois activée :'} <code>${esc(webUrl)}</code>. Toute personne sur le même réseau voit alors toutes les photos de l'événement. Pas de réimpression depuis un téléphone.</small>
       </div>
     </div>
-    <button class="btn primary" type="submit">Enregistrer</button>
   </form>`;
 }
 
@@ -1116,6 +1352,7 @@ function editorSection() {
   const fmt = t.format && S.formats[t.format] ? S.formats[t.format].name : 'format libre';
   return `
   <div class="editor">
+    <p class="editor-mobile-note">Le concepteur se manipule mieux sur un grand écran (ordinateur, ou tablette en paysage) : placer et redimensionner les calques au doigt reste possible, mais peu précis.</p>
     <div class="editor-top">
       <button class="btn" id="edBack">← Templates</button>
       <input id="edName" class="ed-name" value="${esc(E.tpl.name)}" title="Nom du template">
@@ -1420,7 +1657,7 @@ function renderProps() {
       <label>Seuil <input type="range" data-p="aiThreshold" min="0" max="100" step="1" value="${l.aiThreshold ?? 50}"><small>Plus haut : retire plus de fond. Plus bas : garde plus de la personne (bras, cheveux).</small></label>
       <label>Douceur des bords <input type="range" data-p="aiSoftness" min="0" max="100" step="1" value="${l.aiSoftness ?? 50}"><small>À gauche : découpe nette. À droite : bord fondu.</small></label>
       <label>Contour (px) <input type="number" data-p="aiContour" min="-10" max="10" step="1" value="${l.aiContour ?? 0}"><small>Négatif : resserre la découpe (enlève un halo du fond). Positif : l'élargit.</small></label>
-      <label>Modèle de la photo finale <select data-p="aiPrecision" id="pAiModel"><option value="precise" ${l.aiPrecision !== 'fast' ? 'selected' : ''}>Précis : tout sujet, bords propres (calculé pendant la séance)</option><option value="fast" ${l.aiPrecision === 'fast' ? 'selected' : ''}>Rapide : personnes seulement</option></select></label>
+      <label>Modèle de la photo finale <select data-p="aiPrecision" id="pAiModel"><option value="precise" ${l.aiPrecision !== 'fast' ? 'selected' : ''}>Précis : tout sujet, bords propres (calculé pendant la séance)</option><option value="fast" ${l.aiPrecision === 'fast' ? 'selected' : ''}>Rapide : personnes seulement</option></select><small>Précis : ~5 s par photo, calculé pendant la séance ; rapide : ~0,5 s. Les boomerangs utilisent toujours le rapide (une vingtaine d'images).</small></label>
       ${l.aiPrecision !== 'fast' ? modelNotice() : ''}
       <div class="row"><button class="btn small secondary" type="button" id="pCutTestLast">Tester sur la dernière photo</button><button class="btn small" type="button" id="pCutTestSample">Tester sur la photo d'exemple</button></div>
       <small class="muted">Le test fait le vrai montage de la photo finale avec les réglages affichés, même non enregistrés.</small>` : ''}
@@ -1539,6 +1776,18 @@ function imageBgFields(l) {
 }
 
 /** Modèle de détourage précis absent : message et bouton d'installation (vide s'il est installé). */
+/** Vitesse du détourage précis sur cette machine, et repli automatique sur le modèle rapide. */
+function perfNotice() {
+  const p = S.cutoutPerf || {};
+  const sec = (v) => `${String(v).replace('.', ',')} s`;
+  const measured = p.preciseSec == null ? '<small>Pas encore mesuré sur cette machine (mesure une seule fois, 20 s après le démarrage, si un template s\'en sert ; gardée ensuite).</small>'
+    : p.slow ? `<span class="badge warn">${sec(p.preciseSec)} par photo</span> <small>trop lent pour une séance (au-delà de ${p.thresholdSec} s)${p.fallback ? ' : les photos des invités utilisent le modèle rapide.' : '.'}</small>`
+    : `<span class="badge ok">${sec(p.preciseSec)} par photo</span> <small>mesuré sur cette machine</small>`;
+  return `<p>Vitesse : ${measured}</p>
+    <label class="inline"><input id="cutoutAuto" type="checkbox" ${S.config.templates.cutoutAuto !== false ? 'checked' : ''}> Passer au modèle rapide si cette machine est trop lente pour le précis</label>
+    <small>Décoché : le modèle précis est toujours utilisé, même si l'invité doit attendre.</small>`;
+}
+
 function modelNotice() {
   const m = S.subjectModel;
   if (!m || m.installed) return '';
@@ -1915,8 +2164,8 @@ function unbindEditor() {
   E.drag = null;
 }
 
-const SECTIONS = { dashboard, sessions, templates: templatesSection, editor: editorSection, flow, printing, sharing, theme: themeSection, hardware, lights: lightsSection, security };
-const OLD_HASHES = { limits: 'printing' }; // anciens liens de l'admin
+const SECTIONS = { dashboard, sessions, templates: templatesSection, editor: editorSection, flow, printing, sharing, theme: themeSection, texts: textsSection, camera, control: controlSection, lights: lightsPage, security };
+const OLD_HASHES = { limits: 'printing', hardware: 'camera', devices: 'control' }; // anciens liens de l'admin
 
 // ---------- Rendu + événements ----------
 
@@ -1928,18 +2177,40 @@ function currentSection() {
   return SECTIONS[h] ? h : 'dashboard';
 }
 
+/** Téléphone : menu en tiroir par-dessus la page. */
+function setNavOpen(open) {
+  document.body.classList.toggle('nav-open', open);
+  $('#navToggle')?.setAttribute('aria-expanded', String(open));
+}
+
 function render() {
   if (!S) return; // pas encore connecté
   syncFavicon();
   const sec = currentSection();
   if (prevSection === 'editor' && sec !== 'editor') unbindEditor();
   prevSection = sec;
+  const sameSection = render.last === location.hash;
+  render.last = location.hash;
   const navKey = sec === 'editor' ? 'templates' : sec;
   document.querySelectorAll('.nav a[href^="#"]').forEach((a) => a.classList.toggle('active', a.getAttribute('href') === `#${navKey}`));
+  $('#topTitle').textContent = document.querySelector(`.nav a[href="#${navKey}"]`)?.textContent || '';
+  setNavOpen(false);
+  // Même section redessinée (après un enregistrement) : défilement, champ actif et ce qu'on y tapait sont gardés
+  const ae = document.activeElement;
+  const typing = sameSection && ae && $('#main').contains(ae) && ae.matches('input:not([type=checkbox]):not([type=radio]):not([type=file]), textarea, select')
+    ? { form: ae.form?.id, key: ae.id ? `#${CSS.escape(ae.id)}` : ae.name ? `[name="${CSS.escape(ae.name)}"]` : null, value: ae.value, start: ae.selectionStart, end: ae.selectionEnd } : null;
+  const y = window.scrollY;
   try {
     $('#main').innerHTML = SECTIONS[sec]();
     $('#main').classList.toggle('wide', sec === 'editor');
     bindSection(sec);
+    if (sameSection) window.scrollTo(0, y); else window.scrollTo(0, 0);
+    const back = typing?.key && $('#main').querySelector(`${typing.form ? `#${CSS.escape(typing.form)} ` : ''}${typing.key}`);
+    if (back) {
+      back.value = typing.value;
+      back.focus({ preventScroll: true });
+      try { back.setSelectionRange(typing.start, typing.end); } catch { /* nombre, liste */ }
+    }
   } catch (e) {
     console.error(e);
     $('#main').innerHTML = `<h2>Cette page n'a pas pu s'afficher</h2>
@@ -2024,6 +2295,7 @@ function bindSection(sec) {
 
   bindSettingsForms();
   bindLights();
+  bindScreen();
   // Mots de passe masqués : un bouton pour les afficher le temps de les vérifier
   document.querySelectorAll('[data-pw-toggle]').forEach((b) => b.addEventListener('click', () => {
     const input = b.previousElementSibling;
@@ -2033,59 +2305,50 @@ function bindSection(sec) {
 
   if (sec === 'theme') {
     const form = $('#formTheme');
+    // L'aperçu et la carte « Personnalisé » suivent le thème coché et les couleurs choisies, sans attendre l'enregistrement
     const updatePreview = () => {
       const fd = new FormData(form);
-      const p = $('#themePreview');
-      p.style.background = fd.get('color_background');
-      p.style.color = fd.get('color_text');
-      const title = p.querySelector('span');
-      title.style.color = fd.get('color_secondary');
-      title.textContent = fd.get('boothName');
-      const b = p.querySelector('.pbtn');
-      b.style.background = fd.get('color_primary');
-      b.style.color = fd.get('color_onPrimary');
-      const o = p.querySelector('.pbtn-outline');
-      o.style.borderColor = fd.get('color_secondary');
-      o.style.color = fd.get('color_secondary');
+      const active = fd.get('active');
+      const isCustom = active === 'custom';
+      $('#customTheme').classList.toggle('hidden', !isCustom);
+      const customColors = Object.fromEntries(['primary', 'secondary', 'background', 'surface', 'text', 'onPrimary'].map((k) => [k, fd.get(`color_${k}`)]));
+      const theme = isCustom ? { colors: customColors, font: fd.get('font') } : S.themes.find((x) => x.id === active) || S.themes[0];
+      $('#themePreview').style.cssText = tpVars(theme.colors, theme.font);
+      $('#themePickCustom').style.cssText = tpVars(customColors, fd.get('font'));
+      // Logo Cheeesy aux couleurs du thème coché (et de la carte « Personnalisé ») ; URL inchangée : pas de rechargement
+      const setLogo = (img, url) => { if (img && img.getAttribute('src') !== url) img.src = url; };
+      setLogo($('#themePreview .tp-logo'), logoFor(theme.colors));
+      setLogo($('#themePickCustom .tp-logo'), logoFor(customColors));
+      const c = theme.colors;
       const problems = [];
-      if (contrast(fd.get('color_background'), fd.get('color_text')) < 4.5) problems.push('texte courant sur fond d\'écran');
-      if (contrast(fd.get('color_primary'), fd.get('color_onPrimary')) < 3) problems.push('texte des boutons sur accent');
-      if (contrast(fd.get('color_background'), fd.get('color_secondary')) < 3) problems.push('titres sur fond d\'écran');
-      if (contrast(fd.get('color_background'), fd.get('color_primary')) < 3) problems.push('accent sur fond d\'écran');
+      if (contrast(c.background, c.text) < 4.5) problems.push('texte courant sur fond d\'écran');
+      if (contrast(c.primary, c.onPrimary) < 3) problems.push('texte des boutons sur accent');
+      if (contrast(c.background, c.secondary) < 3) problems.push('titres sur fond d\'écran');
+      if (contrast(c.background, c.primary) < 3) problems.push('accent sur fond d\'écran');
       const warn = $('#contrastWarn');
-      warn.textContent = problems.length ? `Contraste faible : ${problems.join(', ')}` : '';
+      warn.textContent = problems.length ? `Contraste faible, difficile à lire sur la borne : ${problems.join(', ')}.` : '';
       warn.classList.toggle('hidden', !problems.length);
     };
     form.addEventListener('input', updatePreview);
     updatePreview();
-    form.onsubmit = (e) => {
-      e.preventDefault();
-      const fd = new FormData(form);
+    autoSave(form, (fd) => {
       saveConfig({
-        booth: { name: fd.get('boothName'), showName: fd.get('showName') === 'on', cursor: fd.get('cursor') },
+        booth: { name: fd.get('boothName'), showName: fd.get('showName') === 'on' },
         theme: { active: fd.get('active'), custom: {
           font: fd.get('font'),
           colors: { primary: fd.get('color_primary'), secondary: fd.get('color_secondary'), background: fd.get('color_background'), surface: fd.get('color_surface'), text: fd.get('color_text'), onPrimary: fd.get('color_onPrimary') }
         } }
       }, 'Thème enregistré, la borne est à jour');
-    };
-    $('#formLogo').onsubmit = async (e) => {
-      e.preventDefault();
-      try { await api('/api/admin/logo', { method: 'POST', form: new FormData(e.target) }); toast('Logo envoyé, la borne est à jour'); refresh(); } catch (err) { toast(err.message, true); }
-    };
-    $('#formBg').onsubmit = async (e) => {
-      e.preventDefault();
-      try { await api('/api/admin/background', { method: 'POST', form: new FormData(e.target) }); toast('Image de fond envoyée'); refresh(); } catch (err) { toast(err.message, true); }
-    };
+    });
+    const upload = (formEl, url, msg) => formEl.querySelector('input[type=file]').addEventListener('change', async (e) => {
+      if (!e.target.files.length) return;
+      saveState('saving');
+      try { await api(url, { method: 'POST', form: new FormData(formEl) }); saveState('saved'); toast(msg); refresh(); } catch (err) { saveState('error'); toast(err.message, true); }
+    });
+    upload($('#formLogo'), '/api/admin/logo', 'Logo envoyé, la borne est à jour');
+    upload($('#formBg'), '/api/admin/background', 'Image de fond envoyée');
     $('#btnLogoReset')?.addEventListener('click', () => saveConfig({ booth: { logo: '' }, theme: { custom: { logo: '' } } }, 'Logo par défaut rétabli'));
     $('#btnBgReset')?.addEventListener('click', () => saveConfig({ booth: { backgroundImage: '' }, theme: { custom: { backgroundImage: '' } } }, 'Image de fond retirée'));
-    $('#formTexts').onsubmit = (e) => {
-      e.preventDefault();
-      const fd = new FormData(e.target);
-      const texts = {};
-      for (const [k, v] of fd.entries()) if (k.startsWith('text_')) texts[k.slice(5)] = v;
-      saveConfig({ texts }, 'Textes enregistrés');
-    };
   }
 
   if (sec === 'templates') {
@@ -2099,6 +2362,7 @@ function bindSection(sec) {
     };
     bindTemplateSort(() => saveTemplates('Ordre enregistré, la borne est à jour'));
     document.querySelectorAll('[data-enable], input[name=defaultTpl], #guestCanChoose, #defaultFormat, #gifEnabled').forEach((el) => el.addEventListener('change', () => saveTemplates()));
+    $('#cutoutAuto')?.addEventListener('change', (e) => saveConfig({ templates: { cutoutAuto: e.target.checked } }));
     document.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm(`Supprimer le template « ${b.dataset.del} » ?`)) return;
       try { await api(`/api/admin/templates/${encodeURIComponent(b.dataset.del)}`, { method: 'DELETE' }); toast('Template supprimé'); refresh(); } catch (e) { toast(e.message, true); }
@@ -2177,7 +2441,7 @@ function bindSection(sec) {
 /** Formulaires de réglages : chacun enregistre ses propres champs, quelle que soit la section qui l'affiche. */
 function bindSettingsForms() {
   bindCameraControl();
-  const form = (id, fn) => { const f = $(id); if (f) f.onsubmit = (e) => { e.preventDefault(); fn(new FormData(f), f); }; };
+  const form = (id, fn) => autoSave($(id), fn);
   document.querySelectorAll('.btn-detect').forEach((b) => b.addEventListener('click', async () => {
     try { await api('/api/admin/devices/refresh', { method: 'POST' }); toast('Détection relancée'); refresh(); } catch (e) { toast(e.message, true); }
   }));
@@ -2186,7 +2450,9 @@ function bindSettingsForms() {
       countdownSec: num(fd, 'countdownSec'),
       maxRetakesPerSession: fd.get('retakesUnlimited') === 'on' ? -1 : num(fd, 'maxRetakesPerSession'),
       reviewTimeoutSec: num(fd, 'reviewTimeoutSec'),
-      captureTimeoutSec: num(fd, 'captureTimeoutSec')
+      captureTimeoutSec: num(fd, 'captureTimeoutSec'),
+      copiesTimeoutSec: num(fd, 'copiesTimeoutSec'),
+      copiesTimeoutAction: fd.get('copiesTimeoutAction')
     },
     booth: {
       mirrorPreview: fd.get('mirrorPreview') === 'on', idleReturnSec: num(fd, 'idleReturnSec'), menuIdleSec: num(fd, 'menuIdleSec'),
@@ -2201,8 +2467,6 @@ function bindSettingsForms() {
   form('#formPrintLimits', (fd) => saveConfig({ limits: {
     maxCopiesPerSession: num(fd, 'maxCopiesPerSession'),
     allowZeroCopies: fd.get('allowZeroCopies') === 'on',
-    copiesTimeoutSec: num(fd, 'copiesTimeoutSec'),
-    copiesTimeoutAction: fd.get('copiesTimeoutAction'),
     operatorMaxCopies: num(fd, 'operatorMaxCopies'),
     eventQuota: num(fd, 'eventQuota'),
     lowPaperThreshold: num(fd, 'lowPaperThreshold')
@@ -2220,11 +2484,17 @@ function bindSettingsForms() {
     } },
     booth: { lensPosition: fd.get('lensPosition') }
   }));
+  form('#formControl', (fd) => saveConfig({ booth: { touch: fd.get('touchMode') || 'auto', cursor: fd.get('cursor') || 'show' } }));
   form('#formDeck', (fd) => saveConfig({ booth: { streamDeck: { enabled: fd.get('deckEnabled') === 'on', brightness: num(fd, 'deckBrightness'), position: fd.get('deckPosition'), showButtons: fd.get('deckShowButtons') === 'on' } } }));
   form('#formShare', (fd, f) => saveConfig({ share: { baseUrl: fd.get('shareBaseUrl').trim(), publicUrl: fd.get('publicUrl').trim(), qrOnDone: f.qrOnDone.checked, requireWifi: f.requireWifi.checked } }));
   form('#formCodes', (fd) => saveConfig({ admin: { pin: fd.get('adminPin') }, limits: { operatorPin: fd.get('operatorPin') } }));
   form('#formWifi', (fd, f) => saveConfig({ share: { wifi: { enabled: f.enabled.checked, ssid: f.ssid.value.trim(), password: f.password.value, security: f.security.value } } }, 'Wi-Fi enregistré'));
   form('#formGallery', (fd, f) => saveConfig({ gallery: { booth: f.booth.checked, web: f.web.checked, reprint: f.reprint.value, qr: f.qr.checked } }, 'Galerie enregistrée'));
+  form('#formTexts', (fd) => {
+    const texts = {};
+    for (const [k, v] of fd.entries()) if (k.startsWith('text_')) texts[k.slice(5)] = v;
+    saveConfig({ texts }, 'Textes enregistrés');
+  });
 }
 
 /** Contraste WCAG entre deux couleurs hex. */
@@ -2276,6 +2546,9 @@ async function boot() {
 }
 
 window.addEventListener('hashchange', render);
+$('#navToggle').addEventListener('click', () => setNavOpen(!document.body.classList.contains('nav-open')));
+$('#navBackdrop').addEventListener('click', () => setNavOpen(false));
+document.querySelectorAll('.nav a').forEach((a) => a.addEventListener('click', () => setNavOpen(false))); // même section : le hash ne change pas
 window.addEventListener('beforeunload', (e) => { if (currentSection() === 'editor' && E.dirty) { e.preventDefault(); e.returnValue = ''; } });
 $('#btnLogout').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }); location.reload(); };
 // Retour à la borne dans la même fenêtre : on se déconnecte, sinon la zone cachée rouvrirait l'admin sans code.
@@ -2414,6 +2687,7 @@ async function refreshDevices() {
     const d = await api('/api/admin/devices');
     S.camera = d.camera;
     S.devices = d.devices;
+    if (d.screen) S.screen = d.screen;
   } catch { return; }
   if (calibReady() !== before) sendDeckUi();
 }
@@ -2442,6 +2716,14 @@ function onDeckPress(id) {
   else if (id === 'btnBooth') location.href = '/'; // page de connexion : retour direct à la borne
 }
 
+// Une séance envoie ses messages en rafale (compteurs, sessions, aperçu, impression) : un seul rechargement de
+// l'état pour toute la rafale, pas un par message.
+let refreshTimer = 0;
+function scheduleRefresh() {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => refresh().catch(() => {}), 400);
+}
+
 // Rafraîchit compteurs et sessions quand la borne travaille ; relaie le Stream Deck (admin ouverte sur la borne).
 (function ws() {
   const sock = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
@@ -2453,7 +2735,7 @@ function onDeckPress(id) {
     if (msg?.type === 'deck') return onDeckPress(msg.id);
     if (msg?.type === 'deckInfo') return;
     if (msg?.type === 'config') refreshDevices(); // pilote de caméra changé (boîtier branché / débranché), entre autres
-    if (S && ['dashboard', 'sessions'].includes(currentSection())) refresh().catch(() => {});
+    if (S && ['dashboard', 'sessions'].includes(currentSection())) scheduleRefresh();
   };
   sock.onclose = () => setTimeout(ws, 3000);
 })();

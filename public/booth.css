@@ -32,6 +32,7 @@ body[data-font="serif"] { font-family: Georgia, "Times New Roman", serif; }
 .hidden { display: none !important; }
 
 .brand { position: absolute; top: 20px; left: 28px; z-index: 5; pointer-events: none; display: flex; align-items: center; gap: 14px; }
+body[data-screen="idle"] .brand { display: none; } /* accueil : le logo est déjà au centre */
 .booth-name { font-weight: 800; font-size: 26px; color: var(--secondary); }
 .booth-name:empty { display: none; }
 .logo-slot { display: inline-flex; align-items: center; color: var(--secondary); }
@@ -334,10 +335,15 @@ body.deck-ui #screen-review .final-wrap { flex: 1 1 auto; min-height: 0; }
 /* Autant de filtres par ligne que la largeur le permet (vignettes de 64 px au moins), 4 au plus, sur toute la
    largeur ; 400 px au plus en tout pour ne pas prendre la place de la photo */
 .filter-bar { --gap: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(max(64px, calc((100% - 3 * var(--gap)) / 4)), 1fr)); /* auto-fit : moins de 4 filtres, ils se partagent toute la largeur */ gap: var(--gap); width: 100%; max-width: 400px; }
-.filter-chip { appearance: none; border: 3px solid transparent; background: none; padding: 0; border-radius: 12px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--text); font: inherit; font-size: 12px; font-weight: 700; }
+.filter-chip { position: relative; appearance: none; border: 3px solid transparent; background: none; padding: 0; border-radius: 12px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--text); font: inherit; font-size: 12px; font-weight: 700; }
 .filter-chip img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 9px; display: block; pointer-events: none; }
 .filter-chip span { line-height: 1.1; text-align: center; padding: 0 2px 4px; }
-.filter-chip.active { border-color: var(--accent); }
+/* Filtre choisi : coche dans le coin de la vignette (pastille d'accent, coche de la couleur qui s'écrit dessus), à cheval sur le coin haut droit.
+   z-index : le filtre CSS de la vignette crée un contexte d'empilement qui passerait sinon au-dessus de la pastille. */
+.filter-chip.active::before { content: ""; position: absolute; z-index: 1; top: -7px; right: -7px; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--on-accent, #fff), 0 2px 8px rgba(0, 0, 0, 0.4); }
+.filter-chip.active::after { content: ""; position: absolute; z-index: 2; top: -7px; right: -7px; width: 30px; height: 30px; background: var(--on-accent, #fff);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / 62% no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / 62% no-repeat; }
 .filter-chip:focus-visible { outline: 4px solid var(--accent); outline-offset: 2px; }
 /* Montage en cours avec le nouveau filtre : photo assombrie, jamais transparente (le fond ne doit pas apparaître) */
 #screen-review.filtering .final-img { filter: brightness(0.55); transition: filter 0.2s; }

@@ -564,6 +564,29 @@ const ICONS = {
   delete: '<path d="M10 5h11v14H10l-7-7z"/><path d="m18 9-6 6M12 9l6 6"/>'
 };
 
+// Luminance et contraste WCAG (mêmes formules que booth.js), pour garantir la lisibilité sur l'écran des touches.
+const luminance = (hex) => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return 0;
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contrast = (a, b) => { const [l1, l2] = [luminance(a), luminance(b)].sort((x, y) => y - x); return (l1 + 0.05) / (l2 + 0.05); };
+const mixHex = (a, b, t) => {
+  const pa = a.slice(1).match(/../g).map((x) => parseInt(x, 16)), pb = b.slice(1).match(/../g).map((x) => parseInt(x, 16));
+  return `#${pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, '0')).join('')}`;
+};
+/**
+ * Couleur du thème rendue lisible sur le fond d'une touche : trop proche du fond (bleu nuit sur noir, jaune pâle
+ * sur blanc), elle est éclaircie ou assombrie pas à pas, teinte conservée, jusqu'au contraste demandé.
+ */
+function readableOn(color, bg, min = 3) {
+  if (!color || !bg || contrast(color, bg) >= min) return color;
+  const towards = luminance(bg) < 0.4 ? '#ffffff' : '#000000';
+  for (let t = 0.1; t < 1; t += 0.1) { const c = mixHex(color, towards, t); if (contrast(c, bg) >= min) return c; }
+  return towards;
+}
+
 /** Dessine une touche : fond aux couleurs du thème, pictogramme ou miniature, libellé. Retourne du RVB brut. */
 async function renderKey(it, w, h, colors) {
   const primary = colors.primary || '#e63946';
@@ -596,6 +619,23 @@ async function renderKey(it, w, h, colors) {
   const nameKey = it.kind === 'choice' && !it.image && !it.disabled;
   if (nameKey) { bg = '#000000'; fg = '#ffffff'; border = primary; }
 
+  // Lisibilité sur l'écran des touches : texte et liseré trop proches du fond de la touche (bleu nuit du thème
+  // « Clair » sur noir…) sont éclaircis ou assombris, teinte conservée. Le fond lui-même garde la couleur du thème ;
+  // une touche presque aussi noire que le fond de l'écran reçoit un fin liseré gris pour rester visible.
+  if (!it.disabled) {
+    fg = readableOn(fg, bg, 4.5);
+    if (border !== 'none') border = readableOn(border, bg, 2.5);
+    else if (active && contrast(bg, pageBg) < 1.3) border = '#3c3c3c';
+  }
+  // Choix sélectionné (filtre en cours) : coche dans le coin, couleur d'accent lisible sur la touche
+  let badge = '';
+  if (it.active && !it.disabled) {
+    const r = w * 0.14, cx = w * 0.82, cy = h * 0.18;
+    const fill = readableOn(primary, bg, 3);
+    const tick = contrast(fill, '#000000') >= contrast(fill, '#ffffff') ? '#000000' : '#ffffff';
+    badge = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}"/><g transform="translate(${cx - r * 0.6} ${cy - r * 0.6}) scale(${(r * 1.2) / 24})" fill="none" stroke="${tick}" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">${ICONS.check}</g>`;
+  }
+
   const stroke0 = border !== 'none' ? `stroke="${border}" stroke-width="${Math.max(2, w * 0.05)}"` : '';
   const frame = `<rect width="${w}" height="${h}" fill="${pageBg}"/><rect x="${w * 0.04}" y="${h * 0.04}" width="${w * 0.92}" height="${h * 0.92}" rx="${w * 0.16}" fill="${bg}" ${stroke0}/>`;
 
@@ -604,8 +644,9 @@ async function renderKey(it, w, h, colors) {
     const img = await sharp(Buffer.from(it.image.split(',')[1], 'base64')).resize(Math.round(w * 0.92), Math.round(h * 0.92), { fit: 'cover' }).png().toBuffer();
     const mask = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(w * 0.92)}" height="${Math.round(h * 0.92)}"><rect width="100%" height="100%" rx="${w * 0.16}" fill="#fff"/></svg>`;
     const rounded = await sharp(img).composite([{ input: Buffer.from(mask), blend: 'dest-in' }]).png().toBuffer();
+    const over = badge ? [{ input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${badge}</svg>`) }] : [];
     return sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${frame}</svg>`))
-      .composite([{ input: rounded, left: Math.round(w * 0.04), top: Math.round(h * 0.04) }])
+      .composite([{ input: rounded, left: Math.round(w * 0.04), top: Math.round(h * 0.04) }, ...over])
       .removeAlpha().raw().toBuffer();
   }
 
@@ -613,7 +654,7 @@ async function renderKey(it, w, h, colors) {
   if (it.icon && ICONS[it.icon]) {
     const isz = w * 0.52;
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${frame}
-      <g transform="translate(${(w - isz) / 2} ${(h - isz) / 2}) scale(${isz / 24})" fill="none" stroke="${fg}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">${ICONS[it.icon]}</g></svg>`;
+      <g transform="translate(${(w - isz) / 2} ${(h - isz) / 2}) scale(${isz / 24})" fill="none" stroke="${fg}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">${ICONS[it.icon]}</g>${badge}</svg>`;
     return sharp(Buffer.from(svg)).removeAlpha().raw().toBuffer();
   }
 
@@ -631,7 +672,7 @@ async function renderKey(it, w, h, colors) {
   const tspans = lines.map((l, i) => `<text x="${w / 2}" y="${y0 + i * lh}" dominant-baseline="central" text-anchor="middle">${escXml(l)}</text>`).join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">
     ${frame}
-    <g fill="${fg}" font-family="Helvetica, Arial, sans-serif" font-weight="800" font-size="${size}">${tspans}</g>
+    <g fill="${fg}" font-family="Helvetica, Arial, sans-serif" font-weight="800" font-size="${size}">${tspans}</g>${badge}
   </svg>`;
   return sharp(Buffer.from(svg)).removeAlpha().raw().toBuffer();
 }

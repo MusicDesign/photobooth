@@ -213,16 +213,24 @@ export function renderTemplate(ctx, template, opts = {}) {
       if (highlightShot === l.shot && !(img && iw)) {
         const lw = 8 / scale;
         const radii = displayRadii(l);
-        // Liseré tracé sur le bord exact du calque, en double épaisseur, découpé au calque :
-        // sa moitié extérieure disparaît et la moitié restante suit fidèlement la courbe du coin.
-        ctx.save();
-        roundedRectPath(ctx, l.x, l.y, l.width, l.height, radii);
-        ctx.clip();
-        ctx.lineWidth = lw * 2;
-        ctx.strokeStyle = highlightColor;
-        roundedRectPath(ctx, l.x, l.y, l.width, l.height, radii);
-        ctx.stroke();
-        ctx.restore();
+        // Calque qui déborde du tirage (sans rotation) : le liseré suit la partie visible, sinon le côté qui
+        // dépasse n'a pas de liseré (calque photo à x = −33 : plus de bord gauche).
+        const v = l.rotation ? { x: l.x, y: l.y, w: l.width, h: l.height } : (() => {
+          const x = Math.max(0, l.x), y = Math.max(0, l.y);
+          return { x, y, w: Math.min(template.width, l.x + l.width) - x, h: Math.min(template.height, l.y + l.height) - y };
+        })();
+        if (v.w > 0 && v.h > 0) {
+          // Liseré tracé sur le bord exact du calque, en double épaisseur, découpé au calque :
+          // sa moitié extérieure disparaît et la moitié restante suit fidèlement la courbe du coin.
+          ctx.save();
+          roundedRectPath(ctx, v.x, v.y, v.w, v.h, radii);
+          ctx.clip();
+          ctx.lineWidth = lw * 2;
+          ctx.strokeStyle = highlightColor;
+          roundedRectPath(ctx, v.x, v.y, v.w, v.h, radii);
+          ctx.stroke();
+          ctx.restore();
+        }
       }
     } else if (l.type === 'image') {
       const img = assets.get(imageSrc(l)) || assets.get(l.src); // sans fond pas encore chargée : l'originale

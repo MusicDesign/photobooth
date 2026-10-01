@@ -1,6 +1,7 @@
 {
   "id": "festive",
   "name": "Festif",
+  "order": 3,
   "colors": {
     "primary": "#7209b7",
     "secondary": "#7209b7",

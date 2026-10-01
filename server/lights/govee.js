@@ -16,6 +16,10 @@ const SCAN_PORT = 4001;
 const REPLY_PORT = 4002;
 const CMD_PORT = 4003;
 const SCAN_MSG = { msg: { cmd: 'scan', data: { account_topic: 'reserve' } } };
+// Modèles qui font un fondu d'eux-mêmes vers la nouvelle couleur : une couleur par seconde suffit. Les autres
+// (tube H6076…) sautent d'une couleur à l'autre : il leur faut des pas plus petits et plus fréquents.
+const FADES = new Set(['H6008']);
+const fades = (sku) => FADES.has(sku);
 
 /** Adresse IPv4 du réseau local (Wi-Fi ou Ethernet), et son masque. Interfaces virtuelles écartées. */
 export function lanAddress() {
@@ -33,7 +37,7 @@ export function lanAddress() {
 }
 
 /** Adresses à appeler une à une : le /24 de la borne (ou son sous-réseau s'il est plus petit), sans elle-même. */
-function subnetHosts({ address, netmask }) {
+export function subnetHosts({ address, netmask }) {
   const toInt = (ip) => ip.split('.').reduce((n, x) => (n << 8) + Number(x), 0) >>> 0;
   const toIp = (n) => [24, 16, 8, 0].map((s) => (n >>> s) & 255).join('.');
   const mask = Math.max(toInt(netmask), toInt('255.255.255.0')) >>> 0;
@@ -52,6 +56,8 @@ export class GoveeLan {
     this.onScan = null;       // (device) => void, pour chaque réponse à une recherche
     this.waiters = new Map(); // ip → [resolve] en attente d'un devStatus
   }
+
+  fades(sku) { return fades(sku); }
 
   async start() {
     if (this.socket) return;
@@ -142,6 +148,7 @@ export class MockGovee {
     this.state = Object.fromEntries(this.devices.map((d, i) => [d.ip, { onOff: i < 2 ? 1 : 0, brightness: 20 + i * 10, color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: 3000 }])); // la 3e éteinte
   }
 
+  fades(sku) { return fades(sku); }
   async start() {}
   async stop() {}
   async scan(ms = 50) {

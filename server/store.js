@@ -6,7 +6,8 @@ const EMPTY = () => ({
   sessions: {},
   prints: [],
   events: {},          // id → { id, name, date, createdAt, printed } : dossiers de sessions, compteur de tirages propre
-  activeEventId: null  // événement qui reçoit les nouvelles sessions
+  activeEventId: null, // événement qui reçoit les nouvelles sessions
+  cutoutPerf: null     // { machine, preciseSec, measuredAt } : vitesse du détourage précis, mesurée une fois sur cette machine
 });
 
 const slug = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'evenement';
@@ -152,6 +153,16 @@ export class Store {
     Object.assign(this.data.counters, patch);
     this.save();
     return this.counters();
+  }
+
+  /** Vitesse du détourage précis sur cette machine (cutout-ai.js) : mesurée une fois, gardée d'un lancement à l'autre. */
+  cutoutPerf() {
+    return this.data.cutoutPerf || null;
+  }
+
+  setCutoutPerf(perf) {
+    this.data.cutoutPerf = perf;
+    this.save();
   }
 
   addPrint(print) {

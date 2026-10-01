@@ -1,7 +1,7 @@
 /**
  * Filtres que l'invité peut appliquer à ses photos sur l'écran « On la garde ? » (option de l'admin :
- * booth.filters). Partagé par le serveur, qui les applique pour de bon au montage (photos seulement : le
- * cadre, les textes et le logo gardent leurs couleurs), et par la borne, qui s'en sert pour les vignettes.
+ * booth.filters). Partagé par le serveur, qui les applique pour de bon à tout le montage (photos, cadre, textes
+ * et logo), et par la borne, qui s'en sert pour les vignettes.
  *
  *   matrix   : mélange des couleurs, 3×3 (rouge, vert, bleu de sortie en fonction de ceux d'entrée)
  *   contrast : contraste autour du gris moyen (1 = inchangé)

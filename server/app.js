@@ -7,11 +7,13 @@ import { Config } from './config.js';
 import { Store } from './store.js';
 import { Templates } from './templates.js';
 import { buildAllPreviews } from './template-previews.js';
-import { Themes, DEFAULT_LOGO } from './themes.js';
+import { Themes, DEFAULT_LOGO, defaultLogoSvg } from './themes.js';
 import { Booth } from './booth.js';
 import { Devices } from './devices.js';
 import { StreamDeckRemote } from './streamdeck.js';
 import { Lights } from './lights/index.js';
+import { Screen } from './screen.js';
+import { setCutoutAuto, measurePrecise, restoreCutoutPerf, onCutoutPerf } from './cutout-ai.js';
 import { apiRouter } from './routes/api.js';
 import { adminRouter } from './routes/admin.js';
 import { galleryHtml, eventGalleryHtml } from './gallery.js';
@@ -25,7 +27,7 @@ import { ROOT, OUTPUT_DIR, PUBLIC_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, 
  * (le lanceur quitte alors le processus, l'app Electron ferme sa fenêtre).
  * onRestart : pareil pour « Redémarrer » ; seul un lanceur capable de se relancer le fournit (app Electron).
  */
-export async function createApp({ port = Number(process.env.PORT) || 3000, onShutdown = null, onRestart = null, remoteScreen = null } = {}) {
+export async function createApp({ port = Number(process.env.PORT) || 3000, onShutdown = null, onRestart = null, remoteScreen = null, backgroundCamera = false } = {}) {
   for (const d of [OUTPUT_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, UPLOADS_DIR]) fs.mkdirSync(d, { recursive: true });
 
   const config = new Config();
@@ -40,7 +42,8 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   // Pilotes choisis d'après la config (ou détectés en mode auto), remplaçables à chaud.
   let booth = null;
   const devices = new Devices({ config, printerBusy: () => booth?.printing() ?? false });
-  await devices.start();
+  // backgroundCamera (app Electron) : le boîtier se prépare pendant que le serveur et la fenêtre démarrent
+  await devices.start({ backgroundCamera });
 
   const app = express();
   const server = http.createServer(app);
@@ -90,11 +93,30 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   let boothScreen = null;
   const kioskScreen = () => (boothSocket?.readyState === 1 ? boothScreen : null);
   if (process.env.BOOTH_STREAMDECK !== 'off') await deck.start();
-  await lights.start().catch((e) => console.warn(`[lights] ${e.message}`));
+  // En arrière-plan : la recherche des lumières (quelques secondes) ne retarde pas l'ouverture de la borne
+  lights.start().catch((e) => console.warn(`[lights] ${e.message}`));
+  // Écran de la borne en DDC/CI : luminosité et volume depuis l'admin, renvoyés à chaque démarrage (voir screen.js)
+  const screen = new Screen({ config });
+  screen.start().catch((e) => console.warn(`[screen] ${e.message}`));
+
+  // Détourage précis : trop lent sur cette machine ? Mesuré une seule fois par machine (gardé en base), 20 s après
+  // le premier démarrage (le boîtier et la borne d'abord), seulement si un template s'en sert. Relancer la mesure à
+  // chaque lancement mettait le processeur à fond plusieurs secondes, souvent pile à l'ouverture de l'admin.
+  // Les vrais calculs la remettent à jour ensuite à chaque photo.
+  setCutoutAuto(() => config.get().templates.cutoutAuto !== false);
+  onCutoutPerf((p) => store.setCutoutPerf(p));
+  const usesPrecise = () => templates.all().some((t) => t.layers.some((l) => l.type === 'photo' && l.cutout === 'ai' && l.aiPrecision !== 'fast'));
+  if (restoreCutoutPerf(store.cutoutPerf())) {
+    console.log(`[cutout] détourage précis : ${store.cutoutPerf().preciseSec} s par photo sur cette machine (mesure gardée)`);
+  } else {
+    const measureTimer = setTimeout(() => { if (usesPrecise()) measurePrecise().catch((e) => console.warn(`[cutout] ${e.message}`)); }, 20000);
+    measureTimer.unref?.();
+  }
 
   config.on('change', () => {
     broadcast({ type: 'config' });
     devices.refresh().catch((e) => console.warn(`[devices] ${e.message}`));
+    screen.apply().catch((e) => console.warn(`[screen] ${e.message}`));
   });
 
   app.disable('x-powered-by');
@@ -107,6 +129,15 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
     res.redirect(302, '/galerie'); // autre appareil : la galerie de la soirée (ou sa page « fermée » si désactivée)
   });
   app.get('/favicon.ico', (req, res) => res.redirect(302, themes.resolve(config.get()).logo || DEFAULT_LOGO));
+  // Logo Cheeesy aux couleurs du thème (themes.js) : c = aplat, t = lettres, en hex sans « # ». Paramètres absents
+  // ou invalides : couleurs du thème actif. Avec les deux couleurs dans l'URL, la réponse ne change jamais : cache long.
+  app.get('/logo.svg', (req, res) => {
+    const active = themes.resolve(config.get()).colors;
+    const pick = (v, fallback) => (/^[0-9a-f]{6}$/i.test(String(v || '')) ? `#${v}` : fallback);
+    const stable = pick(req.query.c, null) && pick(req.query.t, null);
+    res.type('image/svg+xml').set('Cache-Control', stable ? 'public, max-age=31536000, immutable' : 'no-cache');
+    res.send(defaultLogoSvg({ primary: pick(req.query.c, active.primary), onPrimary: pick(req.query.t, active.onPrimary) }));
+  });
   app.use(express.static(PUBLIC_DIR, { index: 'index.html' }));
   app.use('/output', express.static(OUTPUT_DIR, { maxAge: '1h' }));
   app.use('/templates', express.static(TEMPLATES_DIR, { maxAge: '1h' }));
@@ -130,7 +161,7 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   const shutdown = stopThen(onShutdown, 'arrêt');
   const restart = stopThen(onRestart, 'redémarrage');
 
-  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, lights, shutdown, restart, kioskScreen, remoteScreen }));
+  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, lights, screen, shutdown, restart, kioskScreen, remoteScreen }));
   // Écran déporté (iPad…) : l'écran de la borne et son toucher, avec le code admin (voir electron/remote-screen.js)
   app.get('/remote', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'remote.html')));
   // API de l'écran de la borne : seulement depuis la borne (les téléphones n'ont besoin que de ping et de la galerie)
@@ -183,10 +214,12 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
     await devices.stop();
     await deck.stop();
     await lights.stop().catch(() => {}); // borne éteinte : lumières éteintes
+    screen.stop();
     for (const client of wss.clients) client.terminate();
     server.closeAllConnections?.();
     await new Promise((r) => server.close(r));
   };
 
-  return { app, server, wss, booth, config, store, templates, themes, devices, deck, lights, port, close };
+  // cameraReady : première détection de la caméra finie (le lanceur garde son écran de lancement jusque-là)
+  return { app, server, wss, booth, config, store, templates, themes, devices, deck, lights, screen, port, close, cameraReady: devices.cameraReady };
 }

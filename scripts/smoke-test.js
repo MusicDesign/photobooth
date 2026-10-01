@@ -18,6 +18,7 @@ process.env.BOOTH_CAMERA = 'mock';
 process.env.BOOTH_PRINTER = 'mock';
 process.env.BOOTH_STREAMDECK = 'off'; // ne pas prendre la main sur un Stream Deck branché
 process.env.BOOTH_LIGHTS = 'mock';     // lumières simulées : jamais celles du réseau
+process.env.BOOTH_SCREEN = 'mock';     // écran simulé : jamais l'écran de cette machine
 
 const { generateDemoAssets } = await import('./make-demo-assets.js');
 await generateDemoAssets({ templatesDir: process.env.BOOTH_TEMPLATES_DIR, samplesDir: process.env.BOOTH_SAMPLES_DIR });
@@ -201,6 +202,29 @@ async function runSteps(app, camera) {
     await waitStatus(s.id, 'done');
     const c = (await post('/api/admin/counters', { paperRemaining: 15 }, ADMIN)).data;
     assert.equal(c.lowPaper, true);
+  });
+
+  await step('logo Cheeesy par défaut aux couleurs du thème', async () => {
+    const st = (await j('/api/admin/state', { headers: ADMIN })).data;
+    assert.equal(st.theme.defaultLogo, true);
+    assert.ok(st.theme.logo.startsWith('/logo.svg?'), st.theme.logo);
+    const r = await fetch(base + st.theme.logo);
+    assert.equal(r.status, 200);
+    assert.ok(r.headers.get('content-type').includes('image/svg+xml'));
+    const svg = await r.text();
+    assert.ok(svg.includes(`fill="${st.theme.colors.primary}"`) && svg.includes(`fill="${st.theme.colors.onPrimary}"`), 'couleurs du thème dans le SVG');
+    assert.ok(!svg.includes('cls-') && !svg.includes('<style'), 'ni classe ni style global dans le SVG inséré sur la borne');
+    const bad = await fetch(`${base}/logo.svg?c=rouge&t=1`); // paramètres invalides : couleurs du thème actif
+    assert.equal(bad.status, 200);
+    assert.ok((await bad.text()).includes(`fill="${st.theme.colors.primary}"`));
+  });
+
+  await step('écran tactile : mode forcé depuis l\'admin, valeur inconnue refusée', async () => {
+    assert.equal((await j('/api/bootstrap')).data.booth.touch, 'auto');
+    assert.equal((await put('/api/admin/config', { booth: { touch: 'touch' } }, ADMIN)).status, 200);
+    assert.equal((await j('/api/bootstrap')).data.booth.touch, 'touch');
+    assert.equal((await put('/api/admin/config', { booth: { touch: 'souris' } }, ADMIN)).status, 400);
+    assert.equal((await put('/api/admin/config', { booth: { touch: 'auto' } }, ADMIN)).status, 200);
   });
 
   await step('admin : suppression d\'une session puis réinitialisation complète', async () => {
@@ -494,7 +518,7 @@ async function runSteps(app, camera) {
     assert.equal((await j(`/api/admin/templates/${g.id}`, { method: 'DELETE', headers: ADMIN })).status, 200);
   });
 
-  await step('filtres : refusés tant que désactivés, noir & blanc sur les photos seulement, gardé à la reprise', async () => {
+  await step('filtres : refusés tant que désactivés, noir & blanc sur tout le montage, gardé à la reprise', async () => {
     const s = (await post('/api/session', { templateId: tplA.id })).data;
     await shot(s.id, 0);
     assert.equal((await post(`/api/session/${s.id}/compose`, { filter: 'bw' })).data.error, 'FILTER', 'filtres désactivés');
@@ -505,9 +529,10 @@ async function runSteps(app, camera) {
     const file = path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s.id, 'final.jpg');
     const px = async (x, y) => [...await sharp(file).extract({ left: x, top: y, width: 1, height: 1 }).raw().toBuffer()];
     const photo = await px(900, 500); assert.ok(Math.max(...photo) - Math.min(...photo) <= 3, `photo en gris : ${photo}`);
-    const band = await px(50, 1100); assert.ok(band[0] > 200 && band[1] < 60, `cadre gardé en couleur (bande rouge) : ${band}`);
+    const band = await px(50, 1100); assert.ok(Math.max(...band) - Math.min(...band) <= 3, `cadre en gris lui aussi (bande rouge) : ${band}`);
     const back = (await post(`/api/session/${s.id}/compose`, { filter: 'none' })).data;
     assert.equal(back.filter, 'none');
+    const bandBack = await px(50, 1100); assert.ok(bandBack[0] > 200 && bandBack[1] < 60, `« Couleur » : bande rouge revenue : ${bandBack}`);
     // Filtre par défaut : appliqué d'emblée au premier montage ; « Couleur » peut ne pas être proposée
     await put('/api/admin/config', { booth: { filters: { enabled: true, available: ['bw', 'sepia'], default: 'sepia' } } }, ADMIN);
     const s2 = (await post('/api/session', { templateId: tplA.id })).data;
@@ -701,29 +726,56 @@ async function runSteps(app, camera) {
     assert.equal((await reprint(newer, { copies: 1 })).status, 403, 'galerie fermée : plus de réimpression');
   });
 
-  await step('lumières : allumées au démarrage, prise de vue du template aux photos, ambiance, calibrage, éteintes à l\'arrêt', async () => {
+  await step('écran : détecté (simulé), luminosité et volume réglés depuis l\'admin, valeurs hors bornes refusées', async () => {
+    let sc = (await j('/api/admin/state', { headers: ADMIN })).data.screen;
+    assert.equal(sc.available, true);
+    assert.equal(sc.display?.name, 'Écran simulé');
+    assert.deepEqual([sc.brightness, sc.volume, sc.managed], [100, 0, false], JSON.stringify(sc));
+    const r = await post('/api/admin/screen', { brightness: 40, volume: 20 }, ADMIN);
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.deepEqual([r.data.screen.brightness, r.data.screen.volume, r.data.screen.managed], [40, 20, true]);
+    assert.deepEqual(app.screen.driver.values, { brightness: 40, volume: 20 }, 'valeurs envoyées à l\'écran');
+    assert.equal((await post('/api/admin/screen', { brightness: 150 }, ADMIN)).status, 400);
+    assert.equal((await put('/api/admin/config', { screen: { volume: -1 } }, ADMIN)).status, 400);
+    sc = (await post('/api/admin/screen', { brightness: null, volume: null }, ADMIN)).data.screen;
+    assert.equal(sc.managed, false);
+    sc = (await post('/api/admin/screen/refresh', {}, ADMIN)).data.screen;
+    assert.equal(sc.brightness, 40, 'relu sur l\'écran : inchangé quand la borne ne gère plus');
+  });
+
+  await step('lumières : allumées au démarrage, prise de vue du template aux photos, ambiance (couleur ou blanc), calibrage, blanc chaud ou éteintes à l\'arrêt', async () => {
     const { default: WebSocket } = await import('ws');
     const L = app.lights;
     const settle = async () => { await new Promise((r) => setTimeout(r, 30)); await L.queue; };
     assert.equal((await j('/api/admin/lights', { headers: ADMIN })).data.lights.running, false, 'désactivées par défaut');
     await put('/api/admin/config', { lights: { enabled: true, idle: { mode: 'ambiance', effect: 'fixed', color: '#00ff00', brightness: 50 } } }, ADMIN);
     await settle();
-    assert.ok(L.driver.sent.some(([ip, cmd, d]) => ip === '10.0.0.13' && cmd === 'turn' && d.value === 1), 'démarrage : la lumière éteinte est allumée');
+    const [gv, el] = L.drivers; // Govee et Elgato simulées
+    assert.ok(gv.sent.some(([ip, cmd, d]) => ip === '10.0.0.13' && cmd === 'turn' && d.value === 1), 'démarrage : la lumière éteinte est allumée');
     const { lights } = (await j('/api/admin/lights', { headers: ADMIN })).data;
-    assert.deepEqual(lights.devices.map((d) => [d.type, d.online]), [['ampoule', true], ['ampoule', true], ['tube', true]]);
-    const st = () => L.driver.state;
+    assert.deepEqual(lights.devices.map((d) => [d.type, d.online]).sort(), [['ampoule', true], ['ampoule', true], ['ring light', true], ['tube', true]]);
+    const st = () => gv.state;
+    const ring = () => el.state['10.0.0.21'];
+    assert.deepEqual([ring().on, ring().brightness, ring().temperature], [1, 50, 250], 'ring light : blanc gardé, luminosité de l\'ambiance');
     const ips = Object.keys(st());
     // Accueil : couleur fixe
     assert.ok(ips.every((ip) => st()[ip].brightness === 50 && st()[ip].color.g === 255 && st()[ip].colorTemInKelvin === 0), JSON.stringify(st()));
-    // Cycle de couleurs : décalé entre les lumières, ou synchronisé
-    const cycleColors = async (sync) => {
-      await put('/api/admin/config', { lights: { idle: { effect: 'cycle', periodSec: 30, sync } } }, ADMIN);
+    // Cycle de couleurs : décalé entre les lumières, ou synchronisé (écart de couleur maximal entre deux lumières)
+    const cycleSpread = async (sync) => {
+      await put('/api/admin/config', { lights: { idle: { effect: 'cycle', periodSec: 600, sync } } }, ADMIN);
       await settle();
       await new Promise((r) => setTimeout(r, 1100)); // premier pas du cycle
-      return new Set(ips.map((ip) => JSON.stringify(st()[ip].color))).size;
+      const cs = ips.map((ip) => st()[ip].color);
+      return Math.max(...cs.flatMap((a) => cs.map((b) => Math.max(Math.abs(a.r - b.r), Math.abs(a.g - b.g), Math.abs(a.b - b.b)))));
     };
-    assert.equal(await cycleColors(false), 3, 'décalées : trois couleurs');
-    assert.equal(await cycleColors(true), 1, 'synchronisées : une seule couleur');
+    assert.ok(await cycleSpread(false) > 100, 'décalées : couleurs différentes');
+    assert.ok(await cycleSpread(true) <= 10, 'synchronisées : même couleur');
+    // Tube (sans fondu intégré) : 5 pas par seconde, ampoules H6008 (fondu) : 1 par seconde
+    const sends = (ip) => gv.sent.filter(([i, cmd]) => i === ip && cmd === 'colorwc').length;
+    const n0 = { bulb: sends('10.0.0.11'), tube: sends('10.0.0.13') };
+    await new Promise((r) => setTimeout(r, 2000));
+    const n = { bulb: sends('10.0.0.11') - n0.bulb, tube: sends('10.0.0.13') - n0.tube };
+    assert.ok(n.bulb >= 1 && n.bulb <= 3 && n.tube >= 8, `pas du cycle : ${JSON.stringify(n)}`);
     await put('/api/admin/config', { lights: { idle: { effect: 'fixed' } } }, ADMIN);
     await settle();
     // La borne décrit son écran : choix du template → prise de vue
@@ -732,6 +784,7 @@ async function runSteps(app, camera) {
     const screen = async (name) => { ws.send(JSON.stringify({ type: 'ui', screen: name, items: [] })); await settle(); };
     await screen('template');
     assert.ok(ips.every((ip) => st()[ip].onOff === 1 && st()[ip].brightness === 100 && st()[ip].colorTemInKelvin === 5000), 'prise de vue : 5000 K, 100 %');
+    assert.deepEqual([ring().on, ring().brightness, ring().temperature], [1, 100, 200], 'ring light : 5000 K = 200 mireds, 100 %');
     await screen('pin'); // code opérateur par-dessus : la scène continue
     await screen('capture');
     assert.equal(st()[ips[0]].colorTemInKelvin, 5000);
@@ -760,18 +813,31 @@ async function runSteps(app, camera) {
     await put('/api/admin/config', { lights: { idle: { mode: 'off' } } }, ADMIN);
     await settle();
     assert.ok(ips.every((ip) => st()[ip].onOff === 0), 'accueil : éteintes');
+    // Couleur fixe en blanc (température) plutôt qu'en couleur
+    await put('/api/admin/config', { lights: { idle: { mode: 'ambiance', effect: 'fixed', white: true, kelvin: 4000 } } }, ADMIN);
+    await settle();
+    assert.ok(ips.every((ip) => st()[ip].onOff === 1 && st()[ip].colorTemInKelvin === 4000), `accueil : blanc 4000 K (${JSON.stringify(st())})`);
     // Option coupée : état d'avant rendu, plus aucune commande
-    const driver = L.driver;
     await put('/api/admin/config', { lights: { enabled: false } }, ADMIN);
     await settle();
-    assert.deepEqual(Object.values(driver.state).map((x) => [x.onOff, x.brightness]), [[1, 20], [1, 30], [1, 40]]);
+    assert.deepEqual(Object.values(gv.state).map((x) => [x.onOff, x.brightness]), [[1, 20], [1, 30], [1, 40]]);
+    assert.deepEqual([ring().on, ring().brightness, ring().temperature], [1, 40, 250], 'ring light : état d\'avant rendu');
     assert.equal(L.running, false);
-    // Arrêt de la borne : toutes éteintes, quel que soit le mode
+    // Arrêt de la borne : blanc chaud doux par défaut (2700 K, 20 %), ring light comprise, quel que soit le mode d'accueil
     await put('/api/admin/config', { lights: { enabled: true, idle: { mode: 'keep' } } }, ADMIN);
     await settle();
-    const d2 = L.driver;
+    const [g2, e2] = L.drivers;
     await L.stop();
-    assert.ok(Object.values(d2.state).every((x) => x.onOff === 0), 'arrêt : éteintes');
+    assert.ok(Object.values(g2.state).every((x) => x.onOff === 1 && x.brightness === 20 && x.colorTemInKelvin === 2700), `arrêt : blanc chaud 20 % (${JSON.stringify(g2.state)})`);
+    assert.deepEqual([e2.state['10.0.0.21'].on, e2.state['10.0.0.21'].brightness], [1, 20], 'arrêt : ring light en blanc chaud 20 %');
+    // Mode « éteintes » à l'arrêt
+    await put('/api/admin/config', { lights: { enabled: false } }, ADMIN);
+    await settle();
+    await put('/api/admin/config', { lights: { enabled: true, shutdown: { mode: 'off' } } }, ADMIN);
+    await settle();
+    const [g3, e3] = L.drivers;
+    await L.stop();
+    assert.ok(Object.values(g3.state).every((x) => x.onOff === 0) && e3.state['10.0.0.21'].on === 0, 'arrêt en mode éteintes : tout éteint, ring light comprise');
     ws.close();
   });
 

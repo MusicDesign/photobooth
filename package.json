@@ -15,6 +15,7 @@
     "demo-assets": "node scripts/make-demo-assets.js",
     "models": "node scripts/download-models.js",
     "smoke": "node scripts/smoke-test.js",
+    "bench": "node scripts/bench.js",
     "remote": "node scripts/build-remote.js",
     "app": "env -u ELECTRON_RUN_AS_NODE electron .",
     "app:build": "electron-builder"

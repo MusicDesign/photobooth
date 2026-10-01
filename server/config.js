@@ -13,11 +13,12 @@ export const DEFAULTS = {
     idleReturnSec: 20,
     menuIdleSec: 30,       // choix du cadre et galerie : retour à l'accueil sans interaction (0 = jamais)
     mirrorPreview: true,
-    // Filtres proposés à l'invité sur « On la garde ? » (public/filters.js), appliqués aux photos seulement
+    // Filtres proposés à l'invité sur « On la garde ? » (public/filters.js), appliqués à tout le montage
     filters: { enabled: false, available: ['none', 'bw', 'noir', 'sepia', 'vintage', 'warm', 'cool', 'vivid'], default: 'none' },
     lensPosition: 'top',   // où est l'objectif par rapport à l'écran : top | bottom | left | right (sens de la flèche « Regardez l'objectif »)
     showName: true,        // affiche le nom à côté du logo
     cursor: 'show',        // curseur de la souris sur la borne : show | idle (masqué après 3 s sans mouvement) | hide
+    touch: 'auto',         // écran tactile : auto (détection du navigateur, corrigée au premier toucher) | touch (toujours) | buttons (jamais : Stream Deck, clavier)
     // Télécommande Elgato branchée en USB (sans écran tactile). position : où il est posé par rapport à l'écran,
     // pour la flèche de l'accueil quand l'écran n'est pas tactile (top | bottom | left | right).
     // showButtons : garder les boutons à l'écran même quand l'écran n'est pas tactile et qu'un Stream Deck pilote la borne
@@ -88,7 +89,8 @@ export const DEFAULTS = {
     default: 'classic-10x15',
     defaultFormat: '10x15-paysage',
     order: [],                // ordre d'affichage des cadres (glissé dans l'admin) ; les absents viennent après
-    gifEnabled: false         // templates GIF proposés aux invités (numérique uniquement)
+    gifEnabled: false,        // templates GIF proposés aux invités (numérique uniquement)
+    cutoutAuto: true          // machine trop lente pour le détourage précis : modèle rapide pour les invités
   },
   theme: {
     active: 'default-light',  // id d'un thème de data/themes ou "custom"
@@ -167,14 +169,20 @@ export const DEFAULTS = {
   },
   // Appareils connectés : lumières Govee du réseau local (server/lights). devices : id Govee → { name, sku, ip,
   // ambiance, shooting } (rôles de chaque lumière), rempli par les recherches.
+  // Écran de la borne en DDC/CI (server/screen.js) : null = la borne ne touche pas à ce réglage de l'écran.
+  // display : écran à piloter (identifiant vu par m1ddc ou ddcutil, ou son nom), vide = premier écran externe nommé
+  screen: { brightness: null, volume: null, display: '' },
   lights: {
     enabled: false,
     devices: {},
     // Accueil : ambiance (effet fixed | cycle | breathe) | keep (lumières laissées telles quelles) | off (éteintes).
     // sync : cycle et respiration identiques sur toutes les lumières (sinon décalés entre elles)
-    idle: { mode: 'ambiance', effect: 'cycle', color: '#ff7a1a', brightness: 60, periodSec: 20, sync: false },
+    // white : blanc (température kelvin) à la place de la couleur, pour la couleur fixe et la respiration
+    idle: { mode: 'ambiance', effect: 'cycle', color: '#ff7a1a', white: false, kelvin: 2700, brightness: 60, periodSec: 20, sync: false },
     // Du choix du template à la dernière photo, et pendant le calibrage
-    shooting: { kelvin: 5000, brightness: 100 }
+    shooting: { kelvin: 5000, brightness: 100 },
+    // À l'arrêt de la borne : white (blanc chaud doux, pour ranger sans être dans le noir) | off (éteintes) | keep (comme avant la borne)
+    shutdown: { mode: 'white', kelvin: 2700, brightness: 20 }
   }
 };
 

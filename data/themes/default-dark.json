@@ -1,6 +1,7 @@
 {
   "id": "default-dark",
   "name": "Sombre",
+  "order": 2,
   "colors": {
     "primary": "#e9c46a",
     "secondary": "#e9c46a",

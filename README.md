@@ -65,8 +65,11 @@ Admin (`/admin.html`, ou 5 appuis en haut à droite de la borne, ou G D G D sur 
 - **Limites** : copies max par passage, « sans impression » autorisé ou non, reprises
   max, validation automatique, décompte, **quota total de l'événement**, alerte papier,
   code opérateur pour lever la limite ponctuellement.
-- **Thème** : nom de la borne, **logo** et image de fond valables pour tous les thèmes ;
-  3 thèmes livrés (clair, sombre, festif) + couleurs personnalisées avec alerte de contraste ;
+- **Thème** : nom de la borne, **logo** et image de fond valables pour tous les thèmes ; sans logo
+  importé, le logo Cheeesy prend les couleurs du thème (aplat en accent, lettres en texte des boutons) ;
+  12 thèmes livrés (clair, sombre, festif, mariage, noir & or, néon, océan, forêt, corail, bonbon, entreprise,
+  Noël), une carte par thème avec l'accueil en miniature et l'aperçu de trois écrans toujours affiché,
+  + couleurs personnalisées avec alerte de contraste ;
   tous les textes modifiables. Appliqué sur la borne en direct via WebSocket.
 - **Templates** : création par simple nom, **éditeur visuel de calques** (photos, textes,
   images, formes : glisser, redimensionner, tourner, ordre, opacité), activation, template
@@ -77,7 +80,10 @@ Admin (`/admin.html`, ou 5 appuis en haut à droite de la borne, ou G D G D sur 
   avec un repli explicite (webcam ; impression désactivée ou simulée). Le live view du boîtier
   ne tourne que pendant la prise de vue : au repos l'obturateur est refermé.
 - **Stream Deck** : télécommande Elgato en USB, les touches reprennent les actions de l'écran
-  en cours (pictogrammes, miniatures), pour une borne sans écran tactile.
+  en cours (pictogrammes, miniatures), pour une borne sans écran tactile. L'écran est détecté
+  tactile ou non ; Écran & contrôle permet de forcer l'un ou l'autre, et règle le curseur.
+- **Écran** : luminosité et volume de l'écran de la borne en DDC/CI (`m1ddc` sur Mac, `ddcutil`
+  sur Linux), depuis l'admin, renvoyés à l'écran à chaque démarrage ; état dans le tableau de bord.
 - **Galerie** (désactivée par défaut) : sur la borne, bouton « Galerie » à l'accueil pour parcourir
   les photos de l'événement en cours (grille, photo par photo, balayage) ; sur les téléphones,
   page `/galerie` sur le Wi-Fi de la borne. Réimpression depuis la borne seulement :
@@ -144,6 +150,7 @@ server/
   store.js          persistance JSON (data/db.json) : sessions, tirages, compteurs
   templates.js      chargement / validation / création des templates
   themes.js         thèmes livrés (data/themes) + thème personnalisé
+  screen.js         écran de la borne en DDC/CI : luminosité, volume (m1ddc sur Mac, ddcutil sur Linux)
   compositor.js     montage final avec sharp
   camera/           browser · mock · gphoto2 (+ diffuseur MJPEG)
   printer/          mock · cups

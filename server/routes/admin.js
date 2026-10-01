@@ -13,14 +13,28 @@ import { PRINTER_DRIVERS, PRINTER_FALLBACKS } from '../printer/index.js';
 import { FORMATS, FONTS, DEFAULT_FORMAT, normalizeLayers } from '../templates.js';
 import { compose } from '../compositor.js';
 import { modelStatus, downloadModel } from '../models.js';
+import { cutoutPerf } from '../cutout-ai.js';
 import { buildPreviews } from '../template-previews.js';
 import { MjpegBroadcaster } from '../camera/mjpeg.js';
 import { OUTPUT_DIR as OUT } from '../paths.js';
 
-const EDITABLE_SECTIONS = ['booth', 'camera', 'printer', 'limits', 'templates', 'theme', 'texts', 'admin', 'share', 'gallery', 'lights'];
+const EDITABLE_SECTIONS = ['booth', 'camera', 'printer', 'limits', 'templates', 'theme', 'texts', 'admin', 'share', 'gallery', 'lights', 'screen'];
+
+/** Réglages de l'écran (DDC/CI) : luminosité et volume de 0 à 100, ou null = la borne n'y touche pas. */
+function screenPatch(body = {}) {
+  const out = {};
+  for (const k of ['brightness', 'volume']) {
+    if (!(k in body)) continue;
+    const v = body[k];
+    if (v !== null && !(Number.isInteger(v) && v >= 0 && v <= 100)) throw new HttpError(400, 'SCREEN_VALUE', `${k === 'volume' ? 'Volume' : 'Luminosité'} de l'écran : nombre entier de 0 à 100, ou vide`);
+    out[k] = v;
+  }
+  if ('display' in body) out.display = String(body.display || '').slice(0, 120);
+  return out;
+}
 const IMAGE_EXT = { 'image/png': '.png', 'image/svg+xml': '.svg', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
 
-export function adminRouter({ booth, config, store, templates, themes, devices, deck, lights = null, shutdown, restart, kioskScreen = () => null, remoteScreen = null }) {
+export function adminRouter({ booth, config, store, templates, themes, devices, deck, lights = null, screen = null, shutdown, restart, kioskScreen = () => null, remoteScreen = null }) {
   const r = express.Router();
   const tokens = new Set();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024 } });
@@ -100,7 +114,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     return booth.camera;
   };
   /** État du matériel, léger (lu en mémoire, rien n'est envoyé au boîtier) : l'admin le relit au branchement. */
-  r.get('/devices', async (req, res) => res.json({ camera: await booth.cameraStatus(), devices: devices.status() }));
+  r.get('/devices', async (req, res) => res.json({ camera: await booth.cameraStatus(), devices: devices.status(), screen: screen?.status() || null }));
 
   r.get('/camera/settings', async (req, res) => {
     try { res.json({ settings: await camera().readSettings() }); } catch (e) { throw e instanceof HttpError ? e : new HttpError(409, 'CAMERA_BUSY', e.message); }
@@ -186,11 +200,13 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       devices: devices.status(),
       streamDeck: deck.status(),
       lights: lights?.status() || null,
+      screen: screen?.status() || null, // écran de la borne (DDC/CI) : luminosité, volume
       cameraSettings: MANUAL_SETTINGS, // réglages du mode manuel, dans l'ordre, avec leur libellé
       canShutdown: !!shutdown,
       canRestart: !!restart,
       dataWarnings: [store.warning, config.warning].filter(Boolean), // base ou configuration reprise d'une sauvegarde
       subjectModel: modelStatus('subject'), // modèle de détourage précis : installé ou à télécharger
+      cutoutPerf: cutoutPerf(), // vitesse mesurée du modèle précis sur cette machine
       events: store.listEvents().map((ev) => booth.eventView(ev)),
       activeEventId: store.data.activeEventId,
       sessions: store.sessionsOfEvent(store.data.activeEventId).map((s) => booth.view(s)),
@@ -204,6 +220,8 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     for (const [k, v] of Object.entries(req.body || {})) {
       if (EDITABLE_SECTIONS.includes(k) && v && typeof v === 'object') patch[k] = v;
     }
+    if (patch.booth?.touch && !['auto', 'touch', 'buttons'].includes(patch.booth.touch)) throw new HttpError(400, 'TOUCH', 'Mode d\'écran tactile inconnu');
+    if (patch.screen) patch.screen = screenPatch(patch.screen);
     if (patch.camera?.driver && !CAMERA_DRIVERS.includes(patch.camera.driver)) throw new HttpError(400, 'DRIVER', 'Pilote caméra inconnu');
     if (patch.camera?.fallback && !CAMERA_FALLBACKS.includes(patch.camera.fallback)) throw new HttpError(400, 'DRIVER', 'Repli caméra inconnu');
     if (patch.printer?.driver && !PRINTER_DRIVERS.includes(patch.printer.driver)) throw new HttpError(400, 'DRIVER', 'Pilote imprimante inconnu');
@@ -212,8 +230,22 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     res.json({ config: config.update(patch) });
   });
 
+  // Écran de la borne (DDC/CI) : réglage enregistré puis envoyé à l'écran, qui est relu ; « Relire l'écran » après un branchement
+  const screenOrFail = () => { if (!screen || screen.status().off) throw new HttpError(409, 'SCREEN_OFF', 'Écran non piloté par cette borne (BOOTH_SCREEN=off)'); return screen; };
+  r.post('/screen', async (req, res) => {
+    const sc = screenOrFail();
+    config.update({ screen: screenPatch(req.body) });
+    await sc.apply();
+    res.json({ screen: sc.status() });
+  });
+  r.post('/screen/refresh', async (req, res) => {
+    const sc = screenOrFail();
+    await sc.refresh();
+    res.json({ screen: sc.status() });
+  });
+
   // Appareils connectés (lumières Govee du réseau local)
-  const lightsOrFail = () => { if (!lights) throw new HttpError(409, 'LIGHTS_OFF', 'Appareils connectés indisponibles'); return lights; };
+  const lightsOrFail = () => { if (!lights) throw new HttpError(409, 'LIGHTS_OFF', 'Lumières indisponibles'); return lights; };
   r.get('/lights', (req, res) => res.json({ lights: lightsOrFail().status() }));
   r.post('/lights/discover', async (req, res) => {
     try { res.json({ lights: await lightsOrFail().discover() }); } catch (e) { throw e instanceof HttpError ? e : new HttpError(409, 'LIGHTS', e.message); }

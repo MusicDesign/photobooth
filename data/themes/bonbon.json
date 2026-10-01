@@ -1,0 +1,14 @@
+{
+  "id": "bonbon",
+  "name": "Bonbon",
+  "order": 10,
+  "colors": {
+    "primary": "#d6336c",
+    "secondary": "#5f3dc4",
+    "background": "#fff0f6",
+    "surface": "#ffffff",
+    "text": "#343a40",
+    "onPrimary": "#ffffff"
+  },
+  "font": "rounded"
+}

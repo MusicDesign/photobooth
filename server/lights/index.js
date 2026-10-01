@@ -1,13 +1,15 @@
 import { EventEmitter } from 'node:events';
 import { GoveeLan, MockGovee } from './govee.js';
+import { ElgatoLan, MockElgato } from './elgato.js';
 
 /**
- * Appareils connectés (admin → Appareils connectés) : les lumières Govee du réseau local, pour deux usages.
+ * Appareils connectés (admin → Appareils connectés) : les lumières Govee et Elgato du réseau local, pour deux usages.
  *   - Accueil : ambiance (couleur fixe, cycle de couleurs, respiration), ou lumières laissées telles quelles,
  *     ou éteintes (lights.idle.mode). « On la garde ? » compris : le résultat se regarde dans l'ambiance.
  *   - Prise de vue : blanc neutre à pleine puissance, du choix du template à la fin des photos, et pendant le
  *     calibrage, allumé avant la première mesure : l'exposition trouvée (flash compris) est celle des vraies photos.
- * La borne allume toutes les lumières à son démarrage et les éteint à son arrêt. Entre les deux, chaque lumière
+ * La borne allume toutes les lumières à son démarrage ; à son arrêt elles passent en blanc chaud doux, s'éteignent ou
+ * retrouvent leur état d'avant (lights.shutdown). Entre les deux, chaque lumière
  * est lue avant que la borne n'y touche : en mode « laisser telles quelles » elle retrouve cet état (allumée), et
  * quand l'option est coupée dans l'admin, exactement son état d'avant.
  * Rien n'est bloquant : une lumière éteinte au mur ou hors réseau est simplement ignorée.
@@ -15,8 +17,10 @@ import { GoveeLan, MockGovee } from './govee.js';
 export const SHOOTING_SCREENS = ['template', 'capture'];
 export const EFFECTS = ['fixed', 'cycle', 'breathe'];
 export const IDLE_MODES = ['ambiance', 'keep', 'off'];
+export const SHUTDOWN_MODES = ['white', 'off', 'keep'];
 const TYPES = { H6008: 'ampoule', H6009: 'ampoule', H6006: 'ampoule', H6076: 'tube' };
-export const lightType = (sku) => TYPES[sku] || (/^H60[0-9]{2}$/.test(sku) ? 'ampoule' : 'lumière');
+export const lightType = (sku = '') => TYPES[sku] || (/ring light/i.test(sku) ? 'ring light' : /key light/i.test(sku) ? 'panneau'
+  : /^H60[0-9]{2}$/.test(sku) ? 'ampoule' : 'lumière');
 
 const RESCAN_MS = 60000;
 const ONLINE_MS = 3 * RESCAN_MS; // plus vue depuis 3 recherches : hors ligne
@@ -38,8 +42,8 @@ export class Lights extends EventEmitter {
     super();
     this.config = config;
     this.driverName = driver;
-    this.driver = null;
-    this.seen = new Map();     // id → { id, sku, ip, firmware, at } (réponses aux recherches)
+    this.drivers = [];         // Govee (UDP) et Elgato (HTTP), même interface
+    this.seen = new Map();     // id → { id, sku, ip, firmware, drv, at } (réponses aux recherches)
     this.state = new Map();    // id → dernier état lu
     this.saved = new Map();    // id → état d'avant la borne (lu avant la première commande)
     this.screen = null;        // écran de la borne
@@ -73,17 +77,19 @@ export class Lights extends EventEmitter {
   }
 
   async boot() {
-    this.driver = this.driverName === 'mock' ? new MockGovee() : new GoveeLan();
-    this.driver.onScan = (d) => this.found(d);
-    await this.driver.start();
+    this.drivers = this.driverName === 'mock' ? [new MockGovee(), new MockElgato()] : [new GoveeLan(), new ElgatoLan()];
+    for (const drv of this.drivers) {
+      drv.onScan = (d) => this.found(d, drv);
+      await drv.start();
+    }
     this.running = true;
-    await this.driver.scan();
+    await this.scanAll();
     // Borne allumée : lumières allumées (réglages d'avant gardés, c'est l'état « hors prise de vue » à rendre)
     for (const d of this.targets('any')) {
       await this.remember(d);
       const st = this.saved.get(d.id);
       if (st) st.onOff = 1;
-      this.driver.command(d.ip, 'turn', { value: 1 });
+      d.drv.command(d.ip, 'turn', { value: 1 });
     }
     this.rescanTimer = setInterval(() => this.rescan().catch(() => {}), RESCAN_MS);
     this.rescanTimer.unref?.();
@@ -91,26 +97,39 @@ export class Lights extends EventEmitter {
 
   /**
    * Option coupée : ambiance stoppée, chaque lumière remise comme avant la borne.
-   * Arrêt de la borne (off) : toutes les lumières éteintes (envoi doublé, l'UDP ne garantit rien).
+   * Arrêt de la borne (off) : selon lights.shutdown, blanc chaud doux (white), toutes éteintes (off) ou remises comme
+   * avant la borne (keep). Envois doublés, l'UDP ne garantit rien.
    */
   async shutdown({ off = false } = {}) {
     this.stopEffect();
     clearInterval(this.rescanTimer);
     this.rescanTimer = null;
     if (off) {
-      const all = this.targets('any');
-      for (let i = 0; i < 2; i++) { for (const d of all) this.driver.command(d.ip, 'turn', { value: 0 }); await wait(150); }
-      this.saved.clear();
+      const sd = this.cfg().shutdown || {};
+      const mode = SHUTDOWN_MODES.includes(sd.mode) ? sd.mode : 'white';
+      if (mode !== 'keep') {
+        const all = this.targets('any');
+        for (let i = 0; i < 2; i++) {
+          for (const d of all) {
+            if (mode === 'off') { d.drv.command(d.ip, 'turn', { value: 0 }); continue; }
+            d.drv.command(d.ip, 'turn', { value: 1 });
+            d.drv.command(d.ip, 'brightness', { value: clamp(sd.brightness ?? 20, 1, 100) });
+            d.drv.command(d.ip, 'colorwc', { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: clamp(sd.kelvin ?? 2700, 2000, 9000) });
+          }
+          await wait(150);
+        }
+        this.saved.clear();
+      }
     }
     for (const id of [...this.saved.keys()]) await this.restore(id);
     await wait(150); // derniers paquets partis avant de fermer le socket
-    await this.driver?.stop();
-    this.driver = null;
+    for (const drv of this.drivers) await drv.stop();
+    this.drivers = [];
     this.running = false;
     this.scene = null;
   }
 
-  /** Arrêt de la borne : lumières éteintes. */
+  /** Arrêt de la borne : lumières en blanc chaud doux, éteintes ou remises comme avant (lights.shutdown). */
   stop() { return this.enqueue(() => (this.running ? this.shutdown({ off: true }) : null)); }
 
   enqueue(fn) {
@@ -119,9 +138,13 @@ export class Lights extends EventEmitter {
     return p;
   }
 
-  found(d) {
+  scanAll() {
+    return Promise.all(this.drivers.map((drv) => drv.scan()));
+  }
+
+  found(d, drv) {
     const prev = this.seen.get(d.id);
-    this.seen.set(d.id, { ...d, at: Date.now() });
+    this.seen.set(d.id, { ...d, drv, at: Date.now() });
     const known = this.cfg().devices?.[d.id];
     // Appareil nouveau ou adresse changée (DHCP) : retenu dans la config, même éteint il reste listé
     if (!known || known.ip !== d.ip || known.sku !== d.sku) {
@@ -133,7 +156,7 @@ export class Lights extends EventEmitter {
   async rescan() {
     if (!this.running) return;
     const before = new Set(this.onlineIds());
-    await this.driver.scan();
+    await this.scanAll();
     // Lumière revenue (rallumée au mur) : elle reprend la scène en cours
     if (this.onlineIds().some((id) => !before.has(id))) this.enqueue(() => { this.scene = null; return this.applyWanted(); });
   }
@@ -146,7 +169,7 @@ export class Lights extends EventEmitter {
   /** Lumières à piloter : connues, en ligne, avec ce rôle (any : toutes). */
   targets(role) {
     const devices = this.cfg().devices || {};
-    return this.onlineIds().filter((id) => role === 'any' || (devices[id]?.[role] ?? true)).map((id) => ({ id, ip: this.seen.get(id).ip }));
+    return this.onlineIds().filter((id) => role === 'any' || (devices[id]?.[role] ?? true)).map((id) => this.seen.get(id));
   }
 
   // ---------- Écran de la borne, calibrage ----------
@@ -195,7 +218,7 @@ export class Lights extends EventEmitter {
     // Les autres lumières que la borne avait touchées retrouvent leur état d'avant
     for (const id of [...this.saved.keys()]) if (!busy.has(id) && !amb.has(id)) await this.restore(id);
     this.stopEffect();
-    if (mode === 'off') for (const d of ambiance) { await this.remember(d); this.driver.command(d.ip, 'turn', { value: 0 }); }
+    if (mode === 'off') for (const d of ambiance) { await this.remember(d); d.drv.command(d.ip, 'turn', { value: 0 }); }
     else if (ambiance.length) await this.startEffect(ambiance, idle);
     this.emit('change');
     return shooting.length > 0;
@@ -204,28 +227,29 @@ export class Lights extends EventEmitter {
   async shoot(d) {
     const s = this.cfg().shooting || {};
     await this.remember(d);
-    this.driver.command(d.ip, 'turn', { value: 1 });
-    this.driver.command(d.ip, 'brightness', { value: clamp(s.brightness ?? 100, 1, 100) });
-    this.driver.command(d.ip, 'colorwc', { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: clamp(s.kelvin ?? 5000, 2000, 9000) });
+    d.drv.command(d.ip, 'turn', { value: 1 });
+    d.drv.command(d.ip, 'brightness', { value: clamp(s.brightness ?? 100, 1, 100) });
+    d.drv.command(d.ip, 'colorwc', { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: clamp(s.kelvin ?? 5000, 2000, 9000) });
   }
 
   /** État d'avant la borne, lu une seule fois : c'est lui qu'on remet ensuite. */
   async remember(d) {
     if (this.saved.has(d.id)) return;
-    const st = await this.driver.status(d.ip);
+    const st = await d.drv.status(d.ip);
     if (st) { this.saved.set(d.id, st); this.state.set(d.id, st); }
   }
 
   async restore(id) {
     const st = this.saved.get(id);
     this.saved.delete(id);
-    const ip = this.seen.get(id)?.ip;
-    if (!st || !ip || !this.driver) return;
-    if (!st.onOff) { this.driver.command(ip, 'turn', { value: 0 }); return; }
-    this.driver.command(ip, 'turn', { value: 1 });
-    this.driver.command(ip, 'brightness', { value: clamp(st.brightness || 1, 1, 100) });
+    const d = this.seen.get(id);
+    if (!st || !d || !this.running) return;
+    const { ip, drv } = d;
+    if (!st.onOff) { drv.command(ip, 'turn', { value: 0 }); return; }
+    drv.command(ip, 'turn', { value: 1 });
+    drv.command(ip, 'brightness', { value: clamp(st.brightness || 1, 1, 100) });
     const k = st.colorTemInKelvin;
-    this.driver.command(ip, 'colorwc', k > 0 ? { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: k } : { color: st.color || { r: 255, g: 255, b: 255 }, colorTemInKelvin: 0 });
+    drv.command(ip, 'colorwc', k > 0 ? { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: k } : { color: st.color || { r: 255, g: 255, b: 255 }, colorTemInKelvin: 0 });
   }
 
   // ---------- Ambiance de l'accueil ----------
@@ -233,36 +257,42 @@ export class Lights extends EventEmitter {
   async startEffect(devices, idle) {
     const effect = EFFECTS.includes(idle.effect) ? idle.effect : 'cycle';
     const bright = clamp(idle.brightness ?? 60, 1, 100);
-    const color = hexToRgb(idle.color);
+    // Couleur fixe et respiration : la couleur choisie, ou un blanc (température) si l'admin l'a demandé
+    const tint = idle.white ? { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: clamp(idle.kelvin ?? 2700, 2000, 9000) } : { color: hexToRgb(idle.color), colorTemInKelvin: 0 };
     const period = clamp(idle.periodSec ?? (effect === 'breathe' ? 6 : 20), 2, 600) * 1000;
     for (const d of devices) {
       await this.remember(d);
-      this.driver.command(d.ip, 'turn', { value: 1 });
-      this.driver.command(d.ip, 'brightness', { value: bright });
-      this.driver.command(d.ip, 'colorwc', { color, colorTemInKelvin: 0 });
+      d.drv.command(d.ip, 'turn', { value: 1 });
+      d.drv.command(d.ip, 'brightness', { value: bright });
+      d.drv.command(d.ip, 'colorwc', tint);
     }
     if (effect === 'fixed') return;
     const t0 = Date.now();
-    const last = new Map();
+    const last = new Map();  // dernière luminosité envoyée (respiration)
+    const sentAt = new Map(); // dernier envoi par lumière
     // Synchronisées : toutes à la même couleur (ou au même souffle). Sinon décalées d'autant entre elles.
     const offset = (i) => (idle.sync ? 0 : i / devices.length);
-    // Cycle : une couleur par seconde. Respiration : ~3 envois par seconde.
-    const step = effect === 'cycle' ? 1000 : 350;
+    // Pas de chaque lumière : celles qui font un fondu d'elles-mêmes (ampoules H6008, Elgato) glissent vers la
+    // valeur suivante, une par seconde suffit (cycle). Les autres (tube H6076) sautent : 5 petits pas par seconde.
+    const stepOf = (d) => (d.drv.fades(d.sku) ? (effect === 'cycle' ? 1000 : 350) : 200);
     const tick = () => {
-      if (!this.driver) return;
-      const t = (Date.now() - t0) / period;
+      if (!this.running) return;
+      const now = Date.now();
+      const t = (now - t0) / period;
       devices.forEach((d, i) => {
+        if (now - (sentAt.get(d.id) || 0) < stepOf(d) - 50) return;
+        sentAt.set(d.id, now);
         if (effect === 'cycle') {
           const c = hueToRgb(((t + offset(i)) % 1) * 360);
-          this.driver.command(d.ip, 'colorwc', { color: c, colorTemInKelvin: 0 });
+          d.drv.command(d.ip, 'colorwc', { color: c, colorTemInKelvin: 0 });
         } else {
           const low = Math.max(3, Math.round(bright * 0.15));
           const v = Math.round(low + (bright - low) * (0.5 - 0.5 * Math.cos(2 * Math.PI * (t + offset(i)))));
-          if (last.get(d.id) !== v) { last.set(d.id, v); this.driver.command(d.ip, 'brightness', { value: v }); }
+          if (last.get(d.id) !== v) { last.set(d.id, v); d.drv.command(d.ip, 'brightness', { value: v }); }
         }
       });
     };
-    this.effect = { timer: setInterval(tick, step) };
+    this.effect = { timer: setInterval(tick, 100) };
     this.effect.timer.unref?.();
   }
 
@@ -276,9 +306,10 @@ export class Lights extends EventEmitter {
   /** Recherche immédiate puis lecture de l'état de chaque lumière (bouton « Rechercher »). */
   async discover() {
     if (!this.running) throw new Error('Activez d\'abord les appareils connectés');
-    await this.driver.scan();
+    await this.scanAll();
     await Promise.all(this.onlineIds().map(async (id) => {
-      const st = await this.driver.status(this.seen.get(id).ip);
+      const d = this.seen.get(id);
+      const st = await d.drv.status(d.ip);
       if (st) this.state.set(id, st);
     }));
     this.enqueue(() => { this.scene = null; return this.applyWanted(); }); // nouvelles lumières : dans la scène
@@ -293,11 +324,11 @@ export class Lights extends EventEmitter {
       this.stopEffect();
       await this.remember(d);
       for (let i = 0; i < 3; i++) {
-        this.driver.command(d.ip, 'turn', { value: 1 });
-        this.driver.command(d.ip, 'brightness', { value: 100 });
-        this.driver.command(d.ip, 'colorwc', { color: { r: 0, g: 120, b: 255 }, colorTemInKelvin: 0 });
+        d.drv.command(d.ip, 'turn', { value: 1 });
+        d.drv.command(d.ip, 'brightness', { value: 100 });
+        d.drv.command(d.ip, 'colorwc', { color: { r: 0, g: 120, b: 255 }, colorTemInKelvin: 0 });
         await wait(450);
-        this.driver.command(d.ip, 'brightness', { value: 5 });
+        d.drv.command(d.ip, 'brightness', { value: 5 });
         await wait(450);
       }
       this.scene = null;
@@ -318,8 +349,8 @@ export class Lights extends EventEmitter {
       available: this.driverName !== 'off',
       enabled: this.enabled(),
       running: this.running,
-      error: this.driver?.error || null,
-      network: this.driver?.local ? `${this.driver.local.address} (${this.driver.local.name})` : null,
+      error: this.drivers.map((drv) => drv.error).filter(Boolean).join(' · ') || null,
+      network: this.drivers[0]?.local ? `${this.drivers[0].local.address} (${this.drivers[0].local.name})` : null,
       scene: this.scene,
       devices: Object.entries(devices).map(([id, d]) => ({
         id, name: d.name || '', sku: d.sku || '', type: lightType(d.sku), ip: this.seen.get(id)?.ip || d.ip || '',

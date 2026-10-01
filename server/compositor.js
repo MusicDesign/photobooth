@@ -84,10 +84,10 @@ function rectSvg(l) {
  * IA : masque de la photo entière (souvent déjà calculé pendant la séance, voir shotMatte), recadré et
  * retourné comme la photo, puis bords nettoyés.
  */
-async function cutout(img, l, file, mirror) {
+async function cutout(img, l, file, mirror, fastCutout) {
   const { data, info } = await img.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   if (l.cutout === 'ai') {
-    const m = await shotMatte(file, l.aiPrecision);
+    const m = await (fastCutout ? shotMatte(file, 'fast', { maxSide: 512 }) : shotMatte(file, l.aiPrecision));
     let mi = sharp(m.data, { raw: { width: m.w, height: m.h, channels: 1 } });
     if (mirror) mi = mi.flop();
     let matte = await mi.resize(info.width, info.height, { fit: 'cover', position: 'centre' }).extractChannel(0).raw().toBuffer();
@@ -101,7 +101,7 @@ async function cutout(img, l, file, mirror) {
   return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
 }
 
-async function renderLayer(l, { template, shotFiles, mirror, filter }) {
+async function renderLayer(l, { template, shotFiles, mirror, fastCutout }) {
   const W = template.width;
   const H = template.height;
   switch (l.type) {
@@ -111,8 +111,7 @@ async function renderLayer(l, { template, shotFiles, mirror, filter }) {
       let img = sharp(file).rotate();
       if (mirror) img = img.flop(); // photo en miroir, comme l'aperçu : chacun reste là où il s'est vu par rapport au cadre
       img = img.resize(l.width, l.height, { fit: 'cover', position: 'centre' });
-      let buf = l.cutout && l.cutout !== 'none' ? await cutout(img, l, file, mirror) : await img.png().toBuffer();
-      if (filter && filter !== 'none') buf = await filtered(buf, filter); // après le détourage : fond vert reconnu en couleur
+      let buf = l.cutout && l.cutout !== 'none' ? await cutout(img, l, file, mirror, fastCutout) : await img.png().toBuffer();
       buf = await roundCorners(buf, l.width, l.height, l.radius);
       buf = await withOpacity(buf, l.opacity);
       return placeLayer(buf, l, W, H);
@@ -133,23 +132,23 @@ async function renderLayer(l, { template, shotFiles, mirror, filter }) {
   }
 }
 
-/** Tous les calques assemblés sur le fond (sharp prêt à écrire). */
-/** Filtre de l'invité (public/filters.js) sur une photo, transparence du détourage gardée. */
-async function filtered(buf, filter) {
-  const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  applyFilter(data, filter);
-  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
-}
-
-async function render(template, shotFiles, mirror, filter = 'none') {
+/**
+ * Tous les calques assemblés sur le fond (sharp prêt à écrire), puis le filtre de l'invité (public/filters.js)
+ * sur tout le montage : photos, cadre, textes et logo. Le détourage se fait avant, sur les couleurs d'origine.
+ */
+async function render(template, shotFiles, mirror, filter = 'none', { fastCutout = false } = {}) {
   const layers = [];
   for (const l of template.layers) {
     if (l.visible === false) continue;
-    const placed = await renderLayer(l, { template, shotFiles, mirror, filter });
+    const placed = await renderLayer(l, { template, shotFiles, mirror, fastCutout });
     if (placed) layers.push(placed);
   }
-  return sharp({ create: { width: template.width, height: template.height, channels: 3, background: template.background || '#ffffff' } })
+  const montage = sharp({ create: { width: template.width, height: template.height, channels: 3, background: template.background || '#ffffff' } })
     .composite(layers);
+  if (!filter || filter === 'none') return montage;
+  const { data, info } = await montage.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  applyFilter(data, filter);
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).removeAlpha();
 }
 
 export async function compose(template, shotFiles, outFile, { mirror = false, filter = 'none' } = {}) {
@@ -193,6 +192,8 @@ export async function normalizeShot(inputBuffer, outFile) {
  * même avec le bruit du capteur. Sinon GIF de secours, réduit et allégé (sans tramage, pixels identiques
  * d'une image à l'autre réutilisés) : environ 1 Mo au lieu de 10.
  * outBase : chemin sans extension. Rend le fichier écrit (.mp4 ou .gif). posterFile : image du milieu (miniatures).
+ * Détourage IA : modèle rapide, en taille réduite, quel que soit le réglage du calque. Le modèle précis prend
+ * ~5 s par image, soit plus de 2 minutes pour les ~25 images filmées ; le rapide ~0,1 s, à la taille de la vidéo.
  */
 export async function composeBoomerang(template, frameFiles, outBase, { mirror = false, posterFile = null, filter = 'none' } = {}) {
   const video = !!ffmpegPath();
@@ -200,7 +201,7 @@ export async function composeBoomerang(template, frameFiles, outBase, { mirror =
   const small = scaleTemplate(template, Math.min(1, side / Math.max(template.width, template.height)));
   const frames = [];
   for (const file of frameFiles) {
-    let img = await (await render(small, [file], mirror, filter)).jpeg({ quality: 92 }).toBuffer();
+    let img = await (await render(small, [file], mirror, filter, { fastCutout: true })).jpeg({ quality: 92 }).toBuffer();
     if (!video) img = await sharp(img).median(3).jpeg({ quality: 92 }).toBuffer(); // bruit du capteur : le GIF le compresse mal
     frames.push(img);
   }

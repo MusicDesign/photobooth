@@ -78,10 +78,10 @@ function toast(msg, ms = 3500) {
 
 async function renderLogo(url) {
   const slots = $$('.logo-slot');
-  if (url.endsWith('.svg')) {
+  if (/\.svg(\?|$)/i.test(url)) { // logo Cheeesy coloré par le serveur (/logo.svg?c=…) ou SVG importé
     try {
       const svg = await (await fetch(url)).text();
-      for (const s of slots) s.innerHTML = svg; // hérite de currentColor = couleur secondaire
+      for (const s of slots) s.innerHTML = svg; // un SVG importé en currentColor hérite de la couleur secondaire
       return;
     } catch { /* on retombe sur <img> */ }
   }
@@ -115,6 +115,7 @@ function applyBoot() {
   // barres…) : --accent, la couleur principale sur un thème clair, du blanc sur un thème sombre.
   const dark = contrast(c.background, '#000000') < contrast(c.background, '#ffffff');
   root.style.setProperty('--accent', dark ? '#ffffff' : c.primary);
+  root.style.setProperty('--on-accent', dark ? c.background : c.onPrimary); // ce qui s'écrit sur l'accent (coche du filtre choisi)
   document.body.dataset.font = theme.font || 'system';
   document.body.dataset.cursor = ['idle', 'hide'].includes(booth.cursor) ? booth.cursor : 'show';
   nudgeCursor();
@@ -128,6 +129,7 @@ function applyBoot() {
   state.primaryColor = getComputedStyle(root).getPropertyValue('--accent').trim() || theme.colors.primary; // liseré de l'aperçu
 
   const t = (id, key) => { const el = $(id); if (el) el.textContent = texts[key] || ''; };
+  state.touch = touchMode(); // réglage de l'admin (Parcours invité) ou détection
   showWelcome(); renderPaperBadge();
   $('#flashBadge').classList.toggle('hidden', !state.boot.camera?.flashStray); t('#txtChooseTemplate', 'chooseTemplate'); t('#txtGetReady', 'getReady');
   t('#btnStart', 'start'); t('#txtReview', 'review'); t('#btnRetake', 'retake'); t('#btnKeep', 'keep');
@@ -167,12 +169,20 @@ window.addEventListener('mousemove', nudgeCursor, { passive: true });
 /**
  * Écran tactile ? Ce que le navigateur annonce au chargement, corrigé par le premier vrai toucher
  * (certains écrans tactiles se déclarent comme une souris). Sert à ne pas inviter à toucher un écran
- * qui ne réagit pas.
+ * qui ne réagit pas. Le réglage de l'admin (booth.touch : touch | buttons) l'emporte sur cette détection.
  */
-state.touch = navigator.maxTouchPoints > 0 || matchMedia('(any-pointer: coarse)').matches;
+state.touchSeen = navigator.maxTouchPoints > 0 || matchMedia('(any-pointer: coarse)').matches;
+state.touch = state.touchSeen;
+/** Mode en vigueur : forcé par l'admin, sinon ce qui a été détecté. */
+function touchMode() {
+  const mode = state.boot?.booth?.touch;
+  return mode === 'touch' ? true : mode === 'buttons' ? false : state.touchSeen;
+}
 window.addEventListener('pointerdown', (e) => {
-  if (e.pointerType !== 'touch' || state.touch) return;
-  state.touch = true;
+  if (e.pointerType !== 'touch' || state.touchSeen) return;
+  state.touchSeen = true;
+  if (state.touch === touchMode()) return; // mode forcé : le toucher ne change rien
+  state.touch = touchMode();
   showWelcome();
   applyDeckUi();
 }, true);
@@ -1001,7 +1011,7 @@ function onRetakeClick() {
 
 /**
  * Filtres sur « On la garde ? » (option de l'admin) : une vignette par filtre (la 1re photo, filtre CSS
- * approché) ; au choix, le serveur refait le montage avec le vrai filtre, sur les photos seulement.
+ * approché) ; au choix, le serveur refait le montage avec le vrai filtre, sur tout le montage.
  */
 function renderFilterBar() {
   const bar = $('#filterBar');
@@ -1592,7 +1602,9 @@ function deckItems() {
     let icon = DECK_ICONS[el.id] || { del: 'delete', ok: 'check' }[el.dataset.k] || null; // pavé du code : ⌫ et OK en pictogrammes
     // « Sans impression » : QR code seulement s'il s'affichera vraiment (Wi-Fi, option active), sinon retour à l'accueil
     if (el.id === 'btnNoPrint' && state.boot.share?.qrOnDone === false) icon = 'home';
-    items.push({ id: el.dataset.deck, label: label || '•', kind: deckKind(el), disabled: el.disabled, icon, image, style: deckKeyStyle(el, root) });
+    // Filtre sélectionné : la touche porte une coche, comme la vignette à l'écran
+    const active = el.classList.contains('filter-chip') ? el.classList.contains('active') : undefined;
+    items.push({ id: el.dataset.deck, label: label || '•', kind: deckKind(el), disabled: el.disabled, icon, image, active, style: deckKeyStyle(el, root) });
   }
   return items;
 }

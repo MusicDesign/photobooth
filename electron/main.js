@@ -6,7 +6,8 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { app, BrowserWindow, dialog, session } from 'electron';
+import { fileURLToPath } from 'node:url';
+import { app, BrowserWindow, WebContentsView, dialog, session } from 'electron';
 import { createRemoteScreen } from './remote-screen.js';
 
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform-hint', 'auto'); // Wayland (tactile)
@@ -32,6 +33,7 @@ if (app.isPackaged && !fs.existsSync(app.getPath('userData')) && legacyData) app
 // Une seule borne : relancer l'icône ramène la fenêtre existante.
 if (!app.requestSingleInstanceLock()) app.quit();
 else start().catch((e) => {
+  win?.destroy();
   dialog.showErrorBox('Cheeesy', `Démarrage impossible : ${e.message}`);
   app.exit(1);
 });
@@ -66,9 +68,50 @@ async function stopOtherServers(port) {
   await new Promise((r) => setTimeout(r, 500));
 }
 
+/**
+ * Écran de lancement, affiché dès le clic : le démarrage prend quelques secondes (remise à zéro du boîtier
+ * surtout). C'est une vue posée PAR-DESSUS la fenêtre de la borne, retirée quand elle est prête : une seule
+ * fenêtre plein écran. Avec deux (lancement puis borne), macOS renvoyait au bureau en fermant la première, la
+ * borne restant ouverte mais inaccessible. step() affiche l'étape en cours et la progression.
+ */
+let win = null;
+let splash = null; // WebContentsView
+let splashLoaded = Promise.resolve();
+function openWindow() {
+  win = new BrowserWindow({
+    kiosk: true,
+    autoHideMenuBar: true,
+    backgroundColor: '#f8f9fa', // fond de l'écran de lancement, le temps qu'il se dessine
+    show: false,
+    // backgroundThrottling : la borne continue de se dessiner même cachée, pour l'écran déporté (/remote)
+    webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false }
+  });
+  splash = new WebContentsView({ webPreferences: { sandbox: true } });
+  splash.setBackgroundColor('#f8f9fa');
+  win.contentView.addChildView(splash);
+  const fit = () => { const { width, height } = win.getContentBounds(); splash?.setBounds({ x: 0, y: 0, width, height }); };
+  fit();
+  win.on('resize', fit);
+  splashLoaded = splash.webContents.loadFile(fileURLToPath(new URL('./splash.html', import.meta.url))).catch(() => {});
+  splashLoaded.then(() => win?.show());
+}
+function closeSplash() {
+  if (!splash) return;
+  win.contentView.removeChildView(splash);
+  splash.webContents.close();
+  splash = null;
+}
+async function step(text, progress = null, detail = '') {
+  await splashLoaded;
+  splash?.webContents.executeJavaScript(`setStep(${JSON.stringify(text)}, ${progress}, ${JSON.stringify(detail)})`).catch(() => {});
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 async function start() {
   if (app.isPackaged) useUserData();
   await app.whenReady();
+  openWindow();
+  step('Démarrage…', 0.05);
   await stopOtherServers(Number(process.env.PORT) || 3000);
 
   // Import après le choix des dossiers : server/paths.js les lit au chargement.
@@ -78,8 +121,11 @@ async function start() {
 
   let stopped = false;
   const remoteScreen = createRemoteScreen(); // page /remote : écran et toucher de la borne à distance (iPad…)
-  const { server, port, close } = await createApp({
+  step('Préparation de l\'appareil photo…', 0.25, 'Remise à zéro du boîtier : quelques secondes');
+  // Le boîtier se prépare en arrière-plan pendant que le serveur démarre et que la borne se charge
+  const { server, port, close, cameraReady } = await createApp({
     remoteScreen,
+    backgroundCamera: true,
     onShutdown: () => { stopped = true; app.quit(); },
     // Redémarrer : nouvelle instance au départ de celle-ci (même dossier d'app, même environnement)
     onRestart: () => { stopped = true; app.relaunch(app.isPackaged ? {} : { args: [app.getAppPath()] }); app.exit(0); }
@@ -97,6 +143,8 @@ async function start() {
   }
   const url = `http://localhost:${server.address().port}`;
   console.log(`[app] borne : ${url}`);
+  step('Ouverture de la borne…', 0.5, 'Préparation de l\'appareil photo en parallèle');
+  cameraReady.then(() => step('Appareil photo prêt', 0.85));
 
   // Fermeture de la fenêtre ou Ctrl+Maj+Q : arrêt propre du serveur (caméra, Stream Deck) avant de sortir.
   app.on('will-quit', (e) => {
@@ -112,16 +160,7 @@ async function start() {
   session.defaultSession.setPermissionRequestHandler((wc, perm, cb) => cb(allowed.has(perm)));
   session.defaultSession.setPermissionCheckHandler((wc, perm) => allowed.has(perm));
 
-  const win = new BrowserWindow({
-    kiosk: true,
-    autoHideMenuBar: true,
-    backgroundColor: '#000000',
-    show: false,
-    // backgroundThrottling : la borne continue de se dessiner même cachée, pour l'écran déporté (/remote)
-    webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false }
-  });
   remoteScreen.attach(win);
-  win.once('ready-to-show', () => win.show());
   win.webContents.on('before-input-event', (e, input) => {
     if (input.type === 'keyDown' && input.control && input.shift && input.key.toLowerCase() === 'q') app.quit();
   });
@@ -138,5 +177,16 @@ async function start() {
   win.webContents.on('render-process-gone', () => setTimeout(() => win.reload(), 1000));
 
   app.on('second-instance', () => { win.show(); win.focus(); });
-  await win.loadURL(url);
+  // La borne se charge sous l'écran de lancement (même fenêtre)
+  const loaded = win.loadURL(url);
+  loaded.catch(() => {}); // erreur de chargement : la borne s'affiche quand même (rechargement ci-dessus)
+  const painted = loaded.then(() => sleep(300), () => {}); // page chargée, le temps d'un premier rendu
+  // L'écran de lancement s'efface quand la borne est dessinée et que le boîtier est prêt. Boîtier trop long
+  // (figé, débranché pendant la détection) : la borne s'affiche quand même, il la rejoindra à chaud.
+  await Promise.all([Promise.race([painted, sleep(30000)]), Promise.race([cameraReady, sleep(25000)])]);
+  await step('C\'est parti !', 1);
+  await sleep(250);
+  closeSplash();
+  win.show();
+  win.focus();
 }

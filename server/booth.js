@@ -544,7 +544,7 @@ export class Booth {
   }
 
   /**
-   * Montage final. filter : filtre choisi par l'invité sur « On la garde ? » (photos seulement), parmi ceux
+   * Montage final. filter : filtre choisi par l'invité sur « On la garde ? » (tout le montage), parmi ceux
    * proposés dans l'admin ; sans lui, on garde celui de la session (couleur au départ).
    */
   async composeSession(id, { filter } = {}) {
@@ -565,6 +565,7 @@ export class Booth {
     const boomerang = s.kind === 'boomerang' && template.kind === 'boomerang';
     let finalFile = path.join(dir, gif ? 'final.gif' : 'final.jpg'); // boomerang : .mp4, ou .gif sans ffmpeg
     const thumbFile = path.join(dir, 'thumb.jpg');
+    const t0 = Date.now();
     if (boomerang) {
       const poster = path.join(dir, 'poster.jpg');
       const frames = s.shots[0].frames?.length ? s.shots[0].frames : [s.shots[0].file];
@@ -578,6 +579,7 @@ export class Booth {
       await compose(template, s.shots.map((sh) => sh.file), finalFile, opts);
       await thumbnail(finalFile, thumbFile);
     }
+    console.log(`[booth] session ${s.id} : montage ${boomerang ? 'boomerang' : gif ? 'GIF' : 'photo'} en ${((Date.now() - t0) / 1000).toFixed(1)} s`);
     s.final = { file: finalFile, thumb: thumbFile, composedAt: new Date().toISOString() };
     s.status = 'review';
     this.store.saveSession(s);

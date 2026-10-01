@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Config } from '../server/config.js';
-import { Themes, DEFAULT_LOGO } from '../server/themes.js';
+import { Themes, DEFAULT_LOGO, defaultLogoSvg } from '../server/themes.js';
 import { OUTPUT_DIR, PUBLIC_DIR, DATA_DIR } from '../server/paths.js';
 
 const OUT = path.resolve(process.argv[2] || path.join(OUTPUT_DIR, 'remote'));
@@ -24,10 +24,16 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });
 
-// Logo : /assets/… vient de public/, /uploads/… du dossier data/.
-const logoSrc = theme.logo.startsWith('/uploads/') ? path.join(DATA_DIR, theme.logo) : path.join(PUBLIC_DIR, theme.logo || DEFAULT_LOGO);
-const logoName = `logo${path.extname(logoSrc)}`;
-fs.copyFileSync(logoSrc, path.join(OUT, logoName));
+// Logo : le logo Cheeesy par défaut est écrit aux couleurs du thème ; un logo importé (/uploads/…, dossier data/)
+// ou livré (/assets/…, dossier public/) est copié tel quel.
+let logoName = 'logo.svg';
+if (theme.defaultLogo) {
+  fs.writeFileSync(path.join(OUT, logoName), defaultLogoSvg(theme.colors));
+} else {
+  const logoSrc = theme.logo.startsWith('/uploads/') ? path.join(DATA_DIR, theme.logo) : path.join(PUBLIC_DIR, theme.logo || DEFAULT_LOGO);
+  logoName = `logo${path.extname(logoSrc)}`;
+  fs.copyFileSync(logoSrc, path.join(OUT, logoName));
+}
 
 const c = theme.colors;
 const ssid = cfg.share.wifi?.enabled ? String(cfg.share.wifi.ssid || '').trim() : '';

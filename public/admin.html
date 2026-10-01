@@ -19,7 +19,12 @@
 </div>
 
 <div id="shell" class="shell hidden">
-  <nav class="nav">
+  <!-- Téléphone : barre fine en haut, le menu s'ouvre en tiroir par-dessus -->
+  <header class="topbar">
+    <button id="navToggle" class="nav-toggle" type="button" aria-label="Menu" aria-expanded="false"><span></span><span></span><span></span></button>
+    <span id="topTitle" class="top-title"></span>
+  </header>
+  <nav id="nav" class="nav">
     <div class="nav-title">Cheeesy</div>
     <a href="#dashboard" class="active">Tableau de bord</a>
     <a href="#sessions">Événements &amp; photos</a>
@@ -27,10 +32,12 @@
     <div class="nav-group">Réglages</div>
     <a href="#flow">Parcours invité</a>
     <a href="#printing">Impression</a>
-    <a href="#sharing">Partage</a>
+    <a href="#sharing">Galerie &amp; partage</a>
     <a href="#theme">Apparence</a>
-    <a href="#hardware">Matériel</a>
-    <a href="#lights">Appareils connectés</a>
+    <a href="#texts">Textes des écrans</a>
+    <a href="#camera">Appareil photo</a>
+    <a href="#control">Écran &amp; contrôle</a>
+    <a href="#lights">Lumières</a>
     <a href="#security">Sécurité</a>
     <div class="nav-foot">
       <button id="btnBooth" class="btn primary small">← Retour à la borne</button>
@@ -39,8 +46,11 @@
       <button id="btnShutdown" class="btn danger small hidden">Éteindre la borne</button>
     </div>
   </nav>
+  <div id="navBackdrop" class="nav-backdrop"></div>
   <main id="main" class="main"></main>
 </div>
+<!-- Enregistrement automatique : « Enregistrement… » puis « Enregistré » -->
+<div id="saveState" class="save-state" aria-live="polite"></div>
 
 <div id="toast" class="toast hidden"></div>
 <!-- Confirmation dans la page (et non confirm()) : se valide aussi depuis le Stream Deck -->

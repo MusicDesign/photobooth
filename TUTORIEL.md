@@ -101,11 +101,13 @@ Le menu de gauche : trois sections de travail, puis les réglages.
 | Tableau de bord | Compteurs, état du matériel et du Wi-Fi, papier restant, remises à zéro |
 | Événements & photos | Un dossier par événement : sessions, réimpression, exports, suppression |
 | Templates | Création, éditeur de calques (dont le détourage), activation, template par défaut |
-| Parcours invité | Décompte, reprises, relecture, miroir, retours à l'accueil, galerie de l'événement |
+| Parcours invité | Décompte, reprises, relecture, miroir, filtres, retours à l'accueil, galerie de l'événement |
 | Impression | Imprimante (auto, CUPS, options lp), copies par passage, quota, alerte papier |
 | Partage | QR code des photos, Wi-Fi obligatoire ou non, adresses, QR code Wi-Fi de la borne |
 | Apparence | Nom, logo, couleurs, police, tous les textes des écrans |
-| Matériel | Caméra (pilote, flash, commandes gphoto2 avancées), Stream Deck |
+| Appareil photo | Caméra (pilote, flash, calibrage, commandes gphoto2 avancées) |
+| Écran & contrôle | Écran (luminosité, volume), tactile ou boutons, curseur de la souris, Stream Deck |
+| Lumières | Govee et Elgato du réseau local : ambiance à l'accueil (couleur ou blanc), prise de vue, état à l'arrêt de la borne |
 | Sécurité | PIN admin, code opérateur |
 
 **Première chose à faire : changer les codes** dans Sécurité.
@@ -166,7 +168,7 @@ M · 1/125 s · f/5.6 · ISO 800 · balance des blancs sur la lumière de la sal
 ```
 
 Le flash intégré : en P/Av/M il ne se déclenche que s'il est levé, et il ne
-se rabat qu'à la main. L'admin propose une option (Matériel → Flash
+se rabat qu'à la main. L'admin propose une option (Appareil photo → Flash
 intégré : off, on, auto avec seuil de luminosité) qui envoie la commande de
 levée `popupflash` avant la photo, mais **le 2000D accepte cette commande sans
 lever le flash** (vérifié : il ne se charge pas). Sur ce boîtier, le flash se
@@ -212,7 +214,7 @@ gphoto2 répond « Could not claim the USB device », relance `killall ptpcamera
 
 ## 6. Activer le Canon dans la borne
 
-1. Admin → Matériel → Pilote caméra : **auto** (le défaut). La borne
+1. Admin → Appareil photo → Pilote caméra : **auto** (le défaut). La borne
    détecte le boîtier en USB et passe sur gphoto2 toute seule, en 10 secondes
    au plus ; s'il est éteint ou débranché, elle repasse sur le repli choisi
    (webcam du navigateur par défaut). Le bloc « En ce moment » dit quel pilote
@@ -317,10 +319,14 @@ template dans l'éditeur (étape 8) plutôt que les options lp.
 ### 8.1 Apparence
 
 - **Identité** : nom de la borne, délai de retour à l'accueil après l'écran final.
-- **Thème actif** : clair, sombre, festif, ou Personnalisé avec tes couleurs.
+- **Thème actif** : une carte par thème livré (clair, sombre, festif, mariage, noir & or,
+  néon, océan, forêt, corail, bonbon, entreprise, Noël), l'accueil de la borne en miniature
+  dans ses couleurs, ou Personnalisé avec tes couleurs. Les trois écrans d'aperçu dessous
+  montrent toujours le thème choisi.
   L'admin signale un contraste insuffisant entre le texte et le fond.
 - **Logo** (PNG transparent ou SVG) et **image de fond** : valables pour tous
-  les thèmes.
+  les thèmes. Sans logo importé, le logo Cheeesy prend les couleurs du thème
+  (aplat en couleur d'accent, lettres en « texte des boutons »).
 - **Textes des écrans** : chaque phrase vue par l'invité est modifiable, y
   compris le message quand le quota est atteint.
 
@@ -577,7 +583,7 @@ pour refaire, imprimante, − et +, QR code pour « sans impression », etc.). L
 choix de cadre et de photo à refaire montrent leur miniature. Le pavé du code
 opérateur passe aussi sur les touches, en plusieurs pages sur un Mini.
 Tous les modèles sont reconnus (Mini 6 touches, MK.2 15, XL 32, Neo, Plus), à
-chaud, sans redémarrage. Réglages : admin → Matériel → Stream Deck.
+chaud, sans redémarrage. Réglages : admin → Écran & contrôle → Stream Deck.
 
 - **Mac** : quitter l'application Stream Deck d'Elgato, qui réserve l'appareil.
 - **Linux** : donner l'accès USB à l'utilisateur connecté, une fois :
@@ -599,6 +605,15 @@ L'écran tactile du PC sert directement ; l'interface a un mode portrait et
 paysage. Une tablette avec un seul port USB (Surface) demande un **hub USB
 alimenté** pour le boîtier, l'imprimante et le Stream Deck, et reste branchée
 sur secteur pendant l'événement.
+
+**Luminosité et volume de l'écran** : admin → Écran & contrôle → Écran. La
+borne parle à l'écran en DDC/CI, le canal de commande des moniteurs qui passe dans le
+câble vidéo (HDMI, DisplayPort ou USB-C), avec `ddcutil` sur Linux
+(`sudo apt install ddcutil`, module `i2c-dev` chargé, utilisateur ajouté au groupe
+`i2c`) ou `m1ddc` sur Mac (`brew install m1ddc`). Coche « Régler l'écran depuis la
+borne » : les valeurs sont envoyées tout de suite et à chaque démarrage. Le tableau de
+bord montre l'écran détecté et ses valeurs. Certains écrans portables n'acceptent le
+DDC/CI que sur un de leurs ports : « Relire l'écran » après avoir changé de câble.
 
 Un iPad peut aussi servir d'écran s'il fait tourner iPadOS 16.2 ou plus :
 ouvre `http://<ip-de-la-borne>:3000` dans Safari, active Accès guidé

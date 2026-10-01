@@ -1,0 +1,14 @@
+{
+  "id": "noel",
+  "name": "Noël",
+  "order": 12,
+  "colors": {
+    "primary": "#e63946",
+    "secondary": "#f4d35e",
+    "background": "#0f2a1f",
+    "surface": "#1c3b2d",
+    "text": "#f7f7f2",
+    "onPrimary": "#ffffff"
+  },
+  "font": "rounded"
+}

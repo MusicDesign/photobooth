@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { createCamera, detectGphoto2 } from './camera/index.js';
+import { StartingCamera } from './camera/starting.js';
 import { createPrinter, detectCupsPrinter } from './printer/index.js';
 import { wifiStatus } from './network.js';
 
@@ -31,8 +32,23 @@ export class Devices extends EventEmitter {
     this.closed = false;
   }
 
-  async start() {
-    await this.refresh();
+  /**
+   * backgroundCamera : le boîtier se prépare en arrière-plan (caméra provisoire en attendant), imprimante et
+   * réseau tout de suite. cameraReady : résolue quand la première détection de la caméra est finie.
+   */
+  async start({ backgroundCamera = false } = {}) {
+    if (backgroundCamera) {
+      const cfg = this.config.get();
+      this.camera = new StartingCamera();
+      this.cameraKey = null;
+      this.state.camera = { requested: cfg.camera.driver, driver: 'starting', reason: 'préparation en cours', checkedAt: new Date().toISOString() };
+      await this._refreshPrinter(cfg.printer);
+      this._refreshNetwork();
+      this.cameraReady = this.refresh().catch((e) => console.warn(`[devices] ${e.message}`));
+    } else {
+      await this.refresh();
+      this.cameraReady = Promise.resolve();
+    }
     this.timer = setInterval(() => this.refresh().catch((e) => console.warn(`[devices] ${e.message}`)), this.pollMs);
     this.timer.unref();
   }

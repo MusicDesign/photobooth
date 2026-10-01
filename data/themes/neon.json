@@ -1,0 +1,14 @@
+{
+  "id": "neon",
+  "name": "Néon",
+  "order": 6,
+  "colors": {
+    "primary": "#ff2d95",
+    "secondary": "#35f0ff",
+    "background": "#0b0d2b",
+    "surface": "#171a45",
+    "text": "#eef0ff",
+    "onPrimary": "#ffffff"
+  },
+  "font": "system"
+}

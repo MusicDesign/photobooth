@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Cheeesy</title>
+<!-- Écran de lancement : affiché dès le clic, pendant que le boîtier, le serveur et la borne démarrent (main.js) -->
+<style>
+  :root { --bg: #f8f9fa; --text: #1d3557; --muted: #6b7280; --accent: #e63946; --track: #e5e7eb; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); cursor: none; user-select: none;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 44px; }
+  .logo { width: min(46vw, 520px); animation: pop 0.6s ease-out both; }
+  .logo img { width: 100%; display: block; }
+  .bar { width: min(40vw, 420px); height: 10px; border-radius: 999px; background: var(--track); overflow: hidden; position: relative; }
+  .bar span { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: inherit; background: var(--accent); transition: width 0.6s ease; }
+  /* Étape sans durée connue : un reflet qui défile sur la partie restante */
+  .bar::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+    animation: sweep 1.4s linear infinite; }
+  .step { font-size: clamp(18px, 2.2vw, 26px); font-weight: 600; min-height: 1.4em; text-align: center; }
+  .step small { display: block; margin-top: 8px; font-size: 0.7em; font-weight: 400; color: var(--muted); }
+  @keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+  @keyframes pop { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+  <div class="logo"><img src="../public/assets/cheesy_logo.svg" alt="Cheeesy"></div>
+  <div class="bar"><span id="fill"></span></div>
+  <div class="step" id="step">Démarrage…</div>
+<script>
+  // Appelée par main.js : texte de l'étape, progression 0-1, détail facultatif
+  window.setStep = (text, progress, detail) => {
+    document.getElementById('step').innerHTML = '';
+    document.getElementById('step').append(text);
+    if (detail) { const s = document.createElement('small'); s.textContent = detail; document.getElementById('step').append(s); }
+    if (progress != null) document.getElementById('fill').style.width = `${Math.round(progress * 100)}%`;
+  };
+</script>
+</body>
+</html>

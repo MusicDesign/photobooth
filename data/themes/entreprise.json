@@ -1,0 +1,14 @@
+{
+  "id": "entreprise",
+  "name": "Entreprise",
+  "order": 11,
+  "colors": {
+    "primary": "#2563eb",
+    "secondary": "#0f172a",
+    "background": "#f4f6fa",
+    "surface": "#ffffff",
+    "text": "#1e293b",
+    "onPrimary": "#ffffff"
+  },
+  "font": "system"
+}
