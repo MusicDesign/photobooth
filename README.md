@@ -5,9 +5,12 @@ mini-PC tactile, Fedora ou Ubuntu), avec un **Canon EOS 2000D** piloté par gpho
 imprimante photo via CUPS. Interface web plein écran (Chromium en kiosque ou app Electron),
 backend Node.js.
 
-État : **POC de l'étape 1**. Tout le flux invité fonctionne avec une caméra et une
-imprimante simulées, testable sur un Mac. Les pilotes gphoto2 et CUPS sont écrits
-mais pas encore validés avec le matériel (étapes 2 et 3).
+État : **borne fonctionnelle**, mise au point sur Mac avec le vrai matériel : Canon EOS 2000D
+piloté et calibré par gphoto2 (aperçu en direct, flash, détourage IA), Stream Deck, lumières
+Govee et Elgato, écran externe en DDC/CI, 12 thèmes et éditeur de templates. Le flux invité
+complet se teste aussi sans matériel (caméra et imprimante simulées). Reste à valider :
+l'impression sur l'imprimante retenue et l'installation sur le mini PC Linux de la borne
+(voir « Prochaines étapes »).
 
 ## Démarrer sur le Mac
 
@@ -52,7 +55,7 @@ Deux lanceurs au choix, même comportement :
 
 Détails, connexion automatique, pare-feu et hotspot : [TUTORIEL.md, étape 10](TUTORIEL.md#10-installer-sur-le-pc-de-la-borne-linux).
 
-## Ce que fait le POC
+## Ce que fait la borne
 
 Flux invité : accueil → choix du cadre (optionnel) → aperçu live **dans le template**
 → décompte → photos (1 ou plusieurs) → relecture avec **reprise photo par photo** →
@@ -191,20 +194,16 @@ le serveur se ferme puis sort avec le code 0, que le lanceur lit comme un arrêt
 
 ## Prochaines étapes
 
-2. **Canon 2000D via gphoto2** (pilote écrit, à valider) : `brew install gphoto2` sur le
-   Mac pour un premier test, puis sur la borne Linux. Réglages boîtier : arrêt auto désactivé,
-   Wi-Fi désactivé, carte SD insérée, objectif en manuel à distance fixe. Sous Linux,
-   désactiver `gvfs-gphoto2-volume-monitor`. Les commandes sont modifiables dans l'admin.
-3. **Impression réelle** (pilote `cups` écrit, à valider) : imprimante à choisir
+1. **Impression réelle** (pilote `cups` écrit, à valider) : imprimante à choisir
    (Selphy CP1500 en perso, DNP DS-RX1HS ou HiTi P525L en événementiel), pilote
    Gutenprint, nom de file et option `media` dans l'admin, calibrage des marges.
-4. **Kiosque Linux** (lanceurs écrits, à valider sur la machine) : test sur le PC de la
-   borne (tactile, veille, connexion automatique), hotspot Wi-Fi + `share.baseUrl` pour le
-   QR code.
-5. **Finitions** : profils d'événement, filtres, bouton physique (USB), passage de la
-   persistance JSON à SQLite, alignement magnétique dans l'éditeur.
+2. **Mini PC Linux** (HP EliteDesk 800 G3 commandé ; lanceurs écrits, à valider sur la
+   machine) : écran tactile, veille, connexion automatique, `gvfs-gphoto2-volume-monitor`
+   désactivé, hotspot Wi-Fi + `share.baseUrl` pour le QR code, `ddcutil` pour l'écran,
+   vitesse du détourage précis (repli automatique sur le modèle rapide si trop lent).
+3. **Finitions** : passage de la persistance JSON à SQLite si les événements grossissent.
 
-## Limites connues du POC
+## Limites connues
 
 - Persistance en fichier JSON : très bien pour un événement, à passer en SQLite pour
   des milliers de sessions.
