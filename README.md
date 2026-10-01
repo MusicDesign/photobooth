@@ -150,7 +150,7 @@ server/
   app.js            assemblage Express + WebSocket + routes
   booth.js          logique métier : sessions, reprises, copies, quotas, impression
   config.js         valeurs par défaut + data/config.json
-  store.js          persistance JSON (data/db.json) : sessions, tirages, compteurs
+  store.js          persistance JSON : événements, tirages, compteurs dans data/db.json ; une fiche session.json par dossier de session
   templates.js      chargement / validation / création des templates
   themes.js         thèmes livrés (data/themes) + thème personnalisé
   screen.js         écran de la borne en DDC/CI : luminosité, volume (m1ddc sur Mac, ddcutil sur Linux)
@@ -170,7 +170,7 @@ public/
   admin.html admin.js admin.css    administration
 data/
   config.json   réglages (créé au premier démarrage, modifiable depuis l'admin)
-  db.json       sessions et compteurs
+  db.json       événements, tirages, compteurs (les sessions : output/sessions/<id>/session.json, avec leurs photos)
   templates/    un dossier par template
   themes/       thèmes livrés
   samples/      photos de la caméra simulée

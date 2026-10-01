@@ -14,6 +14,7 @@ process.env.BOOTH_CONFIG_FILE = path.join(tmp, 'config.json');
 process.env.BOOTH_OUTPUT_DIR = path.join(tmp, 'output');
 process.env.BOOTH_TEMPLATES_DIR = path.join(tmp, 'templates');
 process.env.BOOTH_SAMPLES_DIR = path.join(tmp, 'samples');
+process.env.BOOTH_UPLOADS_DIR = path.join(tmp, 'uploads'); // logos envoyés pendant le test : jamais dans data/uploads
 process.env.BOOTH_CAMERA = 'mock';
 process.env.BOOTH_PRINTER = 'mock';
 process.env.BOOTH_STREAMDECK = 'off'; // ne pas prendre la main sur un Stream Deck branché
@@ -42,8 +43,9 @@ const step = async (name, fn) => {
 
 async function run(camera) {
   process.env.BOOTH_CAMERA = camera;
-  // Chaque passe repart de compteurs et d'une config vierges.
+  // Chaque passe repart de compteurs, d'une config et de sessions vierges (les fiches de session sont dans leurs dossiers).
   for (const f of [process.env.BOOTH_DB_FILE, process.env.BOOTH_CONFIG_FILE]) fs.rmSync(f, { force: true });
+  fs.rmSync(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions'), { recursive: true, force: true });
   const app = await createApp({ port: 0 });
   try {
     await runSteps(app, camera);
@@ -190,6 +192,29 @@ async function runSteps(app, camera) {
     const page = await fetch(`${base}/g/${s.id}`);
     assert.equal(page.status, 200);
     assert.ok(!(await page.text()).includes('Télécharger la photo'));
+  });
+
+  await step('stockage : une fiche session.json par dossier, db.json sans les sessions, compteur = nombre de fiches', async () => {
+    const fiche = JSON.parse(fs.readFileSync(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s.id, 'session.json'), 'utf8'));
+    assert.equal(fiche.id, s.id);
+    assert.equal(fiche.status, 'done');
+    const db = JSON.parse(fs.readFileSync(process.env.BOOTH_DB_FILE, 'utf8'));
+    assert.ok(!('sessions' in db), 'db.json ne porte plus les sessions');
+    assert.ok(db.events && db.counters, 'db.json garde événements et compteurs');
+    const onDisk = fs.readdirSync(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions')).filter((d) => fs.existsSync(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', d, 'session.json')));
+    assert.equal(app.store.counters().sessionsCount, onDisk.length, 'compteur de sessions = fiches sur disque');
+  });
+
+  await step('sessions : dossier sans fiche supprimé au démarrage, dossier à fiche illisible laissé', async () => {
+    const base = path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions');
+    fs.mkdirSync(path.join(base, 'orphelin-test'), { recursive: true });
+    fs.writeFileSync(path.join(base, 'orphelin-test', 'shot-1.jpg'), 'x');
+    fs.mkdirSync(path.join(base, 'abime-test'), { recursive: true });
+    fs.writeFileSync(path.join(base, 'abime-test', 'session.json'), '{ pas du json');
+    app.booth.purgeOrphanDirs();
+    assert.ok(!fs.existsSync(path.join(base, 'orphelin-test')), 'dossier sans fiche supprimé');
+    assert.ok(fs.existsSync(path.join(base, 'abime-test')), 'fiche illisible : dossier et photos laissés');
+    fs.rmSync(path.join(base, 'abime-test'), { recursive: true, force: true });
   });
 
   await step('admin : refus sans PIN, état complet, réimpression, compteurs', async () => {
@@ -409,6 +434,25 @@ async function runSteps(app, camera) {
   });
 
   let tplA, tplB;
+  await step('uploads : seul le logo en cours est gardé, « Logo par défaut » vide le dossier', async () => {
+    const up = async () => {
+      const form = new FormData();
+      form.append('logo', new Blob([Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>')], { type: 'image/svg+xml' }), 'l.svg');
+      return j('/api/admin/logo', { method: 'POST', headers: ADMIN, body: form });
+    };
+    assert.equal((await up()).status, 200);
+    await new Promise((r) => setTimeout(r, 5)); // nom horodaté : deux fichiers distincts
+    assert.equal((await up()).status, 200);
+    const logos = () => fs.readdirSync(process.env.BOOTH_UPLOADS_DIR).filter((f) => f.startsWith('logo-'));
+    assert.equal(logos().length, 1, 'l\'ancien logo est supprimé quand il est remplacé');
+    assert.equal((await put('/api/admin/config', { booth: { logo: '' }, theme: { custom: { logo: '' } } }, ADMIN)).status, 200);
+    assert.equal(logos().length, 0, 'logo par défaut : plus de fichier envoyé');
+    // Référence vers un fichier disparu : remise à vide au démarrage
+    const { missingUploadRefs } = await import('../server/uploads.js');
+    assert.deepEqual(missingUploadRefs({ booth: { logo: '/uploads/logo-0.svg', backgroundImage: '' }, theme: { custom: {} } }), { booth: { logo: '' } });
+    assert.equal(missingUploadRefs({ booth: { logo: '', backgroundImage: '' }, theme: { custom: {} } }), null);
+  });
+
   await step('templates : création par nom, id déduit, taille du format par défaut', async () => {
     const r = await post('/api/admin/templates', { name: 'Mariage Julie & Marc' }, ADMIN);
     assert.equal(r.status, 200, JSON.stringify(r.data));
@@ -478,6 +522,25 @@ async function runSteps(app, camera) {
     assert.equal(bad.status, 400);
     assert.equal(bad.data.error, 'SHOTS_GAP');
     assert.equal((await put(`/api/admin/templates/${tplA.id}`, { layers: [{ type: 'rect', x: 0, y: 0, width: 10, height: 10 }] }, ADMIN)).data.error, 'NO_PHOTO_LAYER');
+  });
+
+  await step('templates : image importée non utilisée supprimée au nettoyage, image utilisée gardée', async () => {
+    const tplId = (await j('/api/admin/state', { headers: ADMIN })).data.templates[0].id;
+    const png = await sharp({ create: { width: 8, height: 8, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } } }).png().toBuffer();
+    const upload = async () => {
+      const form = new FormData();
+      form.append('image', new Blob([png], { type: 'image/png' }), 'a.png');
+      return (await j(`/api/admin/templates/${tplId}/assets`, { method: 'POST', headers: ADMIN, body: form })).data;
+    };
+    const used = await upload();
+    await new Promise((r) => setTimeout(r, 5)); // noms horodatés distincts
+    const orphan = await upload();
+    const t = app.templates.get(tplId);
+    assert.equal((await put(`/api/admin/templates/${tplId}`, { layers: [...t.layers, { type: 'image', src: used.src, x: 0, y: 0, width: 100, height: 100, opacity: 1 }] }, ADMIN)).status, 200);
+    assert.equal(app.templates.pruneAssets(app.templates.get(tplId), { minAgeMs: 0 }), 1);
+    const dir = path.join(process.env.BOOTH_TEMPLATES_DIR, tplId, 'assets');
+    assert.ok(fs.existsSync(path.join(dir, path.basename(used.src))), 'image utilisée gardée');
+    assert.ok(!fs.existsSync(path.join(dir, path.basename(orphan.src))), 'image non utilisée supprimée');
   });
 
   await step('GIF : masqué tant que désactivé, poses, animation, jamais imprimé, refaire toutes les poses', async () => {

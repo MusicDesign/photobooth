@@ -18,6 +18,7 @@ import { apiRouter } from './routes/api.js';
 import { adminRouter } from './routes/admin.js';
 import { galleryHtml, eventGalleryHtml } from './gallery.js';
 import { HttpError, isLocalRequest } from './util.js';
+import { pruneUploads, missingUploadRefs } from './uploads.js';
 import { ROOT, OUTPUT_DIR, PUBLIC_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, UPLOADS_DIR, SAMPLES_DIR } from './paths.js';
 
 /**
@@ -32,6 +33,9 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
 
   const config = new Config();
   config.load();
+  pruneUploads(config.get()); // logos et fonds remplacés depuis l'admin : les fichiers orphelins ne s'accumulent pas
+  const lost = missingUploadRefs(config.get());
+  if (lost) { console.warn('[uploads] logo ou image de fond introuvable sur le disque : réglage remis à vide'); config.update(lost); }
   if (process.env.BOOTH_CAMERA) config.setRuntime({ camera: { driver: process.env.BOOTH_CAMERA } });
   if (process.env.BOOTH_PRINTER) config.setRuntime({ printer: { driver: process.env.BOOTH_PRINTER } });
 
@@ -114,6 +118,7 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   }
 
   config.on('change', () => {
+    pruneUploads(config.get());
     broadcast({ type: 'config' });
     devices.refresh().catch((e) => console.warn(`[devices] ${e.message}`));
     screen.apply().catch((e) => console.warn(`[screen] ${e.message}`));

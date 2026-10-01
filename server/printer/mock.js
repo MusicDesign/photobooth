@@ -3,6 +3,8 @@ import path from 'node:path';
 import { BasePrinter } from './base.js';
 import { PRINTS_DIR } from '../paths.js';
 
+const KEEP = 30; // tirages simulés gardés dans output/prints : les plus récents (ils s'accumulaient à chaque essai)
+
 /** Imprimante simulée : copie le fichier final dans output/prints et simule le délai. */
 export class MockPrinter extends BasePrinter {
   name = 'mock';
@@ -15,12 +17,22 @@ export class MockPrinter extends BasePrinter {
 
   async init() {
     fs.mkdirSync(PRINTS_DIR, { recursive: true });
+    this.trim();
+  }
+
+  /** Ne garde que les KEEP tirages les plus récents. */
+  trim() {
+    try {
+      const files = fs.readdirSync(PRINTS_DIR).map((f) => ({ f, t: fs.statSync(path.join(PRINTS_DIR, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+      for (const { f } of files.slice(KEEP)) fs.rmSync(path.join(PRINTS_DIR, f), { force: true });
+    } catch { /* dossier absent */ }
   }
 
   async print(file, copies, meta = {}) {
     const jobId = `mock-${Date.now()}-${++this.seq}`;
     const out = path.join(PRINTS_DIR, `${path.basename(file, path.extname(file))}-${meta.sessionId || 'x'}-x${copies}.jpg`);
     fs.copyFileSync(file, out);
+    this.trim();
     this.emit('job', { jobId, status: 'queued' });
     setTimeout(() => this.emit('job', { jobId, status: 'printing' }), 200);
     setTimeout(() => this.emit('job', { jobId, status: 'done', message: `Fichier écrit : ${out}` }), this.delayMs);

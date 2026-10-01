@@ -412,7 +412,8 @@ npm start          # premier test sur http://localhost:3000, Ctrl+C ensuite
 
 Le fichier `data/config.json` et le dossier `data/templates` peuvent être
 copiés depuis le Mac pour garder le thème, les templates et les limites. Le
-fichier `data/db.json` est la base de sessions : repars de zéro sur la borne.
+fichier `data/db.json` (événements, compteurs) et le dossier `output/sessions/` (une fiche
+`session.json` par session, avec ses photos) forment la base : repars de zéro sur la borne.
 Mise à jour plus tard : `git pull && npm install`, puis relancer la borne.
 
 ### 10.4 Libérer l'appareil photo

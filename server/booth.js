@@ -69,6 +69,7 @@ export class Booth {
     // Seules les sessions validées par l'invité (« Je la garde ») sont conservées. La borne supprime les autres
     // en revenant à l'accueil ; ce passage rattrape celles qu'elle n'a pas pu signaler (page rechargée, coupure).
     this.purgeUnvalidatedSessions();
+    this.purgeOrphanDirs();
     this.purgeTimer = setInterval(() => this.purgeUnvalidatedSessions(), 5 * 60 * 1000);
     this.purgeTimer.unref?.();
     this.onJob = (job) => this.onPrinterJob(job);
@@ -254,6 +255,23 @@ export class Booth {
       .filter((s) => this.isUnvalidated(s) && now - new Date(s.createdAt).getTime() > maxAgeMs);
     for (const s of stale) this.deleteSession(s.id);
     if (stale.length) console.log(`[booth] ${stale.length} session(s) non validée(s) supprimée(s)`);
+  }
+
+  /**
+   * Dossiers de session sans fiche session.json (coupure pendant la création, ancienne version) : plus joignables,
+   * supprimés au démarrage. Un dossier dont la fiche existe mais est illisible est laissé, photos comprises.
+   */
+  purgeOrphanDirs() {
+    let n = 0;
+    try {
+      for (const name of fs.readdirSync(SESSIONS_DIR)) {
+        const dir = path.join(SESSIONS_DIR, name);
+        if (!fs.statSync(dir).isDirectory() || fs.existsSync(path.join(dir, 'session.json')) || this.store.getSession(name)) continue;
+        fs.rmSync(dir, { recursive: true, force: true });
+        n++;
+      }
+    } catch { /* dossier absent */ }
+    if (n) console.log(`[booth] ${n} dossier(s) de session sans fiche supprimé(s)`);
   }
 
   /** Réinitialisation par l'admin : les sessions d'un événement (en cours par défaut), leurs photos et son compteur. */

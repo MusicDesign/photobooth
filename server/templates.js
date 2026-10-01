@@ -233,6 +233,7 @@ export class Templates {
       if (raw && !raw.id) raw.id = name;
       try {
         this.items.set(raw.id, normalize(raw, dir));
+        this.pruneAssets(this.items.get(raw.id)); // images importées puis abandonnées (calque supprimé, détourage refait)
       } catch (e) {
         console.warn(`[templates] ${name} ignoré : ${e.message}`);
       }
@@ -326,6 +327,29 @@ export class Templates {
     this.write(def);
     this.reload();
     return this.toPublic(this.get(id));
+  }
+
+  /**
+   * Supprime du dossier assets/ les images qu'aucun calque n'utilise (ni src ni cutSrc) : importées puis non
+   * placées, calque supprimé, ancienne version détourée. Une image de moins de minAgeMs est gardée : l'éditeur
+   * l'a peut-être importée sans avoir encore enregistré le template. Rend le nombre de fichiers supprimés.
+   */
+  pruneAssets(t, { minAgeMs = 10 * 60 * 1000 } = {}) {
+    const dir = path.join(t.dir, 'assets');
+    let n = 0;
+    try {
+      if (!fs.existsSync(dir)) return 0;
+      const used = new Set(t.layers.flatMap((l) => [l.src, l.cutSrc]).filter(Boolean).map((s) => path.basename(s)));
+      const now = Date.now();
+      for (const f of fs.readdirSync(dir)) {
+        const file = path.join(dir, f);
+        if (used.has(f) || !fs.statSync(file).isFile() || now - fs.statSync(file).mtimeMs < minAgeMs) continue;
+        fs.rmSync(file, { force: true });
+        n++;
+      }
+    } catch (e) { console.warn(`[templates] nettoyage des images de ${t.id} : ${e.message}`); }
+    if (n) console.log(`[templates] ${t.id} : ${n} image(s) non utilisée(s) supprimée(s)`);
+    return n;
   }
 
   async addAsset(id, file) {

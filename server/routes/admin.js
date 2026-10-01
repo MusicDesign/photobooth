@@ -204,7 +204,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       cameraSettings: MANUAL_SETTINGS, // réglages du mode manuel, dans l'ordre, avec leur libellé
       canShutdown: !!shutdown,
       canRestart: !!restart,
-      dataWarnings: [store.warning, config.warning].filter(Boolean), // base ou configuration reprise d'une sauvegarde
+      dataWarnings: [store.warning, store.sessionWarning, config.warning].filter(Boolean), // base ou configuration reprise d'une sauvegarde, fiches de session illisibles
       subjectModel: modelStatus('subject'), // modèle de détourage précis : installé ou à télécharger
       cutoutPerf: cutoutPerf(), // vitesse mesurée du modèle précis sur cette machine
       events: store.listEvents().map((ev) => booth.eventView(ev)),

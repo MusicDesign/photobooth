@@ -4,10 +4,10 @@
   "order": 2,
   "colors": {
     "primary": "#e9c46a",
-    "secondary": "#e9c46a",
+    "secondary": "#ffffff",
     "background": "#0f1115",
     "surface": "#1b1f27",
-    "text": "#f5f5f5",
+    "text": "#ffffff",
     "onPrimary": "#1a1a1a"
   },
   "font": "system"
