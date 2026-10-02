@@ -34,7 +34,7 @@ function screenPatch(body = {}) {
 }
 const IMAGE_EXT = { 'image/png': '.png', 'image/svg+xml': '.svg', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
 
-export function adminRouter({ booth, config, store, templates, themes, devices, deck, lights = null, screen = null, shutdown, restart, kioskScreen = () => null, remoteScreen = null }) {
+export function adminRouter({ booth, config, store, templates, themes, devices, deck, lights = null, screen = null, setup = null, shutdown, restart, kioskScreen = () => null, remoteScreen = null }) {
   const r = express.Router();
   const tokens = new Set();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024 } });
@@ -201,6 +201,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       streamDeck: deck.status(),
       lights: lights?.status() || null,
       screen: screen?.status() || null, // écran de la borne (DDC/CI) : luminosité, volume
+      setup: setup?.status() || null, // installation : dépendances présentes ou manquantes
       cameraSettings: MANUAL_SETTINGS, // réglages du mode manuel, dans l'ordre, avec leur libellé
       canShutdown: !!shutdown,
       canRestart: !!restart,
@@ -229,6 +230,14 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     if (patch.printer?.fallback && !PRINTER_FALLBACKS.includes(patch.printer.fallback)) throw new HttpError(400, 'DRIVER', 'Repli imprimante inconnu');
     if (patch.templates?.defaultFormat && !FORMATS[patch.templates.defaultFormat]) throw new HttpError(400, 'FORMAT', 'Format inconnu');
     res.json({ config: config.update(patch) });
+  });
+
+  // Installation : état revérifié à la demande, installation de ce qui manque en arrière-plan (suivie par le tableau de bord)
+  r.get('/setup', (req, res) => { setup?.check(); res.json({ setup: setup?.status() || null }); });
+  r.post('/setup/install', (req, res) => {
+    if (!setup) throw new HttpError(409, 'SETUP_OFF', 'Installation indisponible');
+    setup.install().catch(() => {});
+    res.json({ setup: setup.status() });
   });
 
   // Écran de la borne (DDC/CI) : réglage enregistré puis envoyé à l'écran, qui est relu ; « Relire l'écran » après un branchement

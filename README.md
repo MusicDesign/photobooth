@@ -18,8 +18,9 @@ Guide complet pas à pas (Mac, boîtier Canon, imprimante, PC Linux de la borne,
 [TUTORIEL.md](TUTORIEL.md).
 
 ```bash
-npm install
-npm run demo-assets   # génère 2 templates de démo + photos d'exemple (déjà fait une fois)
+scripts/install.sh    # première fois : installe tout ce qui manque (Homebrew, Node.js, dépendances npm, gphoto2, m1ddc, modèle IA) puis lance la borne
+                      # --kiosk : en plus, lancement automatique à l'ouverture de session · Windows (essais) : scripts\install.cmd
+npm run setup         # la même installation sans lancer, Node.js déjà là · npm run check : l'état seulement (aussi dans l'admin → Installation)
 npm start             # http://localhost:3000  ·  admin : http://localhost:3000/admin.html (PIN 1234)
 ```
 
@@ -32,7 +33,7 @@ navigateur) : ouvrez la borne en local, pas via l'adresse IP.
 npm run smoke                 # test de bout en bout, sans matériel (51 étapes, données temporaires)
 npm run app                   # la borne en app de bureau plein écran (Electron), Ctrl+Maj+Q pour quitter
 npm run remote                # page distante de l'adresse publique → output/remote (TUTORIEL.md, étape 10.8)
-scripts/make-mac-app.sh       # régénère « Cheeesy.app » (raccourci Mac : double-clic = npm run app)
+scripts/make-mac-app.sh       # régénère « Cheeesy.app » (raccourci Mac : double-clic = npm run app, ou scripts/install.sh si rien n'est installé)
 node scripts/screenshots.js   # capture tous les écrans avec Chrome headless → output/screenshots/
 BOOTH_CAMERA=mock npm start   # caméra simulée côté serveur (flux MJPEG), utile sans webcam
 ```
@@ -41,8 +42,8 @@ BOOTH_CAMERA=mock npm start   # caméra simulée côté serveur (flux MJPEG), ut
 
 ```bash
 git clone https://github.com/MusicDesign/photobooth.git && cd photobooth
-npm install
-scripts/kiosk/install-linux.sh --no-sleep   # icône bureau + lancement auto en plein écran
+scripts/install.sh --kiosk                  # Node.js, dépendances npm, gphoto2, CUPS, ddcutil, NetworkManager, Chromium (sudo), modèle IA,
+                                            # icône bureau + lancement auto en plein écran (écran jamais éteint), puis lance la borne
 ```
 
 Au démarrage de la session, la borne s'ouvre seule en plein écran. **Éteindre la borne**

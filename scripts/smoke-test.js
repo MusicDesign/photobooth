@@ -15,6 +15,7 @@ process.env.BOOTH_OUTPUT_DIR = path.join(tmp, 'output');
 process.env.BOOTH_TEMPLATES_DIR = path.join(tmp, 'templates');
 process.env.BOOTH_SAMPLES_DIR = path.join(tmp, 'samples');
 process.env.BOOTH_UPLOADS_DIR = path.join(tmp, 'uploads'); // logos envoyés pendant le test : jamais dans data/uploads
+process.env.BOOTH_AUTO_INSTALL = 'off';  // pas d'installation (Homebrew, modèle IA) pendant un test
 process.env.BOOTH_CAMERA = 'mock';
 process.env.BOOTH_PRINTER = 'mock';
 process.env.BOOTH_STREAMDECK = 'off'; // ne pas prendre la main sur un Stream Deck branché
@@ -192,6 +193,18 @@ async function runSteps(app, camera) {
     const page = await fetch(`${base}/g/${s.id}`);
     assert.equal(page.status, 200);
     assert.ok(!(await page.text()).includes('Télécharger la photo'));
+  });
+
+  await step('installation : état vérifié (Node, dépendances, modèles, cadres), rien d\'installé pendant le test', async () => {
+    const su = (await j('/api/admin/setup', { headers: ADMIN })).data.setup;
+    const by = Object.fromEntries(su.items.map((it) => [it.id, it]));
+    assert.equal(by.node.state, 'ok');
+    assert.equal(by.deps.state, 'ok', by.deps.detail);
+    assert.equal(by['model-fast'].state, 'ok');
+    assert.equal(by.templates.state, 'ok');
+    assert.equal(by.ffmpeg.state, 'ok');
+    assert.equal(su.installing, false);
+    assert.ok(su.items.every((it) => ['ok', 'missing'].includes(it.state) && typeof it.label === 'string'));
   });
 
   await step('stockage : une fiche session.json par dossier, db.json sans les sessions, compteur = nombre de fiches', async () => {

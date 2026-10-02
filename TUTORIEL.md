@@ -48,9 +48,16 @@ finit dans `data/config.json` ; les photos vont dans `output/sessions/<id>/`.
 
 ```bash
 cd /Applications/MAMP/htdocs/photo_booth
-npm install
-npm run demo-assets     # templates de démo + photos d'exemple (inutile si déjà fait)
+scripts/install.sh      # installe tout ce qui manque (Homebrew, Node.js, dépendances, gphoto2, m1ddc, modèle IA) puis lance la borne
+npm run check           # l'état seulement
 ```
+
+Un double-clic sur Cheeesy.app fait la même chose : si rien n'est installé, il ouvre le
+Terminal sur ce script.
+
+Le même bilan est dans l'admin → Installation (menu de gauche). À chaque démarrage, la
+borne installe seule ce qui ne demande pas de mot de passe (Homebrew sur Mac, modèle IA,
+cadres de démo) et signale le reste.
 
 ### 2.3 Démarrer
 
@@ -109,6 +116,7 @@ Le menu de gauche : trois sections de travail, puis les réglages.
 | Écran & contrôle | Écran (luminosité, volume), tactile ou boutons, curseur de la souris, fenêtre kiosque ou plein écran, Stream Deck |
 | Lumières | Govee et Elgato du réseau local : ambiance à l'accueil (couleur ou blanc), prise de vue, état à l'arrêt de la borne |
 | Sécurité | PIN admin, code opérateur |
+| Installation | Ce qui est installé sur la machine, ce qui manque et comment l'obtenir ; installation en un clic |
 
 **Première chose à faire : changer les codes** dans Sécurité.
 
@@ -395,6 +403,7 @@ répond pas. Redémarre et vérifie que le tactile marche avant d'aller plus loi
 sudo dnf install -y nodejs git gphoto2 cups gutenprint-cups chromium liberation-fonts
 # Ubuntu : sudo apt install -y nodejs npm git gphoto2 cups printer-driver-gutenprint chromium-browser fonts-liberation
 node -v      # v20 ou plus
+scripts/install.sh --kiosk   # ou, depuis le projet : Node.js, les mêmes paquets (sudo) + ddcutil, NetworkManager, modèle IA, icône et lancement auto (10.5)
 ```
 
 Chromium n'est utile qu'avec le lanceur par défaut (10.5) ; l'app Electron

@@ -11,7 +11,7 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ro
 .nav a.active, .nav a:hover { opacity: 1; background: rgba(255,255,255,0.1); }
 .nav-group { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.55; padding: 18px 22px 6px; }
 .nav-foot { margin-top: auto; padding: 18px 22px; display: flex; flex-direction: column; gap: 10px; }
-.main { padding: 28px 36px; max-width: 1200px; }
+.main { padding: 28px 36px; } /* toute la largeur disponible, quel que soit l'écran */
 h1 { margin: 0 0 6px; color: var(--s); }
 h2 { margin: 0 0 18px; color: var(--s); font-size: 26px; }
 h3 { margin: 0 0 12px; font-size: 16px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
@@ -368,3 +368,9 @@ label.ctl-mode small { margin: 0 !important; color: var(--muted); }
 .sum-k { width: 96px; flex: none; font-weight: 700; font-size: 15px; }
 .sum-row .hw-detail { font-size: 14px; color: var(--text); }
 .sum-list .hw-row + .hw-row::before { left: 10px; }
+/* Installation : lignes sans lien, pastille d'état devant le libellé, journal de la dernière installation */
+.setup-row { cursor: default; }
+.setup-row:hover { background: transparent; }
+.setup-row .sum-k { width: 230px; }
+.setup-row .hw-dot { margin-top: 2px; }
+.setup-log { background: #1b1f27; color: #d9dce1; border-radius: 10px; padding: 10px 14px; font-size: 12px; line-height: 1.45; max-height: 180px; overflow: auto; margin: 12px 0 0; white-space: pre-wrap; }

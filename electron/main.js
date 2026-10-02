@@ -85,19 +85,29 @@ let splashLoaded = Promise.resolve();
 let windowMode = 'kiosk';
 function applyWindowMode(mode) {
   const kiosk = mode !== 'fullscreen';
-  if (!win || win.isDestroyed() || kiosk === win.isKiosk()) return;
+  if (!win || win.isDestroyed()) return;
+  if (kiosk === win.isKiosk() && (kiosk || win.isFullScreen())) return;
   windowMode = kiosk ? 'kiosk' : 'fullscreen';
-  if (kiosk) { win.setKiosk(true); return; }
-  // Kiosque → plein écran classique : macOS sort d'abord du kiosque (animation), puis on repasse en plein écran
-  const back = () => { if (win && !win.isDestroyed() && !win.isFullScreen()) win.setFullScreen(true); };
-  win.once('leave-full-screen', () => setTimeout(back, 300));
-  setTimeout(back, 1500); // si l'événement ne vient pas (Linux)
-  win.setKiosk(false);
+  // macOS n'enchaîne pas deux changements de plein écran : on quitte d'abord l'état en cours (animation), puis on
+  // entre dans le nouveau. Même chemin dans les deux sens.
+  const enter = () => {
+    if (!win || win.isDestroyed()) return;
+    if (kiosk) win.setKiosk(true);
+    else if (!win.isFullScreen()) win.setFullScreen(true);
+  };
+  if (win.isKiosk() || win.isFullScreen()) {
+    let done = false;
+    const go = () => { if (done) return; done = true; setTimeout(enter, 300); };
+    win.once('leave-full-screen', go);
+    setTimeout(go, 1500); // si l'événement ne vient pas (Linux)
+    if (win.isKiosk()) win.setKiosk(false); else win.setFullScreen(false);
+  } else enter();
 }
 function openWindow() {
   win = new BrowserWindow({
-    kiosk: windowMode === 'kiosk',
-    fullscreen: windowMode === 'fullscreen',
+    // kiosk ou fullscreen, jamais les deux ni « fullscreen: false » : sur macOS, un fullscreen explicitement faux
+    // retire à la fenêtre la capacité plein écran, et le kiosque retombe en fenêtré
+    ...(windowMode === 'fullscreen' ? { fullscreen: true } : { kiosk: true }),
     autoHideMenuBar: true,
     backgroundColor: '#f8f9fa', // fond de l'écran de lancement, le temps qu'il se dessine
     show: false,

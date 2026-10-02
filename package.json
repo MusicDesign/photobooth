@@ -14,6 +14,8 @@
     "dev": "node --watch server/index.js",
     "demo-assets": "node scripts/make-demo-assets.js",
     "models": "node scripts/download-models.js",
+    "setup": "node scripts/setup.js",
+    "check": "node scripts/setup.js --check",
     "smoke": "node scripts/smoke-test.js",
     "bench": "node scripts/bench.js",
     "remote": "node scripts/build-remote.js",

@@ -114,6 +114,52 @@ function flashState() {
   return `dernière photo${at} <span class="badge ${c.flashFired ? 'warn' : ''}">${c.flashFired ? 'prise avec le flash' : 'prise sans flash'}</span>`;
 }
 
+/** Section Installation : ce qui est installé sur la machine et ce qui manque, avec de quoi l'installer. */
+function installSection() {
+  const su = S.setup;
+  const pm = { brew: 'Homebrew', apt: 'apt (Debian, Ubuntu)', dnf: 'dnf (Fedora)' }[su?.pkg] || null;
+  const os = { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[su?.platform] || su?.platform || '';
+  return `
+  <h2>Installation</h2>
+  <p class="sub">${esc(os)}${pm ? ` · ${esc(pm)}` : ''}</p>
+  ${setupCard()}`;
+}
+
+/** Carte d'état de l'installation (page Installation). */
+function setupCard() {
+  const su = S.setup;
+  if (!su) return '<div class="card"><p class="sub">État de l\'installation indisponible : serveur à redémarrer.</p></div>';
+  const dot = (it) => (it.state === 'ok' ? 'ok' : it.required ? 'err' : 'warn');
+  const rows = su.items.map((it) => `<div class="hw-row sum-row setup-row"><span class="hw-dot ${dot(it)}"></span><span class="sum-k">${esc(it.label)}</span><span class="hw-main"><span class="hw-detail">${esc(it.detail)}${it.state !== 'ok' && it.fix ? ` · <code>${esc(it.fix)}</code>` : ''}</span></span></div>`).join('');
+  const missing = su.items.filter((it) => it.state !== 'ok');
+  const pending = missing.filter((it) => it.auto);
+  const badge = su.installing ? '<span class="badge warn">installation en cours…</span>'
+    : missing.length ? `<span class="badge ${missing.some((it) => it.required) ? 'err' : 'warn'}">${plural(missing.length, 'élément manquant', 'éléments manquants')}</span>`
+    : '<span class="badge ok">tout est installé</span>';
+  const at = su.at ? new Date(su.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
+  return `
+  <div class="card">
+    <div class="row" style="margin-bottom:12px">${badge}
+      <button class="btn small" type="button" id="btnSetupCheck">Revérifier</button>
+      ${pending.length ? `<button class="btn small secondary" type="button" id="btnSetupInstall" ${su.installing ? 'disabled' : ''}>Installer ce qui manque (${pending.length})</button>` : ''}
+    </div>
+    <div class="hw-list sum-list">${rows}</div>
+    ${su.log?.length ? `<pre class="setup-log">${esc(su.log.slice(-12).join('\n'))}</pre>` : ''}
+    ${su.error ? `<div class="alert">Dernière installation : ${esc(su.error)}</div>` : ''}
+    <small>Vérifié à ${at}.</small>
+  </div>`;
+}
+
+/** Installation en cours : l'état est relu toutes les 2 s jusqu'à la fin. */
+function pollSetup() {
+  clearTimeout(pollSetup.t);
+  pollSetup.t = setTimeout(async () => {
+    try { S.setup = (await api('/api/admin/setup')).setup; } catch { return; }
+    if (['dashboard', 'install'].includes(currentSection())) render();
+    if (S.setup?.installing) pollSetup();
+  }, 2000);
+}
+
 /** Tableau de bord : les réglages qui font la soirée, une ligne par sujet, chacune menant à sa section. */
 function settingsSummary() {
   const cfg = S.config;
@@ -200,7 +246,8 @@ const HW_ICONS = {
   wifi: '<path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="1"/>',
   deck: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7.5 10h2M11 10h2M14.5 10h2M7.5 14h2M11 14h2M14.5 14h2"/>',
   lights: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9V16h7v-2.1A6 6 0 0 0 12 3z"/>',
-  screen: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'
+  screen: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  setup: '<path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/>'
 };
 /** Une ligne d'appareil : icône, pastille d'état (ok, warn, err, off), nom, état, détail, lien vers ses réglages. */
 function hwRow(icon, title, state, status, detail, href) {
@@ -255,10 +302,19 @@ function hardwareList() {
     const how = sc.display ? `DDC/CI (${esc(sc.tool)}), ${sc.managed ? 'réglé par la borne' : 'réglages de l\'écran laissés tels quels'}` : sc.available ? `${esc(sc.tool)} prêt : aucun écran externe ne répond en DDC/CI` : '';
     screen = hwRow('screen', 'Écran', state, values ? `${name} · ${values}` : name, [sc.error ? `<b class="hw-err">${esc(sc.error)}</b>` : '', how].filter(Boolean).join('<br>'), '#control');
   }
+  // Installation : résumé, le détail est sur sa page
+  const su = S.setup;
+  let install = '';
+  if (su) {
+    const missing = su.items.filter((it) => it.state !== 'ok');
+    const state = su.installing ? 'warn' : !missing.length ? 'ok' : missing.some((it) => it.required) ? 'err' : 'warn';
+    const status = su.installing ? 'installation en cours…' : missing.length ? plural(missing.length, 'élément manquant', 'éléments manquants') : 'tout est installé';
+    install = hwRow('setup', 'Installation', state, status, missing.length ? esc(missing.map((it) => it.label).join(', ')) : `${su.items.length} éléments vérifiés`, '#install');
+  }
   return `<div class="hw-list">
     ${hwRow('camera', 'Appareil photo', camState, camName, camDetail, '#camera')}
     ${hwRow('printer', 'Imprimante', prState, prName, prDetail, '#printing')}
-    ${screen}${wifi}${deck}${lights}
+    ${screen}${wifi}${deck}${lights}${install}
   </div>`;
 }
 
@@ -452,7 +508,6 @@ function themeSection() {
       <h3>Identité de la borne</h3>
       <label>Nom de la borne <input name="boothName" value="${esc(cfg.booth.name)}"></label>
       <label class="inline"><input name="showName" type="checkbox" ${cfg.booth.showName !== false ? 'checked' : ''}> Afficher le nom à côté du logo sur la borne</label>
-      <small>Écran tactile, curseur de la souris, Stream Deck : <a href="#control">Écran &amp; contrôle</a>.</small>
     </div>
     <div class="card">
       <h3>Thème</h3>
@@ -487,7 +542,7 @@ function themeSection() {
   <div class="grid-2">
     <form id="formLogo" class="card upload-card">
       <h3>Logo (PNG transparent, SVG, JPEG)</h3>
-      <div class="upload-current"><img class="logo-prev" src="${esc(logo)}" alt=""><small>Affiché en haut à gauche et sur l'accueil, pour tous les thèmes. Sans logo importé, le logo Cheeesy prend les couleurs du thème (accent et texte des boutons).</small></div>
+      <div class="upload-current"><img class="logo-prev" src="${esc(logo)}" alt=""><small>Affiché en haut à gauche et sur l'accueil, pour tous les thèmes.</small></div>
       <label class="file-pick btn secondary">Choisir un logo…<input type="file" name="logo" accept="image/png,image/svg+xml,image/jpeg,image/webp"></label>
       ${cfg.booth.logo ? '<button class="btn" type="button" id="btnLogoReset">Logo par défaut</button>' : ''}
     </form>
@@ -625,22 +680,18 @@ function controlSection() {
   const t = cfg.texts;
   return `
   <h2>Écran &amp; contrôle</h2>
-  <p class="sub">L'écran de la borne et ce qui la pilote : le toucher, la souris, le Stream Deck. Chaque changement est enregistré et appliqué tout de suite.</p>
   ${screenSection()}
   <form id="formControl" class="card">
     <h3>Tactile et souris</h3>
     <div class="grid-2">
       <div>
         <label>Écran tactile <select name="touchMode">${[['auto', 'Détection automatique'], ['touch', 'Toujours tactile'], ['buttons', 'Jamais tactile : Stream Deck ou clavier']].map(([v, lb]) => `<option value="${v}" ${(b.touch || 'auto') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select></label>
-        <small>Décide de l'accueil (« ${esc(t.welcome)} » avec le cercle, ou « ${esc(t.welcomeNoTouch)} » avec la flèche vers le Stream Deck) et des boutons à l'écran quand un Stream Deck est branché. En automatique, la borne suit ce que le navigateur annonce et passe en tactile au premier toucher ; forcez le mode si elle se trompe (écran tactile vu comme une souris, PC de test sans écran tactile).</small>
       </div>
       <div>
         <label>Curseur de la souris <select name="cursor">${[['show', 'Toujours visible'], ['idle', 'Masqué quand la souris ne bouge pas (3 s)'], ['hide', 'Toujours masqué']].map(([v, lb]) => `<option value="${v}" ${(b.cursor || 'show') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select></label>
-        <small>Sur un écran tactile, « toujours masqué » évite une flèche qui traîne au milieu de l'écran ; « masqué quand la souris ne bouge pas » convient si une souris sert de dépannage.</small>
       </div>
     </div>
     <label>Fenêtre de la borne (app Cheeesy) <select name="windowMode">${[['kiosk', 'Kiosque : la borne occupe tout l\'écran, rien d\'autre n\'est accessible'], ['fullscreen', 'Plein écran : le reste de l\'ordinateur reste utilisable à côté (tests)']].map(([v, lb]) => `<option value="${v}" ${(b.window || 'kiosk') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select></label>
-    <small>Appliqué tout de suite et au prochain lancement. En kiosque, Ctrl+Maj+Q ferme la borne. Le lanceur Chromium de la borne Linux reste en kiosque quel que soit ce réglage.</small>
   </form>
   <form id="formDeck" class="card">
     <h3>Stream Deck</h3>
@@ -671,7 +722,7 @@ function screenSection() {
   const managed = cfg.brightness != null || cfg.volume != null;
   const at = sc.checkedAt ? `, lu à ${new Date(sc.checkedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : '';
   const head = !sc.available ? `<div class="alert">${esc(sc.error || 'Outil DDC/CI absent')}</div>`
-    : !sc.display ? `<p class="sub">Aucun écran externe ne répond en DDC/CI pour le moment${sc.error ? ` (${esc(sc.error)})` : ''}${at}. Écran branché en HDMI, DisplayPort ou USB-C : « Relire l'écran » après le branchement.</p>`
+    : !sc.display ? `<p class="sub">Aucun écran externe ne répond en DDC/CI${sc.error ? ` (${esc(sc.error)})` : ''}${at}.</p>`
     : `<p class="sub">Écran <b>${esc(sc.display.name || 'externe')}</b> piloté en DDC/CI par ${esc(sc.tool)}${at}.${sc.error ? ` <b class="hw-err">${esc(sc.error)}</b>` : ''}</p>`;
   const b = cfg.brightness ?? sc.brightness ?? 100;
   const v = cfg.volume ?? sc.volume ?? 0;
@@ -681,7 +732,6 @@ function screenSection() {
     ${head}
     ${sc.display ? `
     <label class="inline"><input name="screenManaged" type="checkbox" ${managed ? 'checked' : ''}> Régler l'écran depuis la borne</label>
-    <small>Coché : les valeurs ci-dessous sont envoyées à l'écran tout de suite et à chaque démarrage de la borne. Décoché : la borne n'y touche pas, l'écran garde ses propres réglages.</small>
     <div class="grid-2">
       <label>Luminosité <output id="screenBrightnessOut" class="kelvin-out">${b} %</output>
         <input name="screenBrightness" class="kelvin-range plain" type="range" min="0" max="100" step="1" value="${b}" ${managed ? '' : 'disabled'}></label>
@@ -690,7 +740,6 @@ function screenSection() {
     : '<small>Cet écran ne répond pas au réglage du volume : pas de haut-parleurs, ou DDC/CI partiel.</small>'}
     </div>` : ''}
     <div class="row"><button class="btn" type="button" id="btnScreenRefresh">Relire l'écran</button></div>
-    <small>DDC/CI : le canal de commande des moniteurs, dans le câble vidéo (HDMI, DisplayPort, USB-C). Sur Mac : <code>brew install m1ddc</code>. Sur la borne Linux : <code>ddcutil</code>, module <code>i2c-dev</code> chargé et utilisateur dans le groupe <code>i2c</code>.</small>
   </form>`;
 }
 
@@ -2232,7 +2281,7 @@ function unbindEditor() {
   E.drag = null;
 }
 
-const SECTIONS = { dashboard, sessions, templates: templatesSection, editor: editorSection, flow, printing, sharing, theme: themeSection, texts: textsSection, camera, control: controlSection, lights: lightsPage, security };
+const SECTIONS = { dashboard, sessions, templates: templatesSection, editor: editorSection, flow, printing, sharing, theme: themeSection, texts: textsSection, camera, control: controlSection, lights: lightsPage, security, install: installSection };
 const OLD_HASHES = { limits: 'printing', hardware: 'camera', devices: 'control' }; // anciens liens de l'admin
 
 // ---------- Rendu + événements ----------
@@ -2359,6 +2408,18 @@ function bindSection(sec) {
       toast('Compteur remis à zéro'); refresh();
     };
     $('#btnResetSessions').onclick = () => resetSessions(); // sans argument : l'événement en cours (pas l'objet du clic)
+  }
+
+  if (sec === 'install') {
+    // Revérifier, installer ce qui manque (suivi tant que ça tourne)
+    $('#btnSetupCheck')?.addEventListener('click', async (e) => {
+      e.currentTarget.disabled = true;
+      try { S.setup = (await api('/api/admin/setup')).setup; render(); } catch (err) { toast(err.message, true); }
+    });
+    $('#btnSetupInstall')?.addEventListener('click', async () => {
+      try { S.setup = (await api('/api/admin/setup/install', { method: 'POST' })).setup; render(); pollSetup(); } catch (err) { toast(err.message, true); }
+    });
+    if (S.setup?.installing) pollSetup();
   }
 
   bindSettingsForms();

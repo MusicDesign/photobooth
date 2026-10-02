@@ -13,6 +13,7 @@ import { Devices } from './devices.js';
 import { StreamDeckRemote } from './streamdeck.js';
 import { Lights } from './lights/index.js';
 import { Screen } from './screen.js';
+import { Setup } from './setup.js';
 import { setCutoutAuto, measurePrecise, restoreCutoutPerf, onCutoutPerf } from './cutout-ai.js';
 import { apiRouter } from './routes/api.js';
 import { adminRouter } from './routes/admin.js';
@@ -102,6 +103,15 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   // Écran de la borne en DDC/CI : luminosité et volume depuis l'admin, renvoyés à chaque démarrage (voir screen.js)
   const screen = new Screen({ config });
   screen.start().catch((e) => console.warn(`[screen] ${e.message}`));
+  // Installation : état vérifié au démarrage ; ce qui ne demande pas de mot de passe (Homebrew sur Mac, modèle IA,
+  // cadres de démo) s'installe en arrière-plan, le reste est affiché dans le tableau de bord (voir setup.js)
+  const setup = new Setup();
+  setup.check();
+  if (process.env.BOOTH_AUTO_INSTALL !== 'off' && setup.pending().length) {
+    console.log(`[setup] manque : ${setup.pending().map((it) => it.label).join(', ')} → installation en arrière-plan`);
+    const installTimer = setTimeout(() => setup.install().catch((e) => console.warn(`[setup] ${e.message}`)), 5000); // le boîtier d'abord
+    installTimer.unref?.();
+  }
 
   // Détourage précis : trop lent sur cette machine ? Mesuré une seule fois par machine (gardé en base), 20 s après
   // le premier démarrage (le boîtier et la borne d'abord), seulement si un template s'en sert. Relancer la mesure à
@@ -166,7 +176,7 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   const shutdown = stopThen(onShutdown, 'arrêt');
   const restart = stopThen(onRestart, 'redémarrage');
 
-  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, lights, screen, shutdown, restart, kioskScreen, remoteScreen }));
+  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, lights, screen, setup, shutdown, restart, kioskScreen, remoteScreen }));
   // Écran déporté (iPad…) : l'écran de la borne et son toucher, avec le code admin (voir electron/remote-screen.js)
   app.get('/remote', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'remote.html')));
   // API de l'écran de la borne : seulement depuis la borne (les téléphones n'ont besoin que de ping et de la galerie)
@@ -226,5 +236,5 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   };
 
   // cameraReady : première détection de la caméra finie (le lanceur garde son écran de lancement jusque-là)
-  return { app, server, wss, booth, config, store, templates, themes, devices, deck, lights, screen, port, close, cameraReady: devices.cameraReady };
+  return { app, server, wss, booth, config, store, templates, themes, devices, deck, lights, screen, setup, port, close, cameraReady: devices.cameraReady };
 }
