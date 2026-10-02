@@ -221,6 +221,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       if (EDITABLE_SECTIONS.includes(k) && v && typeof v === 'object') patch[k] = v;
     }
     if (patch.booth?.touch && !['auto', 'touch', 'buttons'].includes(patch.booth.touch)) throw new HttpError(400, 'TOUCH', 'Mode d\'écran tactile inconnu');
+    if (patch.booth?.window && !['kiosk', 'fullscreen'].includes(patch.booth.window)) throw new HttpError(400, 'WINDOW', 'Mode de fenêtre inconnu');
     if (patch.screen) patch.screen = screenPatch(patch.screen);
     if (patch.camera?.driver && !CAMERA_DRIVERS.includes(patch.camera.driver)) throw new HttpError(400, 'DRIVER', 'Pilote caméra inconnu');
     if (patch.camera?.fallback && !CAMERA_FALLBACKS.includes(patch.camera.fallback)) throw new HttpError(400, 'DRIVER', 'Repli caméra inconnu');

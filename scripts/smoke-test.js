@@ -244,12 +244,18 @@ async function runSteps(app, camera) {
     assert.ok((await bad.text()).includes(`fill="${st.theme.colors.primary}"`));
   });
 
-  await step('écran tactile : mode forcé depuis l\'admin, valeur inconnue refusée', async () => {
+  await step('écran tactile et fenêtre : modes forcés depuis l\'admin, valeurs inconnues refusées', async () => {
     assert.equal((await j('/api/bootstrap')).data.booth.touch, 'auto');
     assert.equal((await put('/api/admin/config', { booth: { touch: 'touch' } }, ADMIN)).status, 200);
     assert.equal((await j('/api/bootstrap')).data.booth.touch, 'touch');
     assert.equal((await put('/api/admin/config', { booth: { touch: 'souris' } }, ADMIN)).status, 400);
     assert.equal((await put('/api/admin/config', { booth: { touch: 'auto' } }, ADMIN)).status, 200);
+    // Fenêtre de l'app Electron : kiosque ou plein écran classique
+    assert.equal((await j('/api/bootstrap')).data.booth.window, 'kiosk');
+    assert.equal((await put('/api/admin/config', { booth: { window: 'fullscreen' } }, ADMIN)).status, 200);
+    assert.equal((await j('/api/bootstrap')).data.booth.window, 'fullscreen');
+    assert.equal((await put('/api/admin/config', { booth: { window: 'popup' } }, ADMIN)).status, 400);
+    assert.equal((await put('/api/admin/config', { booth: { window: 'kiosk' } }, ADMIN)).status, 200);
   });
 
   await step('admin : suppression d\'une session puis réinitialisation complète', async () => {

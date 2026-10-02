@@ -160,7 +160,7 @@ server/
   routes/           api.js (borne) · admin.js (PIN)
   gallery.js        pages téléphone : /g/:id (photo, tous les QR codes) et /galerie (grille)
 electron/
-  main.js           app de bureau : serveur dans le processus + fenêtre kiosque
+  main.js           app de bureau : serveur dans le processus + fenêtre kiosque, ou plein écran classique pour les essais (Écran & contrôle)
 scripts/kiosk/
   photobooth.sh           lanceur Linux : serveur + Chromium plein écran
   photobooth-electron.sh  lanceur Linux de l'app Electron du dépôt

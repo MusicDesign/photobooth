@@ -77,9 +77,27 @@ async function stopOtherServers(port) {
 let win = null;
 let splash = null; // WebContentsView
 let splashLoaded = Promise.resolve();
+/**
+ * Fenêtre de la borne (réglage booth.window de l'admin, Écran & contrôle) : « kiosk », verrouillée pour un
+ * événement, ou « fullscreen », plein écran classique où le reste de l'ordinateur reste accessible (Cmd+Tab,
+ * Mission Control…), pour les essais sur le Mac.
+ */
+let windowMode = 'kiosk';
+function applyWindowMode(mode) {
+  const kiosk = mode !== 'fullscreen';
+  if (!win || win.isDestroyed() || kiosk === win.isKiosk()) return;
+  windowMode = kiosk ? 'kiosk' : 'fullscreen';
+  if (kiosk) { win.setKiosk(true); return; }
+  // Kiosque → plein écran classique : macOS sort d'abord du kiosque (animation), puis on repasse en plein écran
+  const back = () => { if (win && !win.isDestroyed() && !win.isFullScreen()) win.setFullScreen(true); };
+  win.once('leave-full-screen', () => setTimeout(back, 300));
+  setTimeout(back, 1500); // si l'événement ne vient pas (Linux)
+  win.setKiosk(false);
+}
 function openWindow() {
   win = new BrowserWindow({
-    kiosk: true,
+    kiosk: windowMode === 'kiosk',
+    fullscreen: windowMode === 'fullscreen',
     autoHideMenuBar: true,
     backgroundColor: '#f8f9fa', // fond de l'écran de lancement, le temps qu'il se dessine
     show: false,
@@ -110,6 +128,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function start() {
   if (app.isPackaged) useUserData();
   await app.whenReady();
+  // Mode de la fenêtre lu directement dans le fichier de config : le serveur n'est pas encore démarré
+  const { CONFIG_FILE } = await import('../server/paths.js');
+  const { readJson } = await import('../server/util.js');
+  windowMode = readJson(CONFIG_FILE)?.booth?.window === 'fullscreen' ? 'fullscreen' : 'kiosk';
   openWindow();
   step('Démarrage…', 0.05);
   await stopOtherServers(Number(process.env.PORT) || 3000);
@@ -123,7 +145,7 @@ async function start() {
   const remoteScreen = createRemoteScreen(); // page /remote : écran et toucher de la borne à distance (iPad…)
   step('Préparation de l\'appareil photo…', 0.25, 'Remise à zéro du boîtier : quelques secondes');
   // Le boîtier se prépare en arrière-plan pendant que le serveur démarre et que la borne se charge
-  const { server, port, close, cameraReady } = await createApp({
+  const { server, port, close, cameraReady, config } = await createApp({
     remoteScreen,
     backgroundCamera: true,
     onShutdown: () => { stopped = true; app.quit(); },
@@ -161,6 +183,7 @@ async function start() {
   session.defaultSession.setPermissionCheckHandler((wc, perm) => allowed.has(perm));
 
   remoteScreen.attach(win);
+  config.on('change', () => applyWindowMode(config.get().booth.window)); // changé dans l'admin : appliqué à chaud
   win.webContents.on('before-input-event', (e, input) => {
     if (input.type === 'keyDown' && input.control && input.shift && input.key.toLowerCase() === 'q') app.quit();
   });

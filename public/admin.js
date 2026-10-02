@@ -114,6 +114,71 @@ function flashState() {
   return `dernière photo${at} <span class="badge ${c.flashFired ? 'warn' : ''}">${c.flashFired ? 'prise avec le flash' : 'prise sans flash'}</span>`;
 }
 
+/** Tableau de bord : les réglages qui font la soirée, une ligne par sujet, chacune menant à sa section. */
+function settingsSummary() {
+  const cfg = S.config;
+  const row = (label, html, href) => `<a class="hw-row sum-row" href="${href}"><span class="sum-k">${label}</span><span class="hw-main"><span class="hw-detail">${html}</span></span><span class="hw-go" aria-hidden="true">›</span></a>`;
+  const warn = (t) => `<b class="hw-err">${t}</b>`;
+  const list = (names) => names.map(esc).join(', ');
+  const plural = (n, one, many = `${one}s`) => `${n} ${n > 1 ? many : one}`;
+  // Cadres : activés, défaut (signalé s'il est désactivé : la borne prend alors le premier activé), choix, GIF
+  const tc = cfg.templates;
+  const enabled = S.templates.filter((t) => tc.enabled.includes(t.id));
+  const animated = S.templates.filter((t) => t.kind === 'gif' || t.kind === 'boomerang');
+  const def = S.templates.find((t) => t.id === tc.default);
+  const defOk = !!def && tc.enabled.includes(def.id);
+  const effDefault = defOk ? def : enabled[0];
+  const cadres = [
+    enabled.length ? `<b>${enabled.length}</b> sur ${S.templates.length} activé${enabled.length > 1 ? 's' : ''} : ${list(enabled.map((t) => t.name))}` : warn('aucun cadre activé : la borne ne peut pas lancer de séance'),
+    effDefault ? `par défaut ${esc(effDefault.name)}${defOk ? '' : ` ${warn(`(« ${esc(def?.name || tc.default)} » est désactivé)`)}`}` : '',
+    enabled.length > 1 ? (tc.guestCanChoose ? 'l\'invité choisit' : 'pas de choix pour l\'invité') : '',
+    animated.length ? `GIF et boomerangs ${tc.gifEnabled ? 'proposés' : 'masqués'} (${animated.length})` : ''
+  ].filter(Boolean).join(' · ');
+  // Filtres
+  const f = cfg.booth.filters || {};
+  const fname = (id) => FILTERS.find((x) => x.id === id)?.name || id;
+  const avail = (f.available || []).filter((id) => FILTERS.some((x) => x.id === id));
+  const filtres = f.enabled
+    ? `proposés : ${list(avail.map(fname))} · par défaut ${esc(fname(f.default || 'none'))}`
+    : `pas de choix pour l'invité · toutes les photos en « ${esc(fname(f.default || 'none'))} »`;
+  // Apparence
+  const theme = cfg.theme.active === 'custom' ? 'Personnalisé' : (S.themes.find((t) => t.id === cfg.theme.active)?.name || cfg.theme.active);
+  const apparence = [`thème ${esc(theme)}`, S.theme.defaultLogo ? 'logo Cheeesy aux couleurs du thème' : 'logo importé', S.theme.backgroundImage ? 'image de fond' : 'sans image de fond'].join(' · ');
+  // Tirages
+  const l = cfg.limits;
+  const fmt = S.formats?.[tc.defaultFormat]?.name || tc.defaultFormat;
+  const tirages = [
+    `${plural(l.maxCopiesPerSession, 'copie')} max par passage`,
+    l.allowZeroCopies ? '« sans impression » autorisé' : 'impression obligatoire',
+    l.eventQuota > 0 ? `quota ${l.eventQuota}${S.counters.quotaRemaining != null ? ` (reste ${S.counters.quotaRemaining})` : ''}` : 'quota illimité',
+    `format ${esc(fmt)}`
+  ].join(' · ');
+  // Parcours
+  const parcours = [
+    `décompte ${l.countdownSec} s`,
+    l.maxRetakesPerSession < 0 ? 'reprises illimitées' : plural(l.maxRetakesPerSession, 'reprise'),
+    cfg.booth.mirrorPreview ? 'aperçu en miroir' : 'aperçu non inversé',
+    `retour à l'accueil ${cfg.booth.idleReturnSec} s après la fin`
+  ].join(' · ');
+  // Partage
+  const sh = cfg.share || {}, g = cfg.gallery || {};
+  const wifi = !!S.devices?.network?.wifi;
+  const qrPhoto = sh.qrOnDone === false ? 'QR code des photos désactivé' : wifi || sh.requireWifi === false ? 'QR code des photos affiché' : warn('QR code des photos masqué : pas de Wi-Fi');
+  const partage = [qrPhoto, sh.wifi?.enabled ? `QR Wi-Fi « ${esc(sh.wifi.ssid || '')} »` : 'pas de QR Wi-Fi', g.booth ? 'galerie sur la borne' : 'galerie de la borne fermée', g.web ? 'galerie téléphone ouverte' : 'galerie téléphone fermée'].join(' · ');
+  return `
+  <div class="card">
+    <h3>Réglages de la soirée</h3>
+    <div class="hw-list sum-list">
+      ${row('Cadres', cadres, '#templates')}
+      ${row('Filtres', filtres, '#flow')}
+      ${row('Apparence', apparence, '#theme')}
+      ${row('Tirages', tirages, '#printing')}
+      ${row('Parcours', parcours, '#flow')}
+      ${row('Partage', partage, '#sharing')}
+    </div>
+  </div>`;
+}
+
 /** Tableau de bord : le réglage de la borne, puis la dernière photo, et un conseil si les deux ne collent pas. */
 function flashSummary() {
   const c = S.camera || {};
@@ -232,7 +297,8 @@ function dashboard() {
       </label>
       <small>Quota configuré : ${cfg.limits.eventQuota || 'illimité'} · alerte papier sous ${cfg.limits.lowPaperThreshold} feuilles</small>
     </div>
-  </div>`;
+  </div>
+  ${settingsSummary()}`;
 }
 
 const sel = (name, list, cur) => `<select name="${name}">${list.map((d) => `<option value="${d}" ${cur === d ? 'selected' : ''}>${d}</option>`).join('')}</select>`;
@@ -573,6 +639,8 @@ function controlSection() {
         <small>Sur un écran tactile, « toujours masqué » évite une flèche qui traîne au milieu de l'écran ; « masqué quand la souris ne bouge pas » convient si une souris sert de dépannage.</small>
       </div>
     </div>
+    <label>Fenêtre de la borne (app Cheeesy) <select name="windowMode">${[['kiosk', 'Kiosque : la borne occupe tout l\'écran, rien d\'autre n\'est accessible'], ['fullscreen', 'Plein écran : le reste de l\'ordinateur reste utilisable à côté (tests)']].map(([v, lb]) => `<option value="${v}" ${(b.window || 'kiosk') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select></label>
+    <small>Appliqué tout de suite et au prochain lancement. En kiosque, Ctrl+Maj+Q ferme la borne. Le lanceur Chromium de la borne Linux reste en kiosque quel que soit ce réglage.</small>
   </form>
   <form id="formDeck" class="card">
     <h3>Stream Deck</h3>
@@ -2484,7 +2552,7 @@ function bindSettingsForms() {
     } },
     booth: { lensPosition: fd.get('lensPosition') }
   }));
-  form('#formControl', (fd) => saveConfig({ booth: { touch: fd.get('touchMode') || 'auto', cursor: fd.get('cursor') || 'show' } }));
+  form('#formControl', (fd) => saveConfig({ booth: { touch: fd.get('touchMode') || 'auto', cursor: fd.get('cursor') || 'show', window: fd.get('windowMode') || 'kiosk' } }));
   form('#formDeck', (fd) => saveConfig({ booth: { streamDeck: { enabled: fd.get('deckEnabled') === 'on', brightness: num(fd, 'deckBrightness'), position: fd.get('deckPosition'), showButtons: fd.get('deckShowButtons') === 'on' } } }));
   form('#formShare', (fd, f) => saveConfig({ share: { baseUrl: fd.get('shareBaseUrl').trim(), publicUrl: fd.get('publicUrl').trim(), qrOnDone: f.qrOnDone.checked, requireWifi: f.requireWifi.checked } }));
   form('#formCodes', (fd) => saveConfig({ admin: { pin: fd.get('adminPin') }, limits: { operatorPin: fd.get('operatorPin') } }));

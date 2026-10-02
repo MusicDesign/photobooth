@@ -106,7 +106,7 @@ Le menu de gauche : trois sections de travail, puis les réglages.
 | Partage | QR code des photos, Wi-Fi obligatoire ou non, adresses, QR code Wi-Fi de la borne |
 | Apparence | Nom, logo, couleurs, police, tous les textes des écrans |
 | Appareil photo | Caméra (pilote, flash, calibrage, commandes gphoto2 avancées) |
-| Écran & contrôle | Écran (luminosité, volume), tactile ou boutons, curseur de la souris, Stream Deck |
+| Écran & contrôle | Écran (luminosité, volume), tactile ou boutons, curseur de la souris, fenêtre kiosque ou plein écran, Stream Deck |
 | Lumières | Govee et Elgato du réseau local : ambiance à l'accueil (couleur ou blanc), prise de vue, état à l'arrêt de la borne |
 | Sécurité | PIN admin, code opérateur |
 

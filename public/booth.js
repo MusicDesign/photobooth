@@ -602,14 +602,15 @@ function sizeTemplateCards() {
   const W = grid.clientWidth - 2 * GRID_PAD, H = grid.clientHeight - 2 * GRID_PAD;
   const boxW = (W - (cols - 1) * GAP) / cols - PAD;
   const boxH = Math.min(560, (H - (rows - 1) * GAP) / rows - PAD - LABEL);
-  // Colonnes de largeur fixe (celle de la plus large carte) : les cadres se rangent depuis la gauche, comme
-  // dans la galerie ; la grille entière reste centrée sur l'écran
+  // Colonnes de largeur fixe (celle de la plus large carte). Avec le Stream Deck, autant de colonnes que de
+  // touches, remplies depuis la gauche : chaque carte est en face de sa touche. Sans lui, pas de colonne vide :
+  // autant de colonnes que de cadres (au plus la grille de référence), et la grille, centrée, les centre.
   const trackW = Math.floor(Math.max(...cards.map((card) => {
     const el = card.querySelector('canvas, img.tpl-thumb');
     const w = Number(el.dataset.w) || el.width, h = Number(el.dataset.h) || el.height;
     return Math.max(80, w * Math.min(boxW / w, boxH / h)) + PAD;
   })));
-  grid.style.gridTemplateColumns = `repeat(${cols}, ${trackW}px)`;
+  grid.style.gridTemplateColumns = `repeat(${deckCols ? cols : Math.min(cols, cards.length)}, ${trackW}px)`;
   for (const card of cards) {
     const cv = card.querySelector('canvas, img.tpl-thumb');
     const w = Number(cv.dataset.w) || cv.width, h = Number(cv.dataset.h) || cv.height;

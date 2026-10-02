@@ -19,6 +19,7 @@ export const DEFAULTS = {
     showName: true,        // affiche le nom à côté du logo
     cursor: 'show',        // curseur de la souris sur la borne : show | idle (masqué après 3 s sans mouvement) | hide
     touch: 'auto',         // écran tactile : auto (détection du navigateur, corrigée au premier toucher) | touch (toujours) | buttons (jamais : Stream Deck, clavier)
+    window: 'kiosk',       // fenêtre de l'app Electron : kiosk (verrouillée, événement) | fullscreen (plein écran classique, l'ordinateur reste utilisable : tests)
     // Télécommande Elgato branchée en USB (sans écran tactile). position : où il est posé par rapport à l'écran,
     // pour la flèche de l'accueil quand l'écran n'est pas tactile (top | bottom | left | right).
     // showButtons : garder les boutons à l'écran même quand l'écran n'est pas tactile et qu'un Stream Deck pilote la borne
