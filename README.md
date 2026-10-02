@@ -86,6 +86,9 @@ Admin (`/admin.html`, ou 5 appuis en haut à droite de la borne, ou G D G D sur 
 - **Stream Deck** : télécommande Elgato en USB, les touches reprennent les actions de l'écran
   en cours (pictogrammes, miniatures), pour une borne sans écran tactile. L'écran est détecté
   tactile ou non ; Écran & contrôle permet de forcer l'un ou l'autre, et règle le curseur.
+- **Clé USB** : branchée sur la borne, les photos de l'événement en cours y sont copiées
+  (originaux et montages), puis éjection depuis l'admin. **Mise à jour** depuis l'admin
+  (page Installation) : version en cours, nouveautés sur GitHub, mise à jour et redémarrage.
 - **Écran** : luminosité et volume de l'écran de la borne en DDC/CI (`m1ddc` sur Mac, `ddcutil`
   sur Linux), depuis l'admin, renvoyés à l'écran à chaque démarrage ; état dans le tableau de bord.
 - **Galerie** (désactivée par défaut) : sur la borne, bouton « Galerie » à l'accueil pour parcourir

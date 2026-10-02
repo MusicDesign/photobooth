@@ -14,6 +14,8 @@ import { StreamDeckRemote } from './streamdeck.js';
 import { Lights } from './lights/index.js';
 import { Screen } from './screen.js';
 import { Setup } from './setup.js';
+import { Updater } from './update.js';
+import { Usb } from './usb.js';
 import { setCutoutAuto, measurePrecise, restoreCutoutPerf, onCutoutPerf } from './cutout-ai.js';
 import { apiRouter } from './routes/api.js';
 import { adminRouter } from './routes/admin.js';
@@ -100,6 +102,10 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   if (process.env.BOOTH_STREAMDECK !== 'off') await deck.start();
   // En arrière-plan : la recherche des lumières (quelques secondes) ne retarde pas l'ouverture de la borne
   lights.start().catch((e) => console.warn(`[lights] ${e.message}`));
+  // Clé USB : photos de l'événement en cours copiées au branchement (voir usb.js)
+  const usb = new Usb({ config, booth, store });
+  usb.on('change', () => broadcast({ type: 'usb' }));
+  usb.start();
   // Écran de la borne en DDC/CI : luminosité et volume depuis l'admin, renvoyés à chaque démarrage (voir screen.js)
   const screen = new Screen({ config });
   screen.start().catch((e) => console.warn(`[screen] ${e.message}`));
@@ -175,8 +181,11 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   });
   const shutdown = stopThen(onShutdown, 'arrêt');
   const restart = stopThen(onRestart, 'redémarrage');
+  // Mise à jour depuis l'admin (dépôt git) : version en cours lue au démarrage
+  const updater = new Updater({ setup, restart });
+  updater.version().catch(() => {});
 
-  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, lights, screen, setup, shutdown, restart, kioskScreen, remoteScreen }));
+  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, lights, screen, setup, updater, usb, shutdown, restart, kioskScreen, remoteScreen }));
   // Écran déporté (iPad…) : l'écran de la borne et son toucher, avec le code admin (voir electron/remote-screen.js)
   app.get('/remote', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'remote.html')));
   // API de l'écran de la borne : seulement depuis la borne (les téléphones n'ont besoin que de ping et de la galerie)
@@ -230,11 +239,12 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
     await deck.stop();
     await lights.stop().catch(() => {}); // borne éteinte : lumières éteintes
     screen.stop();
+    usb.stop();
     for (const client of wss.clients) client.terminate();
     server.closeAllConnections?.();
     await new Promise((r) => server.close(r));
   };
 
   // cameraReady : première détection de la caméra finie (le lanceur garde son écran de lancement jusque-là)
-  return { app, server, wss, booth, config, store, templates, themes, devices, deck, lights, screen, setup, port, close, cameraReady: devices.cameraReady };
+  return { app, server, wss, booth, config, store, templates, themes, devices, deck, lights, screen, setup, updater, usb, port, close, cameraReady: devices.cameraReady };
 }

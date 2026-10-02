@@ -83,6 +83,16 @@ let splashLoaded = Promise.resolve();
  * Mission Control…), pour les essais sur le Mac.
  */
 let windowMode = 'kiosk';
+/**
+ * Impose le mode voulu une fois la fenêtre affichée : sur macOS, une fenêtre créée cachée (show: false) ignore
+ * souvent fullscreen ou kiosk, en particulier après un redémarrage depuis l'admin (relance dans l'espace de
+ * l'ancienne fenêtre). Rien à faire si elle y est déjà.
+ */
+function enforceWindowMode() {
+  if (!win || win.isDestroyed() || !win.isVisible()) return;
+  if (windowMode === 'kiosk') { if (!win.isKiosk()) win.setKiosk(true); }
+  else if (!win.isFullScreen()) win.setFullScreen(true);
+}
 function applyWindowMode(mode) {
   const kiosk = mode !== 'fullscreen';
   if (!win || win.isDestroyed()) return;
@@ -121,7 +131,7 @@ function openWindow() {
   fit();
   win.on('resize', fit);
   splashLoaded = splash.webContents.loadFile(fileURLToPath(new URL('./splash.html', import.meta.url))).catch(() => {});
-  splashLoaded.then(() => win?.show());
+  splashLoaded.then(() => { win?.show(); setTimeout(enforceWindowMode, 200); });
 }
 function closeSplash() {
   if (!splash) return;
@@ -222,4 +232,5 @@ async function start() {
   closeSplash();
   win.show();
   win.focus();
+  setTimeout(enforceWindowMode, 300); // et encore une fois, borne affichée (relance après redémarrage)
 }

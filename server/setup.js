@@ -102,7 +102,7 @@ export function formatReport(c) {
 }
 
 /** Commande shell suivie ligne à ligne (ou laissée au terminal si interactive : sudo peut demander le mot de passe). */
-function run(cmd, { say, interactive = false, timeoutMs = 20 * 60 * 1000 } = {}) {
+export function run(cmd, { say, interactive = false, timeoutMs = 20 * 60 * 1000 } = {}) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env, HOMEBREW_NO_AUTO_UPDATE: '1', HOMEBREW_NO_INSTALL_CLEANUP: '1' };
     if (!interactive) env.DEBIAN_FRONTEND = 'noninteractive';

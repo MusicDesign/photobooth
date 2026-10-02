@@ -116,7 +116,7 @@ Le menu de gauche : trois sections de travail, puis les réglages.
 | Écran & contrôle | Écran (luminosité, volume), tactile ou boutons, curseur de la souris, fenêtre kiosque ou plein écran, Stream Deck |
 | Lumières | Govee et Elgato du réseau local : ambiance à l'accueil (couleur ou blanc), prise de vue, état à l'arrêt de la borne |
 | Sécurité | PIN admin, code opérateur |
-| Installation | Ce qui est installé sur la machine, ce qui manque et comment l'obtenir ; installation en un clic |
+| Installation | Version et mise à jour depuis GitHub ; ce qui est installé, ce qui manque, installation en un clic |
 
 **Première chose à faire : changer les codes** dans Sécurité.
 

@@ -208,6 +208,9 @@ export class Lights extends EventEmitter {
     const scene = this.wanted();
     if (scene === this.scene) return false;
     this.scene = scene;
+    // Animation arrêtée d'abord : sinon, pendant la lecture d'état des lumières de prise de vue, le cycle ou la
+    // respiration continue d'envoyer couleurs et luminosités par-dessus le blanc (clignotement)
+    this.stopEffect();
     const shooting = scene === 'shooting' ? this.targets('shooting') : [];
     const busy = new Set(shooting.map((d) => d.id));
     for (const d of shooting) await this.shoot(d);
@@ -217,7 +220,6 @@ export class Lights extends EventEmitter {
     const amb = new Set(ambiance.map((d) => d.id));
     // Les autres lumières que la borne avait touchées retrouvent leur état d'avant
     for (const id of [...this.saved.keys()]) if (!busy.has(id) && !amb.has(id)) await this.restore(id);
-    this.stopEffect();
     if (mode === 'off') for (const d of ambiance) { await this.remember(d); d.drv.command(d.ip, 'turn', { value: 0 }); }
     else if (ambiance.length) await this.startEffect(ambiance, idle);
     this.emit('change');
@@ -260,44 +262,49 @@ export class Lights extends EventEmitter {
     // Couleur fixe et respiration : la couleur choisie, ou un blanc (température) si l'admin l'a demandé
     const tint = idle.white ? { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: clamp(idle.kelvin ?? 2700, 2000, 9000) } : { color: hexToRgb(idle.color), colorTemInKelvin: 0 };
     const period = clamp(idle.periodSec ?? (effect === 'breathe' ? 6 : 20), 2, 600) * 1000;
+    // Même animation qu'avant l'interruption (changement de scène, lumière revenue) : elle reprend là où elle en
+    // était, et les lumières qui y étaient déjà ne reçoivent rien : pas de saut de couleur ni de luminosité
+    const key = `${effect}|${period}|${idle.sync ? 1 : 0}|${bright}|${JSON.stringify(tint)}`;
+    const resumed = this.lastEffect?.key === key ? this.lastEffect : null;
+    const t0 = resumed ? resumed.t0 : Date.now();
+    // Décalage entre lumières d'après leur rang parmi toutes les lumières d'ambiance : il ne bouge pas quand l'une
+    // d'elles passe en prise de vue. Synchronisées : aucun décalage.
+    const all = this.targets('ambiance');
+    const rank = new Map(all.map((d, i) => [d.id, i]));
+    const offset = (d) => (idle.sync ? 0 : (rank.get(d.id) || 0) / Math.max(1, all.length));
+    const phase = (d, now = Date.now()) => ((now - t0) / period + offset(d)) % 1;
+    const low = Math.max(3, Math.round(bright * 0.15));
+    const level = (d, now) => Math.round(low + (bright - low) * (0.5 - 0.5 * Math.cos(2 * Math.PI * phase(d, now))));
+    const hue = (d, now) => hueToRgb(phase(d, now) * 360);
     for (const d of devices) {
       await this.remember(d);
+      if (resumed?.ids?.has(d.id)) continue; // déjà dans l'animation : elle continue telle quelle
       d.drv.command(d.ip, 'turn', { value: 1 });
-      d.drv.command(d.ip, 'brightness', { value: bright });
-      d.drv.command(d.ip, 'colorwc', tint);
+      d.drv.command(d.ip, 'brightness', { value: effect === 'breathe' ? level(d) : bright });
+      d.drv.command(d.ip, 'colorwc', effect === 'cycle' ? { color: hue(d), colorTemInKelvin: 0 } : tint); // directement la valeur de la phase en cours
     }
     if (effect === 'fixed') return;
-    const t0 = Date.now();
     const last = new Map();  // dernière luminosité envoyée (respiration)
     const sentAt = new Map(); // dernier envoi par lumière
-    // Synchronisées : toutes à la même couleur (ou au même souffle). Sinon décalées d'autant entre elles.
-    const offset = (i) => (idle.sync ? 0 : i / devices.length);
     // Pas de chaque lumière : celles qui font un fondu d'elles-mêmes (ampoules H6008, Elgato) glissent vers la
     // valeur suivante, une par seconde suffit (cycle). Les autres (tube H6076) sautent : 5 petits pas par seconde.
     const stepOf = (d) => (d.drv.fades(d.sku) ? (effect === 'cycle' ? 1000 : 350) : 200);
     const tick = () => {
       if (!this.running) return;
       const now = Date.now();
-      const t = (now - t0) / period;
-      devices.forEach((d, i) => {
-        if (now - (sentAt.get(d.id) || 0) < stepOf(d) - 50) return;
+      for (const d of devices) {
+        if (now - (sentAt.get(d.id) || 0) < stepOf(d) - 50) continue;
         sentAt.set(d.id, now);
-        if (effect === 'cycle') {
-          const c = hueToRgb(((t + offset(i)) % 1) * 360);
-          d.drv.command(d.ip, 'colorwc', { color: c, colorTemInKelvin: 0 });
-        } else {
-          const low = Math.max(3, Math.round(bright * 0.15));
-          const v = Math.round(low + (bright - low) * (0.5 - 0.5 * Math.cos(2 * Math.PI * (t + offset(i)))));
-          if (last.get(d.id) !== v) { last.set(d.id, v); d.drv.command(d.ip, 'brightness', { value: v }); }
-        }
-      });
+        if (effect === 'cycle') d.drv.command(d.ip, 'colorwc', { color: hue(d, now), colorTemInKelvin: 0 });
+        else { const v = level(d, now); if (last.get(d.id) !== v) { last.set(d.id, v); d.drv.command(d.ip, 'brightness', { value: v }); } }
+      }
     };
-    this.effect = { timer: setInterval(tick, 100) };
+    this.effect = { timer: setInterval(tick, 100), key, t0, ids: new Set(devices.map((d) => d.id)) };
     this.effect.timer.unref?.();
   }
 
   stopEffect() {
-    if (this.effect) clearInterval(this.effect.timer);
+    if (this.effect) { clearInterval(this.effect.timer); this.lastEffect = { key: this.effect.key, t0: this.effect.t0, ids: this.effect.ids }; }
     this.effect = null;
   }
 

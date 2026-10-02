@@ -16,6 +16,7 @@ process.env.BOOTH_TEMPLATES_DIR = path.join(tmp, 'templates');
 process.env.BOOTH_SAMPLES_DIR = path.join(tmp, 'samples');
 process.env.BOOTH_UPLOADS_DIR = path.join(tmp, 'uploads'); // logos envoyés pendant le test : jamais dans data/uploads
 process.env.BOOTH_AUTO_INSTALL = 'off';  // pas d'installation (Homebrew, modèle IA) pendant un test
+process.env.BOOTH_USB_DIRS = path.join(tmp, 'cle-usb'); // clé USB simulée : ce dossier, quand il existe (jamais les vraies clés)
 process.env.BOOTH_CAMERA = 'mock';
 process.env.BOOTH_PRINTER = 'mock';
 process.env.BOOTH_STREAMDECK = 'off'; // ne pas prendre la main sur un Stream Deck branché
@@ -195,6 +196,28 @@ async function runSteps(app, camera) {
     assert.ok(!(await page.text()).includes('Télécharger la photo'));
   });
 
+  await step('sessions paginées : pages de taille fixe, la plus récente d\'abord', async () => {
+    const evId = (await j('/api/bootstrap')).data.counters.eventId;
+    const p1 = (await j(`/api/admin/events/${evId}/sessions?per=2&page=1`, { headers: ADMIN })).data;
+    assert.ok(p1.total >= 3, `au moins 3 sessions (${p1.total})`);
+    assert.equal(p1.sessions.length, 2);
+    assert.equal(p1.pages, Math.ceil(p1.total / 2));
+    const p2 = (await j(`/api/admin/events/${evId}/sessions?per=2&page=2`, { headers: ADMIN })).data;
+    assert.ok(!p2.sessions.some((x) => p1.sessions.some((y) => y.id === x.id)), 'pages disjointes');
+    assert.ok(p1.sessions[0].createdAt >= p2.sessions[0].createdAt, 'les plus récentes d\'abord');
+    const st = (await j('/api/admin/state', { headers: ADMIN })).data;
+    assert.ok(st.sessions.length <= st.sessionsPerPage, 'l\'état n\'envoie que la première page');
+  });
+
+  await step('mise à jour : version lue dans le dépôt git', async () => {
+    await app.updater.version();
+    const u = (await j('/api/admin/update', { headers: ADMIN })).data.update;
+    assert.equal(u.available, true);
+    assert.match(u.commit, /^[0-9a-f]{7,}$/);
+    assert.match(u.version, /^\d+\.\d+\.\d+$/, 'version X.X.X');
+    assert.equal(u.updating, false);
+  });
+
   await step('installation : état vérifié (Node, dépendances, modèles, cadres), rien d\'installé pendant le test', async () => {
     const su = (await j('/api/admin/setup', { headers: ADMIN })).data.setup;
     const by = Object.fromEntries(su.items.map((it) => [it.id, it]));
@@ -351,6 +374,24 @@ async function runSteps(app, camera) {
     assert.equal(b.sessions, 1);
     const evs = (await j(`/api/admin/events/${ev.id}/sessions`, { headers: ADMIN })).data;
     assert.deepEqual(evs.sessions.map((x) => x.id), [s2.id]);
+    assert.deepEqual([evs.page, evs.pages, evs.total], [1, 1, 1]);
+    // Clé USB : branchée → copie automatique de l'événement en cours ; rebranchée → rien à recopier
+    const key = process.env.BOOTH_USB_DIRS;
+    fs.mkdirSync(key, { recursive: true });
+    app.usb.tick();
+    await new Promise((r) => setTimeout(r, 20));
+    await app.usb.queue;
+    const usbDir = path.join(key, 'Cheeesy', `${ev.date} ${ev.name}`);
+    assert.ok(fs.existsSync(path.join(usbDir, 'montages', `${s2.id}.jpg`)), 'montage copié sur la clé');
+    assert.equal(fs.readdirSync(path.join(usbDir, 'originaux', s2.id)).length, 3, 'trois originaux copiés');
+    assert.equal(app.usb.status().lastExport.copied, 4);
+    await app.usb.export(ev.id);
+    assert.deepEqual([app.usb.status().lastExport.copied, app.usb.status().lastExport.skipped], [0, 4], 'deuxième copie : tout est déjà là');
+    assert.equal((await post('/api/admin/usb/eject', {}, ADMIN)).status, 200);
+    fs.rmSync(key, { recursive: true, force: true });
+    app.usb.tick();
+    assert.equal(app.usb.status().volume, null, 'clé retirée');
+    assert.equal((await post('/api/admin/usb/export', { eventId: ev.id }, ADMIN)).status, 409, 'sans clé : refusé');
     // Export : originaux, montages, les deux
     const zipNames = async (content) => {
       const res = await fetch(`${base}/api/admin/events/${ev.id}/export?content=${content}`, { headers: ADMIN });

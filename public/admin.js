@@ -122,31 +122,86 @@ function installSection() {
   return `
   <h2>Installation</h2>
   <p class="sub">${esc(os)}${pm ? ` · ${esc(pm)}` : ''}</p>
+  ${updateCard()}
   ${setupCard()}`;
+}
+
+/** Version en cours et mise à jour depuis GitHub (dépôt git). */
+function updateCard() {
+  const u = S.update;
+  if (!u) return '';
+  const when = (iso) => (iso ? new Date(iso).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
+  const version = u.version || u.commit || '?';
+  const badge = !u.available ? '' : u.updating ? '<span class="badge warn">mise à jour en cours…</span>'
+    : u.needRestart ? '<span class="badge warn">redémarrage nécessaire</span>'
+    : u.behind ? `<span class="badge warn">${u.remoteVersion && u.remoteVersion !== u.version ? `${esc(u.remoteVersion)} disponible` : 'correctifs disponibles'}</span>`
+    : u.behind === 0 ? '<span class="badge ok">à jour</span>' : '';
+  return `
+  <div class="card">
+    <div class="inst-head">
+      <div>
+        <div class="inst-kicker">Version</div>
+        <div class="inst-version">${esc(version)} ${badge}</div>
+        ${u.available ? `<div class="cell-sub">${when(u.date)} · <code>${esc(u.commit || '?')}</code>${u.branch && u.branch !== 'main' ? ` · branche ${esc(u.branch)}` : ''}${u.checkedAt ? ` · vérifié ${when(u.checkedAt)}` : ''}</div>` : ''}
+      </div>
+      ${u.available ? `<div class="cell-actions">
+        ${u.needRestart && u.canRestart ? '<button class="btn small secondary" id="btnUpdateRestart">Redémarrer la borne</button>' : ''}
+        ${u.behind && !u.updating ? '<button class="btn small primary" id="btnUpdateInstall">Mettre à jour</button>' : ''}
+        <button class="btn small" id="btnUpdateCheck" ${u.updating ? 'disabled' : ''}>Rechercher une mise à jour</button>
+      </div>` : ''}
+    </div>
+    ${u.incoming?.length && !u.updating ? `<ul class="update-list">${u.incoming.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    ${u.log?.length ? `<pre class="setup-log">${esc(u.log.slice(-12).join('\n'))}</pre>` : ''}
+    ${u.error ? `<div class="alert" style="margin:12px 0 0">${esc(u.error)}</div>` : ''}
+  </div>`;
+}
+
+function pollUpdate() {
+  clearTimeout(pollUpdate.t);
+  pollUpdate.t = setTimeout(async () => {
+    try { S.update = (await api('/api/admin/update')).update; } catch { return; }
+    if (currentSection() === 'install') render();
+    if (S.update?.updating) pollUpdate();
+  }, 1500);
 }
 
 /** Carte d'état de l'installation (page Installation). */
 function setupCard() {
   const su = S.setup;
   if (!su) return '<div class="card"><p class="sub">État de l\'installation indisponible : serveur à redémarrer.</p></div>';
-  const dot = (it) => (it.state === 'ok' ? 'ok' : it.required ? 'err' : 'warn');
-  const rows = su.items.map((it) => `<div class="hw-row sum-row setup-row"><span class="hw-dot ${dot(it)}"></span><span class="sum-k">${esc(it.label)}</span><span class="hw-main"><span class="hw-detail">${esc(it.detail)}${it.state !== 'ok' && it.fix ? ` · <code>${esc(it.fix)}</code>` : ''}</span></span></div>`).join('');
   const missing = su.items.filter((it) => it.state !== 'ok');
   const pending = missing.filter((it) => it.auto);
   const badge = su.installing ? '<span class="badge warn">installation en cours…</span>'
-    : missing.length ? `<span class="badge ${missing.some((it) => it.required) ? 'err' : 'warn'}">${plural(missing.length, 'élément manquant', 'éléments manquants')}</span>`
+    : missing.length ? `<span class="badge ${missing.some((it) => it.required) ? 'err' : 'warn'}">${plural(missing.length, 'manquant', 'manquants')}</span>`
     : '<span class="badge ok">tout est installé</span>';
   const at = su.at ? new Date(su.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
+  const state = (it) => (it.state === 'ok' ? '<span class="hw-dot ok"></span>' : `<span class="hw-dot ${it.required ? 'err' : 'warn'}"></span>`);
+  const rows = su.items.map((it) => `
+      <tr class="${it.state === 'ok' ? '' : it.required ? 'row-err' : 'row-warn'}">
+        <td class="inst-dot">${state(it)}</td>
+        <td><div class="cell-title">${esc(it.label)}${it.required ? ' <span class="badge">indispensable</span>' : ''}</div></td>
+        <td class="cell-sub">${esc(it.detail)}</td>
+        <td class="inst-fix">${it.state !== 'ok' && it.fix ? `<code>${esc(it.fix)}</code>` : ''}</td>
+      </tr>`).join('');
   return `
   <div class="card">
-    <div class="row" style="margin-bottom:12px">${badge}
-      <button class="btn small" type="button" id="btnSetupCheck">Revérifier</button>
-      ${pending.length ? `<button class="btn small secondary" type="button" id="btnSetupInstall" ${su.installing ? 'disabled' : ''}>Installer ce qui manque (${pending.length})</button>` : ''}
+    <div class="inst-head">
+      <div>
+        <div class="inst-kicker">Modules</div>
+        <div class="inst-version">${su.items.length - missing.length} / ${su.items.length} ${badge}</div>
+        <div class="cell-sub">vérifié à ${at}</div>
+      </div>
+      <div class="cell-actions">
+        ${pending.length ? `<button class="btn small primary" type="button" id="btnSetupInstall" ${su.installing ? 'disabled' : ''}>Installer ce qui manque (${pending.length})</button>` : ''}
+        <button class="btn small" type="button" id="btnSetupCheck">Revérifier</button>
+      </div>
     </div>
-    <div class="hw-list sum-list">${rows}</div>
+    <table class="data-table inst-table">
+      <thead><tr><th></th><th>Module</th><th>État</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
     ${su.log?.length ? `<pre class="setup-log">${esc(su.log.slice(-12).join('\n'))}</pre>` : ''}
-    ${su.error ? `<div class="alert">Dernière installation : ${esc(su.error)}</div>` : ''}
-    <small>Vérifié à ${at}.</small>
+    ${su.error ? `<div class="alert" style="margin:12px 0 0">Dernière installation : ${esc(su.error)}</div>` : ''}
   </div>`;
 }
 
@@ -163,65 +218,94 @@ function pollSetup() {
 /** Tableau de bord : les réglages qui font la soirée, une ligne par sujet, chacune menant à sa section. */
 function settingsSummary() {
   const cfg = S.config;
-  const row = (label, html, href) => `<a class="hw-row sum-row" href="${href}"><span class="sum-k">${label}</span><span class="hw-main"><span class="hw-detail">${html}</span></span><span class="hw-go" aria-hidden="true">›</span></a>`;
-  const warn = (t) => `<b class="hw-err">${t}</b>`;
-  const list = (names) => names.map(esc).join(', ');
   const plural = (n, one, many = `${one}s`) => `${n} ${n > 1 ? many : one}`;
-  // Cadres : activés, défaut (signalé s'il est désactivé : la borne prend alors le premier activé), choix, GIF
+  const chip = (t, cls = '') => `<span class="sum-chip ${cls}">${t}</span>`;
+  const on = (ok, yes, no) => chip(ok ? yes : no, ok ? 'on' : 'off');
+  // Tuile : titre, grand chiffre (ou nom), précision, puces ; alerte en rouge ; toute la tuile mène à sa section
+  const tile = ({ title, big, sub = '', chips = [], alert = '', href, extra = '' }) => `
+    <a class="sum-tile ${alert ? 'alert' : ''}" href="${href}">
+      <span class="sum-title">${title}<span class="hw-go" aria-hidden="true">›</span></span>
+      <span class="sum-big">${big}</span>
+      ${sub ? `<span class="sum-sub">${sub}</span>` : ''}
+      ${extra}
+      ${chips.length ? `<span class="sum-chips">${chips.filter(Boolean).join('')}</span>` : ''}
+      ${alert ? `<span class="sum-alert">${alert}</span>` : ''}
+    </a>`;
+
+  // Cadres
   const tc = cfg.templates;
   const enabled = S.templates.filter((t) => tc.enabled.includes(t.id));
-  const animated = S.templates.filter((t) => t.kind === 'gif' || t.kind === 'boomerang');
+  const animated = enabled.filter((t) => t.kind === 'gif' || t.kind === 'boomerang');
   const def = S.templates.find((t) => t.id === tc.default);
   const defOk = !!def && tc.enabled.includes(def.id);
   const effDefault = defOk ? def : enabled[0];
-  const cadres = [
-    enabled.length ? `<b>${enabled.length}</b> sur ${S.templates.length} activé${enabled.length > 1 ? 's' : ''} : ${list(enabled.map((t) => t.name))}` : warn('aucun cadre activé : la borne ne peut pas lancer de séance'),
-    effDefault ? `par défaut ${esc(effDefault.name)}${defOk ? '' : ` ${warn(`(« ${esc(def?.name || tc.default)} » est désactivé)`)}`}` : '',
-    enabled.length > 1 ? (tc.guestCanChoose ? 'l\'invité choisit' : 'pas de choix pour l\'invité') : '',
-    animated.length ? `GIF et boomerangs ${tc.gifEnabled ? 'proposés' : 'masqués'} (${animated.length})` : ''
-  ].filter(Boolean).join(' · ');
+  const shownNames = enabled.slice(0, 4).map((t) => chip(esc(t.name))).join('') + (enabled.length > 4 ? chip(`+${enabled.length - 4}`) : '');
+  const cadres = tile({
+    title: 'Cadres', href: '#templates',
+    big: `${enabled.length}<small> / ${S.templates.length}</small>`,
+    sub: effDefault ? `par défaut : ${esc(effDefault.name)}` : '',
+    chips: [shownNames, enabled.length > 1 ? on(tc.guestCanChoose, 'choix de l\'invité', 'pas de choix') : '', animated.length ? on(tc.gifEnabled, 'GIF proposés', 'GIF masqués') : ''],
+    alert: !enabled.length ? 'Aucun cadre activé' : !defOk ? `« ${esc(def?.name || tc.default)} » (défaut) est désactivé` : ''
+  });
+
   // Filtres
   const f = cfg.booth.filters || {};
   const fname = (id) => FILTERS.find((x) => x.id === id)?.name || id;
   const avail = (f.available || []).filter((id) => FILTERS.some((x) => x.id === id));
-  const filtres = f.enabled
-    ? `proposés : ${list(avail.map(fname))} · par défaut ${esc(fname(f.default || 'none'))}`
-    : `pas de choix pour l'invité · toutes les photos en « ${esc(fname(f.default || 'none'))} »`;
-  // Apparence
+  const filtres = tile({
+    title: 'Filtres', href: '#flow',
+    big: f.enabled ? `${avail.length}<small> proposés</small>` : '<small>désactivés</small>',
+    sub: `par défaut : ${esc(fname(f.default || 'none'))}`,
+    chips: f.enabled ? avail.map((id) => chip(esc(fname(id)))) : []
+  });
+
+  // Apparence : nom du thème et ses couleurs
   const theme = cfg.theme.active === 'custom' ? 'Personnalisé' : (S.themes.find((t) => t.id === cfg.theme.active)?.name || cfg.theme.active);
-  const apparence = [`thème ${esc(theme)}`, S.theme.defaultLogo ? 'logo Cheeesy aux couleurs du thème' : 'logo importé', S.theme.backgroundImage ? 'image de fond' : 'sans image de fond'].join(' · ');
-  // Tirages
+  const c = S.theme.colors || {};
+  const swatches = `<span class="sum-swatches">${['background', 'primary', 'secondary', 'surface'].map((k) => `<i style="background:${esc(c[k] || '#ccc')}"></i>`).join('')}</span>`;
+  const apparence = tile({
+    title: 'Apparence', href: '#theme',
+    big: esc(theme), extra: swatches,
+    chips: [chip(S.theme.defaultLogo ? 'logo Cheeesy' : 'logo importé'), on(!!S.theme.backgroundImage, 'image de fond', 'sans image de fond')]
+  });
+
+  // Tirages : quota avec jauge
   const l = cfg.limits;
   const fmt = S.formats?.[tc.defaultFormat]?.name || tc.defaultFormat;
-  const tirages = [
-    `${plural(l.maxCopiesPerSession, 'copie')} max par passage`,
-    l.allowZeroCopies ? '« sans impression » autorisé' : 'impression obligatoire',
-    l.eventQuota > 0 ? `quota ${l.eventQuota}${S.counters.quotaRemaining != null ? ` (reste ${S.counters.quotaRemaining})` : ''}` : 'quota illimité',
-    `format ${esc(fmt)}`
-  ].join(' · ');
+  const quota = l.eventQuota > 0 ? l.eventQuota : null;
+  const used = quota ? quota - (S.counters.quotaRemaining ?? quota) : 0;
+  const gauge = quota ? `<span class="sum-gauge"><i style="width:${Math.min(100, Math.round((used / quota) * 100))}%"></i></span><span class="sum-sub">${used} / ${quota} tirages du quota</span>` : '';
+  const tirages = tile({
+    title: 'Tirages', href: '#printing',
+    big: `${l.maxCopiesPerSession}<small> max par passage</small>`,
+    extra: gauge,
+    chips: [chip(esc(fmt)), on(l.allowZeroCopies, 'sans impression possible', 'impression obligatoire'), quota ? '' : chip('quota illimité')],
+    alert: S.counters.quotaReached ? 'Quota atteint' : ''
+  });
+
   // Parcours
-  const parcours = [
-    `décompte ${l.countdownSec} s`,
-    l.maxRetakesPerSession < 0 ? 'reprises illimitées' : plural(l.maxRetakesPerSession, 'reprise'),
-    cfg.booth.mirrorPreview ? 'aperçu en miroir' : 'aperçu non inversé',
-    `retour à l'accueil ${cfg.booth.idleReturnSec} s après la fin`
-  ].join(' · ');
+  const parcours = tile({
+    title: 'Parcours', href: '#flow',
+    big: `${l.countdownSec} s<small> de décompte</small>`,
+    chips: [chip(l.maxRetakesPerSession < 0 ? 'reprises illimitées' : plural(l.maxRetakesPerSession, 'reprise')), on(cfg.booth.mirrorPreview, 'miroir', 'sans miroir'), chip(`accueil après ${cfg.booth.idleReturnSec} s`)]
+  });
+
   // Partage
   const sh = cfg.share || {}, g = cfg.gallery || {};
   const wifi = !!S.devices?.network?.wifi;
-  const qrPhoto = sh.qrOnDone === false ? 'QR code des photos désactivé' : wifi || sh.requireWifi === false ? 'QR code des photos affiché' : warn('QR code des photos masqué : pas de Wi-Fi');
-  const partage = [qrPhoto, sh.wifi?.enabled ? `QR Wi-Fi « ${esc(sh.wifi.ssid || '')} »` : 'pas de QR Wi-Fi', g.booth ? 'galerie sur la borne' : 'galerie de la borne fermée', g.web ? 'galerie téléphone ouverte' : 'galerie téléphone fermée'].join(' · ');
+  const qrOn = sh.qrOnDone !== false;
+  const qrShown = qrOn && (wifi || sh.requireWifi === false);
+  const partage = tile({
+    title: 'Partage', href: '#sharing',
+    big: qrOn ? (qrShown ? '<small>QR code affiché</small>' : '<small>QR code masqué</small>') : '<small>QR code désactivé</small>',
+    chips: [on(!!sh.wifi?.enabled, `Wi-Fi « ${esc(sh.wifi?.ssid || '')} »`, 'pas de QR Wi-Fi'), on(!!g.booth, 'galerie borne', 'galerie borne fermée'), on(!!g.web, 'galerie téléphone', 'galerie téléphone fermée')],
+    alert: qrOn && !qrShown ? 'Pas de Wi-Fi : les invités ne peuvent pas récupérer leur photo' : ''
+  });
+
   return `
   <div class="card">
     <h3>Réglages de la soirée</h3>
-    <div class="hw-list sum-list">
-      ${row('Cadres', cadres, '#templates')}
-      ${row('Filtres', filtres, '#flow')}
-      ${row('Apparence', apparence, '#theme')}
-      ${row('Tirages', tirages, '#printing')}
-      ${row('Parcours', parcours, '#flow')}
-      ${row('Partage', partage, '#sharing')}
-    </div>
+    <div class="sum-grid">${cadres}${filtres}${apparence}${tirages}${parcours}${partage}</div>
   </div>`;
 }
 
@@ -247,8 +331,17 @@ const HW_ICONS = {
   deck: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7.5 10h2M11 10h2M14.5 10h2M7.5 14h2M11 14h2M14.5 14h2"/>',
   lights: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9V16h7v-2.1A6 6 0 0 0 12 3z"/>',
   screen: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
-  setup: '<path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/>'
+  setup: '<path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/>',
+  usb: '<path d="M9 3h6v6H9z"/><path d="M7 9h10v9a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3z"/><path d="M11 5h.01M13 5h.01"/>'
 };
+/** Clé USB au tableau de bord : seulement quand une clé est branchée ou qu'une copie tourne. */
+function usbRow() {
+  const u = S.usb;
+  if (!u?.available || (!u.volume && !u.exporting)) return '';
+  const x = u.exporting;
+  return hwRow('usb', 'Clé USB', x ? 'warn' : u.error ? 'err' : 'ok', x ? `copie ${x.done} / ${x.total}` : `${esc(u.volume.name)} · ${gb(u.volume.free)}`, x ? esc(x.eventName) : u.error ? `<b class="hw-err">${esc(u.error)}</b>` : '', '#events');
+}
+
 /** Une ligne d'appareil : icône, pastille d'état (ok, warn, err, off), nom, état, détail, lien vers ses réglages. */
 function hwRow(icon, title, state, status, detail, href) {
   return `<a class="hw-row" href="${href}">
@@ -299,7 +392,7 @@ function hardwareList() {
     const name = sc.display ? esc(sc.display.name || 'Écran externe') : sc.available ? 'Aucun écran pilotable' : 'Non disponible';
     const state = !sc.available ? 'err' : !sc.display ? 'off' : sc.error ? 'warn' : 'ok';
     const values = sc.display ? [sc.brightness != null ? `luminosité ${sc.brightness} %` : '', sc.volumeOk && sc.volume != null ? `volume ${sc.volume} %` : ''].filter(Boolean).join(' · ') : '';
-    const how = sc.display ? `DDC/CI (${esc(sc.tool)}), ${sc.managed ? 'réglé par la borne' : 'réglages de l\'écran laissés tels quels'}` : sc.available ? `${esc(sc.tool)} prêt : aucun écran externe ne répond en DDC/CI` : '';
+    const how = sc.display ? `DDC/CI (${esc(sc.tool)}), ${sc.managed ? 'réglé par la borne' : 'réglages de l\'écran laissés tels quels'}` : sc.available && !sc.error ? `${esc(sc.tool)} prêt : aucun écran externe ne répond en DDC/CI` : '';
     screen = hwRow('screen', 'Écran', state, values ? `${name} · ${values}` : name, [sc.error ? `<b class="hw-err">${esc(sc.error)}</b>` : '', how].filter(Boolean).join('<br>'), '#control');
   }
   // Installation : résumé, le détail est sur sa page
@@ -314,7 +407,7 @@ function hardwareList() {
   return `<div class="hw-list">
     ${hwRow('camera', 'Appareil photo', camState, camName, camDetail, '#camera')}
     ${hwRow('printer', 'Imprimante', prState, prName, prDetail, '#printing')}
-    ${screen}${wifi}${deck}${lights}${install}
+    ${screen}${wifi}${deck}${lights}${usbRow()}${install}
   </div>`;
 }
 
@@ -325,8 +418,8 @@ function dashboard() {
   return `
   <h2>Tableau de bord</h2>
   ${(S.dataWarnings || []).map((w) => `<div class="alert">${esc(w)}</div>`).join('')}
-  <p class="sub">Événement en cours : <b>${esc(c.eventName)}</b> · <a href="#sessions">changer ou en créer un</a></p>
-  <div class="grid">
+  <p class="sub">Événement en cours : <b>${esc(c.eventName)}</b> · <a href="#events">changer ou en créer un</a></p>
+  <div class="grid stats4">
     ${stat(c.printed, 'tirages imprimés')}
     ${stat(c.quotaRemaining === null ? '∞' : c.quotaRemaining, 'quota restant', c.quotaReached ? 'err' : '')}
     ${stat(c.paperRemaining === null ? '—' : c.paperRemaining, 'feuilles restantes', c.lowPaper ? 'warn' : '')}
@@ -339,19 +432,29 @@ function dashboard() {
     </div>
     <div class="card">
       <h3>Consommables</h3>
-      <label>Feuilles chargées dans l'imprimante
-        <div class="row"><input id="paperInput" type="number" min="0" value="${c.paperRemaining ?? ''}" placeholder="non suivi" style="width:140px">
-        <button class="btn secondary" id="btnPaper">Mettre à jour</button>
-        <button class="btn" id="btnPaperOff">Ne plus suivre</button></div>
-      </label>
-      <label>Compteur de tirages de l'événement
-        <div class="row"><button class="btn danger" id="btnResetPrinted">Remettre à zéro (${c.printed})</button></div>
-      </label>
-      <label>Sessions de l'événement
-        <div class="row"><button class="btn danger" id="btnResetSessions" ${c.sessions ? '' : 'disabled'}>Réinitialiser les sessions (${c.sessions})</button></div>
-        <small>Supprime toutes les sessions et leurs photos, remet le compteur à zéro. L'historique des tirages est conservé.</small>
-      </label>
-      <small>Quota configuré : ${cfg.limits.eventQuota || 'illimité'} · alerte papier sous ${cfg.limits.lowPaperThreshold} feuilles</small>
+      <div class="cons-list">
+        <div class="sum-tile cons-tile ${c.lowPaper ? 'alert' : ''}">
+          <span class="sum-title">Papier</span>
+          <span class="sum-big">${c.paperRemaining ?? '—'}<small> ${c.paperRemaining === null ? 'non suivi' : 'feuilles'}</small></span>
+          <span class="sum-sub">alerte sous ${cfg.limits.lowPaperThreshold} feuilles</span>
+          <div class="cons-actions">
+            <input id="paperInput" type="number" min="0" value="${c.paperRemaining ?? ''}" placeholder="feuilles chargées">
+            <button class="btn small primary" id="btnPaper">Mettre à jour</button>
+            ${c.paperRemaining === null ? '' : '<button class="btn small link-danger" id="btnPaperOff">Ne plus suivre</button>'}
+          </div>
+        </div>
+        <div class="sum-tile cons-tile ${c.quotaReached ? 'alert' : ''}">
+          <span class="sum-title">Tirages de l'événement</span>
+          <span class="sum-big">${c.printed}<small>${cfg.limits.eventQuota ? ` / ${cfg.limits.eventQuota}` : ''}</small></span>
+          ${cfg.limits.eventQuota ? `<span class="sum-gauge"><i style="width:${Math.min(100, Math.round((c.printed / cfg.limits.eventQuota) * 100))}%"></i></span>` : '<span class="sum-sub">quota illimité</span>'}
+          <div class="cons-actions"><button class="btn small link-danger" id="btnResetPrinted" ${c.printed ? '' : 'disabled'}>Remettre à zéro</button></div>
+        </div>
+        <div class="sum-tile cons-tile">
+          <span class="sum-title">Sessions de l'événement</span>
+          <span class="sum-big">${c.sessions}<small> ${c.sessions > 1 ? 'sessions' : 'session'}</small></span>
+          <div class="cons-actions"><a class="btn small" href="#sessions">Photos</a><button class="btn small link-danger" id="btnResetSessions" ${c.sessions ? '' : 'disabled'}>Vider l'événement</button></div>
+        </div>
+      </div>
     </div>
   </div>
   ${settingsSummary()}`;
@@ -586,47 +689,48 @@ function templatesSection() {
   const cards = S.templates.map((t) => `
     <div class="card tpl-card" data-tpl-card="${esc(t.id)}">
       <button type="button" class="tpl-handle" title="Glisser pour changer l'ordre sur la borne" aria-label="Déplacer ${esc(t.name)}">⠿</button>
-      <canvas class="tpl-preview" data-tpl="${esc(t.id)}" width="${Math.round(t.width * (160 / Math.max(t.width, t.height)))}" height="${Math.round(t.height * (160 / Math.max(t.width, t.height)))}"></canvas>
+      <div class="tpl-thumb-box"><canvas class="tpl-preview" data-tpl="${esc(t.id)}" width="${Math.round(t.width * (160 / Math.max(t.width, t.height)))}" height="${Math.round(t.height * (160 / Math.max(t.width, t.height)))}"></canvas></div>
       <div class="tpl-meta">
-        <strong>${esc(t.name)}</strong> <code>${esc(t.id)}</code><br>
-        ${KIND_LABEL[t.kind] ? `<span class="badge">${KIND_LABEL[t.kind]}</span> ${cfg.gifEnabled ? '' : '<span class="badge warn">GIF désactivés</span> '}` : ''}${t.format && S.formats[t.format] ? esc(S.formats[t.format].name) : `${t.width} × ${t.height} px`} · ${t.kind === 'gif' ? `${t.shots} poses` : t.kind === 'boomerang' ? `${String(t.boomerang.durationSec).replace('.', ',')} s filmées` : `${t.shots} photo${t.shots > 1 ? 's' : ''}`} · ${t.layers.length} calque${t.layers.length > 1 ? 's' : ''}<br><br>
-        <div class="row">
-          <a class="btn secondary small" href="#editor=${encodeURIComponent(t.id)}">Modifier</a>
+        <div class="tpl-name">${esc(t.name)}${KIND_LABEL[t.kind] ? ` <span class="badge">${KIND_LABEL[t.kind]}</span>` : ''}${KIND_LABEL[t.kind] && !cfg.gifEnabled ? ' <span class="badge warn">masqué</span>' : ''}</div>
+        <div class="tpl-info">${t.format && S.formats[t.format] ? esc(S.formats[t.format].name) : `${t.width} × ${t.height} px`} · ${t.kind === 'gif' ? `${t.shots} poses` : t.kind === 'boomerang' ? `${String(t.boomerang.durationSec).replace('.', ',')} s filmées` : `${t.shots} photo${t.shots > 1 ? 's' : ''}`} · ${t.layers.length} calque${t.layers.length > 1 ? 's' : ''}</div>
+        <div class="tpl-actions">
+          <a class="btn primary small" href="#editor=${encodeURIComponent(t.id)}">Modifier</a>
           <label class="inline"><input type="checkbox" data-enable="${esc(t.id)}" ${cfg.enabled.includes(t.id) ? 'checked' : ''}> Activé</label>
           <label class="inline"><input type="radio" name="defaultTpl" value="${esc(t.id)}" ${cfg.default === t.id ? 'checked' : ''}> Par défaut</label>
-          <button class="btn danger small" data-del="${esc(t.id)}">Supprimer</button>
+          ${moreMenu([`<button class="menu-item danger" data-del="${esc(t.id)}">Supprimer</button>`])}
         </div>
       </div>
     </div>`).join('');
   return `
-  <h2>Templates</h2>
-  <p class="sub">Un template est une pile de calques (photos, textes, images, formes) posés sur le tirage. Créez-le avec un nom, puis composez-le dans l'éditeur.</p>
-  <form id="formNewTemplate" class="card">
-    <h3>Nouveau template</h3>
-    <div class="row">
-      <label style="flex:1;min-width:220px">Nom <input name="name" required placeholder="Mariage Julie & Marc"></label>
-      <label>Type <select name="kind"><option value="photo">Photo (tirage)</option><option value="gif">GIF animé (numérique)</option><option value="boomerang">Boomerang (numérique)</option></select></label>
-      <label>Format <select name="format">${formatOptions(cfg.defaultFormat || S.defaultFormat)}</select></label>
-      <button class="btn primary" type="submit">Créer et ouvrir l'éditeur</button>
-    </div>
-    <details><summary>Avancé : partir d'un PNG complet (cadre créé dans Canva ou Photoshop)</summary>
-      <label>PNG avec transparence, à la taille du format <input type="file" name="overlay" accept="image/png"></label>
-    </details>
-  </form>
-  <div class="card">
-    <div class="row">
-      <label class="inline"><input id="guestCanChoose" type="checkbox" ${cfg.guestCanChoose ? 'checked' : ''}> L'invité choisit son template (sinon le template par défaut est imposé)</label>
-      <span class="sep"></span>
-      <label class="inline">Format par défaut <select id="defaultFormat">${formatOptions(cfg.defaultFormat || S.defaultFormat)}</select></label>
-    </div>
-    <label class="inline"><input id="gifEnabled" type="checkbox" ${cfg.gifEnabled ? 'checked' : ''}> Proposer les GIF animés et les boomerangs aux invités</label>
-    <small>Numérique uniquement : un GIF n'est jamais imprimé. L'invité le récupère par QR code, ou le retrouve dans la galerie de la borne. Les templates de type GIF apparaissent parmi les cadres.</small>
-    <h3 class="model-title">Détourage précis</h3>
-    ${S.subjectModel?.installed
-      ? `<p><span class="badge ok">installé</span> <small>Photos des invités (calques photo « IA ») et bouton « Retirer le fond » des images : tout sujet, bords propres, hors ligne.</small></p>${perfNotice()}`
-      : modelNotice()}
+  <div class="ev-page-head">
+    <h2>Templates</h2>
+    <button class="btn primary" type="button" id="btnNewTemplate">+ Nouveau template</button>
   </div>
-  ${cards ? `<p class="sub">Ordre d'affichage sur la borne : glissez un template par sa poignée ⠿.</p><div id="tplList" class="tpl-list">${cards}</div>` : '<p class="sub">Aucun template. Créez-en un ci-dessus.</p>'}`;
+  <dialog id="dlgNewTemplate" class="form-dialog">
+    <form id="formNewTemplate">
+      <h3>Nouveau template</h3>
+      <label>Nom <input name="name" required placeholder="Mariage Julie & Marc" autocomplete="off"></label>
+      <div class="grid-2">
+        <label>Type <select name="kind"><option value="photo">Photo (tirage)</option><option value="gif">GIF animé (numérique)</option><option value="boomerang">Boomerang (numérique)</option></select></label>
+        <label>Format <select name="format">${formatOptions(cfg.defaultFormat || S.defaultFormat)}</select></label>
+      </div>
+      <label>Cadre PNG (facultatif) <input type="file" name="overlay" accept="image/png"></label>
+      <div class="row dlg-actions">
+        <button class="btn" type="button" id="btnNewTemplateCancel">Annuler</button>
+        <button class="btn primary" type="submit">Créer et ouvrir l'éditeur</button>
+      </div>
+    </form>
+  </dialog>
+  <div class="card">
+    <h3>Options</h3>
+    <div class="opt-grid">
+      <label class="inline"><input id="guestCanChoose" type="checkbox" ${cfg.guestCanChoose ? 'checked' : ''}> L'invité choisit son template</label>
+      <label class="inline"><input id="gifEnabled" type="checkbox" ${cfg.gifEnabled ? 'checked' : ''}> GIF et boomerangs proposés</label>
+      <label class="inline">Format par défaut <select id="defaultFormat" class="small">${formatOptions(cfg.defaultFormat || S.defaultFormat)}</select></label>
+    </div>
+    <div class="opt-line"><b>Détourage précis</b> ${S.subjectModel?.installed ? `<span class="badge ok">installé</span> ${perfNotice()}` : modelNotice()}</div>
+  </div>
+  ${cards ? `<div id="tplList" class="tpl-list">${cards}</div>` : '<p class="sub">Aucun template.</p>'}`;
 }
 
 function camera() {
@@ -892,10 +996,13 @@ function bindLights() {
     toast('Prise de vue pendant 8 s');
   }));
   document.querySelectorAll('[data-light-identify]').forEach((b) => b.addEventListener('click', () => busy(b, () => api('/api/admin/lights/identify', { method: 'POST', body: { id: b.dataset.lightIdentify } }))));
-  document.querySelectorAll('[data-light-forget]').forEach((b) => b.addEventListener('click', () => busy(b, async () => {
+  document.querySelectorAll('[data-light-forget]').forEach((b) => b.addEventListener('click', async () => {
+    if (!await askConfirm('Oublier cette lumière ?', 'Oublier', 'delete')) return;
+    busy(b, async () => {
     await api(`/api/admin/lights/${encodeURIComponent(b.dataset.lightForget)}`, { method: 'DELETE' });
     await refresh();
-  })));
+    });
+  }));
 }
 
 // ---------- Boîtier : réglages de prise de vue (mode boîtier / manuel / auto avec calibrage) ----------
@@ -1253,13 +1360,16 @@ function selectedEventId() {
   return S.events.some((e) => e.id === id) ? id : S.activeEventId;
 }
 
-// Sessions d'un autre événement que celui en cours : chargées à la demande
-let eventSessions = null; // { id, sessions }
-async function loadEventSessions(id) {
+// Sessions d'un événement, par page : la première de l'événement en cours arrive avec l'état, les autres à la demande
+let eventSessions = null; // { id, page, pages, total, sessions }
+let sessionsPage = { id: null, page: 1 };
+const pageOf = (id) => (sessionsPage.id === id ? sessionsPage.page : 1);
+async function loadEventSessions(id, page = pageOf(id)) {
   try {
-    const r = await api(`/api/admin/events/${encodeURIComponent(id)}/sessions`);
-    eventSessions = { id, sessions: r.sessions };
-  } catch (e) { toast(e.message, true); eventSessions = { id, sessions: [] }; }
+    const r = await api(`/api/admin/events/${encodeURIComponent(id)}/sessions?page=${page}`);
+    eventSessions = { id, page: r.page, pages: r.pages, total: r.total, sessions: r.sessions };
+    sessionsPage = { id, page: r.page };
+  } catch (e) { toast(e.message, true); eventSessions = { id, page, pages: 1, total: 0, sessions: [] }; }
   if (currentSection() === 'sessions' && selectedEventId() === id) render();
 }
 
@@ -1269,73 +1379,223 @@ const frDate = (d) => new Date(`${d}T12:00:00`).toLocaleDateString('fr-FR', { da
 function sessions() {
   const selId = selectedEventId();
   const ev = S.events.find((e) => e.id === selId);
+  const page = pageOf(selId);
+  const per = S.sessionsPerPage || 48;
   let list = null;
-  if (selId === S.activeEventId) list = S.sessions;
-  else if (eventSessions?.id === selId) list = eventSessions.sessions;
-  else loadEventSessions(selId);
+  if (selId === S.activeEventId && page === 1) list = S.sessions;
+  else if (eventSessions?.id === selId && eventSessions.page === page) list = eventSessions.sessions;
+  else loadEventSessions(selId, page);
+  const pages = Math.max(1, Math.ceil((ev?.sessions || 0) / per));
+  const pager = pages > 1 ? `<div class="row pager">
+      <button class="btn small" data-page="${page - 1}" ${page <= 1 ? 'disabled' : ''} aria-label="Page précédente">‹</button>
+      <span>${(page - 1) * per + 1}–${Math.min(page * per, ev.sessions)} sur ${ev.sessions}</span>
+      <button class="btn small" data-page="${page + 1}" ${page >= pages ? 'disabled' : ''} aria-label="Page suivante">›</button>
+    </div>` : '';
 
-  const folders = S.events.map((e) => `
-    <a class="folder ${e.id === selId ? 'selected' : ''}" href="#sessions=${encodeURIComponent(e.id)}">
-      <span class="folder-name">${esc(e.name)}${e.active ? ' <span class="badge ok">en cours</span>' : ''}</span>
-      <small>${esc(frDate(e.date))}</small>
-      <small>${plural(e.sessions, 'session')} · ${plural(e.photos, 'photo')} · ${plural(e.printed || 0, 'tirage')}</small>
-    </a>`).join('');
-
-  const moveOptions = (s) => S.events.map((e) => `<option value="${esc(e.id)}" ${e.id === s.eventId ? 'selected' : ''}>${esc(e.name)}</option>`).join('');
-  const rows = (list || []).map((s) => `
-    <tr>
-      <td>${s.final ? `<img class="thumb" src="${esc(s.final.thumbUrl)}" alt="">` : '<div class="thumb"></div>'}</td>
-      <td><code>${esc(s.id)}</code><br><small>${new Date(s.createdAt).toLocaleString('fr-FR')}</small></td>
-      <td data-label="Template">${esc(s.templateName)}</td>
-      <td data-label="Statut"><span class="badge ${s.status === 'done' ? 'ok' : s.status === 'error' ? 'err' : ''}">${esc(s.status)}</span>${s.error ? `<br><small>${esc(s.error)}</small>` : ''}</td>
-      <td data-label="Copies">${s.copies}</td>
-      <td>${S.events.length > 1 ? `<select class="small" data-move="${esc(s.id)}" title="Déplacer vers un autre événement">${moveOptions(s)}</select>` : ''}</td>
-      <td class="actions">${s.final ? `${s.gif || S.printer?.available === false ? '' : `<button class="btn small secondary" data-reprint="${esc(s.id)}">Réimprimer</button> `}<button class="btn small" type="button" data-view="${esc(s.final.url)}" data-alt="${s.gif ? 'GIF' : 'Photo'} ${esc(s.id)}">Voir</button> ` : ''}<button class="btn small danger" data-del-session="${esc(s.id)}" ${s.status === 'printing' ? 'disabled title="Impression en cours"' : ''}>Supprimer</button></td>
-    </tr>`).join('');
-
-  const exp = (content, label, n) => n
-    ? `<a class="btn small secondary" href="/api/admin/events/${encodeURIComponent(ev.id)}/export?content=${content}" download>${label}</a>`
-    : `<button class="btn small secondary" disabled>${label}</button>`;
+  const STATUS = { shooting: ['en cours', ''], review: ['relecture', ''], copies: ['choix des tirages', ''], printing: ['impression…', 'warn'], done: ['terminée', 'ok'], error: ['erreur', 'err'] };
+  const hour = (iso) => new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const day = (iso) => new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const canPrint = S.printer?.available !== false;
+  const others = S.events.filter((e) => e.id !== selId);
+  // Menu « … » d'une session : déplacer vers un autre événement, supprimer
+  const menu = (s) => moreMenu([
+    others.length ? `<button class="menu-item" data-move-to="${esc(s.id)}">Déplacer vers un autre événement…</button>` : '',
+    `<button class="menu-item danger" data-del-session="${esc(s.id)}" ${s.status === 'printing' ? 'disabled' : ''}>Supprimer</button>`
+  ]);
+  const view = (s) => {
+    const [label, cls] = STATUS[s.status] || [s.status, ''];
+    return {
+      label, cls,
+      tag: s.kind === 'boomerang' ? 'BOOMERANG' : s.gif ? 'GIF' : '',
+      when: `${hour(s.createdAt)}${s.createdAt.slice(0, 10) === ev.date ? '' : ` <small>${day(s.createdAt)}</small>`}`,
+      prints: s.gif ? 'numérique' : s.copies ? plural(s.copies, 'tirage') : 'sans tirage',
+      thumb: s.final ? `<button type="button" class="sess-thumb" data-view="${esc(s.final.url)}" data-alt="${esc(s.templateName)} · ${hour(s.createdAt)}"><img src="${esc(s.final.thumbUrl)}" alt="" loading="lazy"></button>` : '<div class="sess-thumb empty">pas de montage</div>',
+      reprint: s.final && !s.gif && canPrint ? `<button class="btn small secondary" data-reprint="${esc(s.id)}">Réimprimer</button>` : ''
+    };
+  };
+  const mosaic = photosView === 'grid';
+  const cards = (list || []).map((s) => {
+    const v = view(s);
+    return mosaic ? `
+    <div class="sess-card" title="Session ${esc(s.id)}">
+      ${v.thumb}
+      ${v.tag ? `<span class="sess-tag">${v.tag}</span>` : ''}
+      <div class="sess-meta"><b>${v.when}</b><span class="badge ${v.cls}">${v.label}</span></div>
+      <div class="sess-sub">${esc(s.templateName)} · ${v.prints}</div>
+      ${s.error ? `<small class="hw-err">${esc(s.error)}</small>` : ''}
+      <div class="sess-actions">${v.reprint}${menu(s)}</div>
+    </div>` : `
+    <tr title="Session ${esc(s.id)}">
+      <td class="sess-td-thumb">${v.thumb}</td>
+      <td><b>${v.when}</b></td>
+      <td>${esc(s.templateName)}${v.tag ? ` <span class="badge">${v.tag}</span>` : ''}</td>
+      <td><span class="badge ${v.cls}">${v.label}</span>${s.error ? `<br><small class="hw-err">${esc(s.error)}</small>` : ''}</td>
+      <td>${v.prints}</td>
+      <td class="actions"><div class="cell-actions">${v.reprint}${menu(s)}</div></td>
+    </tr>`;
+  }).join('');
+  const body = mosaic ? `<div class="sess-grid">${cards}</div>`
+    : `<table class="data-table sess-table"><thead><tr><th></th><th>Heure</th><th>Cadre</th><th>Statut</th><th>Tirages</th><th></th></tr></thead><tbody>${cards}</tbody></table>`;
+  const evOptions = S.events.map((e) => `<option value="${esc(e.id)}" ${e.id === selId ? 'selected' : ''}>${esc(e.name)}${e.active ? ' (en cours)' : ''} · ${esc(frDate(e.date))}</option>`).join('');
   return `
-  <h2>Événements &amp; photos</h2>
-  <p class="sub">Un dossier par événement. Les nouvelles sessions vont dans l'événement <b>en cours</b>, qui porte aussi le quota et le compteur de tirages du tableau de bord.</p>
-  <div class="folders">
-    ${folders}
-    <button class="folder new" id="btnNewEvent"><span class="folder-name">+ Nouvel événement</span><small>nom, date, et il devient l'événement en cours</small></button>
-  </div>
+  <h2>Photos</h2>
   <div class="card">
-    <div class="row" style="justify-content:space-between;align-items:flex-start">
-      <div>
-        <h3 style="margin:0">${esc(ev.name)} ${ev.active ? '<span class="badge ok">en cours</span>' : ''}</h3>
-        <small>${esc(frDate(ev.date))} · ${plural(ev.sessions, 'session')} · ${plural(ev.photos, 'photo originale', 'photos originales')} · ${plural(ev.finals, 'montage')} · ${plural(ev.printed || 0, 'tirage')}</small>
+    <div class="ev-head">
+      <div class="row">
+        <select id="photosEvent" class="ev-select">${evOptions}</select>
+        <small>${plural(ev.sessions, 'session')} · ${plural(ev.finals, 'montage')} · ${plural(ev.printed || 0, 'tirage')}</small>
       </div>
       <div class="row">
-        ${ev.active ? '' : `<button class="btn small" id="btnActivateEvent">Définir comme événement en cours</button>`}
-        <button class="btn small" id="btnEditEvent">Renommer / changer la date</button>
+        ${pager}
+        <div class="seg" role="group" aria-label="Affichage">
+          <button class="${mosaic ? '' : 'on'}" data-photos-view="list">Liste</button>
+          <button class="${mosaic ? 'on' : ''}" data-photos-view="grid">Mosaïque</button>
+        </div>
       </div>
     </div>
-    <div class="row" style="margin-top:14px">
-      <b>Exporter (ZIP)</b>
-      ${exp('originals', `Photos originales (${ev.photos})`, ev.photos)}
-      ${exp('finals', `Montages avec template (${ev.finals})`, ev.finals)}
-      ${exp('both', 'Les deux', ev.photos + ev.finals)}
-    </div>
-    <table class="sessions-table" style="margin-top:14px">
-      <thead><tr><th></th><th>Session</th><th>Template</th><th>Statut</th><th>Copies</th><th>Événement</th><th></th></tr></thead>
-      <tbody>${list === null ? '<tr><td colspan="7">Chargement…</td></tr>' : rows || '<tr><td colspan="7">Aucune session dans cet événement.</td></tr>'}</tbody>
-    </table>
-    <div class="row" style="margin-top:18px">
-      <button class="btn danger" id="btnResetSessions" ${ev.sessions ? '' : 'disabled'}>Vider l'événement (${plural(ev.sessions, 'session')})</button>
-      ${ev.active ? '<small>L\'événement en cours ne peut pas être supprimé : activez-en un autre d\'abord.</small>' : `<button class="btn danger" id="btnDeleteEvent">Supprimer l'événement</button>`}
-    </div>
+    ${list === null ? '<p class="sub">Chargement…</p>' : cards ? body : '<p class="sub">Aucune photo dans cet événement.</p>'}
+    ${pages > 1 ? `<div class="ev-foot">${pager}</div>` : ''}
   </div>`;
+}
+
+/** Choix d'un événement (déplacer une session) : petite fenêtre avec la liste, rend l'id choisi ou null. */
+function pickEvent(exceptId) {
+  return new Promise((resolve) => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'confirm-dialog';
+    dlg.innerHTML = `<p>Déplacer vers :</p><select class="pick-ev">${S.events.filter((e) => e.id !== exceptId).map((e) => `<option value="${esc(e.id)}">${esc(e.name)} · ${esc(frDate(e.date))}</option>`).join('')}</select>
+      <div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn" value="">Annuler</button><button class="btn primary" value="ok">Déplacer</button></div>`;
+    const done = (v) => { dlg.close(); dlg.remove(); resolve(v); };
+    dlg.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => done(b.value ? dlg.querySelector('select').value : null)));
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); done(null); });
+    document.body.appendChild(dlg);
+    dlg.showModal();
+  });
+}
+
+/** Menu « … » : actions secondaires d'une ligne (les éléments vides sont ignorés). */
+function moreMenu(items) {
+  const html = items.filter(Boolean).join('');
+  return html ? `<details class="more"><summary class="btn small more-btn" aria-label="Plus d'actions" title="Plus d'actions"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></summary><div class="menu">${html}</div></details>` : '';
+}
+/** Un seul menu ouvert à la fois ; un clic ailleurs ou sur une action le ferme. */
+document.addEventListener('click', (e) => {
+  for (const d of document.querySelectorAll('details.more[open]')) if (!d.contains(e.target) || e.target.closest('.menu-item')) d.open = false;
+});
+document.addEventListener('toggle', (e) => {
+  if (e.target.matches?.('details.more') && e.target.open) for (const d of document.querySelectorAll('details.more[open]')) if (d !== e.target) d.open = false;
+}, true);
+
+let photosView = (() => { try { return localStorage.getItem('photosView') || 'grid'; } catch { return 'grid'; } })();
+
+// ---------- Événements : liste paginée, actions par événement ----------
+const EVENTS_PER_PAGE = 12;
+let eventsPage = 1;
+function eventsSection() {
+  const all = S.events; // les plus récents d'abord
+  const pages = Math.max(1, Math.ceil(all.length / EVENTS_PER_PAGE));
+  eventsPage = Math.min(Math.max(1, eventsPage), pages);
+  const shown = all.slice((eventsPage - 1) * EVENTS_PER_PAGE, eventsPage * EVENTS_PER_PAGE);
+  const pager = pages > 1 ? `<div class="row pager">
+      <button class="btn small" data-ev-page="${eventsPage - 1}" ${eventsPage <= 1 ? 'disabled' : ''} aria-label="Page précédente">‹</button>
+      <span>${(eventsPage - 1) * EVENTS_PER_PAGE + 1}–${Math.min(eventsPage * EVENTS_PER_PAGE, all.length)} sur ${all.length}</span>
+      <button class="btn small" data-ev-page="${eventsPage + 1}" ${eventsPage >= pages ? 'disabled' : ''} aria-label="Page suivante">›</button>
+    </div>` : '';
+  const key = S.usb?.volume && !S.usb?.exporting;
+  const zip = (e, content, label, n) => (n ? `<a class="menu-item" href="/api/admin/events/${encodeURIComponent(e.id)}/export?content=${content}" download>${label}</a>` : '');
+  const rows = shown.map((e) => `
+    <tr class="${e.active ? 'ev-active' : ''}">
+      <td><div class="cell-title">${esc(e.name)} ${e.active ? '<span class="badge ok">en cours</span>' : ''}</div><div class="cell-sub">${esc(frDate(e.date))}</div></td>
+      <td class="num">${e.sessions}</td>
+      <td class="num">${e.photos}</td>
+      <td class="num">${e.finals}</td>
+      <td class="num">${e.printed || 0}</td>
+      <td class="actions"><div class="cell-actions">
+        <a class="btn small" href="#sessions=${encodeURIComponent(e.id)}">Photos</a>
+        ${moreMenu([
+          e.active ? '' : `<button class="menu-item" data-ev-activate="${esc(e.id)}">Définir en cours</button>`,
+          `<button class="menu-item" data-ev-rename="${esc(e.id)}">Renommer</button>`,
+          zip(e, 'finals', 'Télécharger les montages (ZIP)', e.finals),
+          zip(e, 'originals', 'Télécharger les originaux (ZIP)', e.photos),
+          zip(e, 'both', 'Télécharger tout (ZIP)', e.photos + e.finals),
+          key && e.sessions ? `<button class="menu-item" data-usb-copy="${esc(e.id)}">Copier sur la clé</button>` : '',
+          e.sessions ? `<button class="menu-item danger" data-ev-empty="${esc(e.id)}">Vider</button>` : '',
+          e.active ? '' : `<button class="menu-item danger" data-ev-delete="${esc(e.id)}">Supprimer</button>`
+        ])}
+      </div></td>
+    </tr>`).join('');
+  return `
+  <div class="ev-page-head">
+    <h2>Événements</h2>
+    <button class="btn primary" id="btnNewEvent">+ Nouvel événement</button>
+  </div>
+  ${usbCard()}
+  <div class="card">
+    ${pager ? `<div class="ev-foot ev-top">${pager}</div>` : ''}
+    <table class="data-table ev-table">
+      <thead><tr><th>Événement</th><th class="num">Sessions</th><th class="num">Originaux</th><th class="num">Montages</th><th class="num">Tirages</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${pager ? `<div class="ev-foot">${pager}</div>` : ''}
+  </div>`;
+}
+
+/** Clé USB (page Événements & photos) : état, copie de l'événement affiché, éjection, copie automatique. */
+const gb = (n) => (n == null ? '' : `${(n / 1e9).toFixed(n < 10e9 ? 1 : 0).replace('.', ',')} Go libres`);
+function usbCard() {
+  const u = S.usb;
+  if (!u?.available) return '';
+  const cfg = S.config.usb || {};
+  const x = u.exporting;
+  const last = u.lastExport;
+  const state = x ? `<span class="badge warn">copie ${x.done} / ${x.total}</span> <small>${esc(x.eventName)}</small>`
+    : u.volume ? `<span class="badge ok">${esc(u.volume.name)}</span> <small>${gb(u.volume.free)}</small>`
+    : '<span class="badge">aucune clé</span>';
+  const lastLine = last && !x ? `<small>Dernière copie ${new Date(last.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} : ${last.ok ? `${plural(last.copied, 'fichier copié', 'fichiers copiés')}${last.skipped ? `, ${last.skipped} déjà là` : ''}` : esc(last.error)} · <code>${esc(last.dest.split(/[\\/]/).slice(-2).join('/'))}</code></small>` : '';
+  return `
+    <div class="card usb-card">
+      <div class="row"><b>Clé USB</b> ${state}
+        <button class="btn small" id="btnUsbEject" ${u.volume && !x ? '' : 'disabled'}>Éjecter</button>
+      </div>
+      <form id="formUsb" class="row">
+        <label class="inline"><input name="usbAuto" type="checkbox" ${cfg.autoExport !== false ? 'checked' : ''}> Copie auto de l'événement en cours au branchement</label>
+        <select name="usbContent" class="small usb-content">${[['both', 'Originaux et montages'], ['finals', 'Montages'], ['originals', 'Originaux']].map(([v, lb]) => `<option value="${v}" ${(cfg.content || 'both') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select>
+      </form>
+      ${u.error && !x ? `<small class="hw-err">${esc(u.error)}</small>` : lastLine}
+    </div>`;
+}
+
+/** Copie en cours : l'état de la clé est relu chaque seconde jusqu'à la fin. */
+function pollUsb() {
+  clearTimeout(pollUsb.t);
+  pollUsb.t = setTimeout(async () => {
+    try { S.usb = (await api('/api/admin/usb')).usb; } catch { return; }
+    if (['events', 'dashboard'].includes(currentSection())) render();
+    if (S.usb?.exporting) pollUsb();
+  }, 1000);
+}
+
+function bindUsb() {
+  if (!$('#formUsb')) return;
+  autoSave($('#formUsb'), (fd) => saveConfig({ usb: { autoExport: fd.get('usbAuto') === 'on', content: fd.get('usbContent') || 'both' } }));
+  document.querySelectorAll('[data-usb-copy]').forEach((b) => b.addEventListener('click', async () => {
+    try { S.usb = (await api('/api/admin/usb/export', { method: 'POST', body: { eventId: b.dataset.usbCopy } })).usb; render(); pollUsb(); } catch (e) { toast(e.message, true); }
+  }));
+  $('#btnUsbEject')?.addEventListener('click', async () => {
+    const b = $('#btnUsbEject');
+    b.disabled = true;
+    b.textContent = 'Éjection…';
+    try { S.usb = (await api('/api/admin/usb/eject', { method: 'POST' })).usb; toast('Clé éjectée, vous pouvez la retirer'); } catch (e) { toast(e.message, true); }
+    render();
+  });
+  if (S.usb?.exporting) pollUsb();
 }
 
 /** Vide un événement (en cours par défaut) : sessions, photos et compteur de tirages. */
 async function resetSessions(eventId = S.activeEventId) {
   const ev = S.events.find((e) => e.id === eventId);
   const n = ev.sessions;
-  if (!confirm(`Supprimer les ${n} session${n > 1 ? 's' : ''} de « ${ev.name} » et leurs photos, et remettre son compteur de tirages à zéro ?\nCette action est irréversible.`)) return;
+  if (!await askConfirm(`Vider « ${ev.name} » ?\n\n${n} session${n > 1 ? 's' : ''} et leurs photos seront supprimées, compteur de tirages remis à zéro.`, 'Vider', 'delete')) return;
   try {
     const r = await api('/api/admin/sessions/reset', { method: 'POST', body: { eventId } });
     eventSessions = null;
@@ -1668,7 +1928,7 @@ function renderLayerList() {
     markDirty();
     renderAll();
   });
-  ul.querySelectorAll('[data-rm]').forEach((b) => b.onclick = () => removeLayer(b.dataset.rm));
+  ul.querySelectorAll('[data-rm]').forEach((b) => b.onclick = async () => { if (await askConfirm('Supprimer ce calque ?', 'Supprimer', 'delete')) removeLayer(b.dataset.rm); });
 }
 
 function removeLayer(id) {
@@ -1897,12 +2157,10 @@ function imageBgFields(l) {
 function perfNotice() {
   const p = S.cutoutPerf || {};
   const sec = (v) => `${String(v).replace('.', ',')} s`;
-  const measured = p.preciseSec == null ? '<small>Pas encore mesuré sur cette machine (mesure une seule fois, 20 s après le démarrage, si un template s\'en sert ; gardée ensuite).</small>'
-    : p.slow ? `<span class="badge warn">${sec(p.preciseSec)} par photo</span> <small>trop lent pour une séance (au-delà de ${p.thresholdSec} s)${p.fallback ? ' : les photos des invités utilisent le modèle rapide.' : '.'}</small>`
-    : `<span class="badge ok">${sec(p.preciseSec)} par photo</span> <small>mesuré sur cette machine</small>`;
-  return `<p>Vitesse : ${measured}</p>
-    <label class="inline"><input id="cutoutAuto" type="checkbox" ${S.config.templates.cutoutAuto !== false ? 'checked' : ''}> Passer au modèle rapide si cette machine est trop lente pour le précis</label>
-    <small>Décoché : le modèle précis est toujours utilisé, même si l'invité doit attendre.</small>`;
+  const measured = p.preciseSec == null ? '<span class="badge">vitesse non mesurée</span>'
+    : `<span class="badge ${p.slow ? 'warn' : 'ok'}">${sec(p.preciseSec)} par photo${p.slow ? ', trop lent' : ''}</span>`;
+  return `${measured}
+    <label class="inline"><input id="cutoutAuto" type="checkbox" ${S.config.templates.cutoutAuto !== false ? 'checked' : ''}> Modèle rapide si la machine est trop lente</label>`;
 }
 
 function modelNotice() {
@@ -2281,7 +2539,7 @@ function unbindEditor() {
   E.drag = null;
 }
 
-const SECTIONS = { dashboard, sessions, templates: templatesSection, editor: editorSection, flow, printing, sharing, theme: themeSection, texts: textsSection, camera, control: controlSection, lights: lightsPage, security, install: installSection };
+const SECTIONS = { dashboard, events: eventsSection, sessions, templates: templatesSection, editor: editorSection, flow, printing, sharing, theme: themeSection, texts: textsSection, camera, control: controlSection, lights: lightsPage, security, install: installSection };
 const OLD_HASHES = { limits: 'printing', hardware: 'camera', devices: 'control' }; // anciens liens de l'admin
 
 // ---------- Rendu + événements ----------
@@ -2401,9 +2659,9 @@ function bindSection(sec) {
       await api('/api/admin/counters', { method: 'POST', body: { paperRemaining: v === '' ? null : Number(v) } });
       toast('Papier mis à jour'); refresh();
     };
-    $('#btnPaperOff').onclick = async () => { await api('/api/admin/counters', { method: 'POST', body: { paperRemaining: null } }); refresh(); };
+    if ($('#btnPaperOff')) $('#btnPaperOff').onclick = async () => { await api('/api/admin/counters', { method: 'POST', body: { paperRemaining: null } }); refresh(); };
     $('#btnResetPrinted').onclick = async () => {
-      if (!confirm('Remettre le compteur de tirages à zéro ?')) return;
+      if (!await askConfirm('Remettre le compteur de tirages à zéro ?', 'Remettre à zéro', 'delete')) return;
       await api('/api/admin/counters', { method: 'POST', body: { reset: true } });
       toast('Compteur remis à zéro'); refresh();
     };
@@ -2411,6 +2669,19 @@ function bindSection(sec) {
   }
 
   if (sec === 'install') {
+    const check = async (btn) => {
+      if (btn) btn.disabled = true;
+      try { S.update = (await api('/api/admin/update/check', { method: 'POST' })).update; } catch (err) { if (btn) toast(err.message, true); }
+      if (currentSection() === 'install') render();
+    };
+    if (S.update?.available && !S.update.checkedAt && !check.done) { check.done = true; check(); } // une fois en arrivant sur la page
+    $('#btnUpdateCheck')?.addEventListener('click', (e) => check(e.currentTarget));
+    $('#btnUpdateInstall')?.addEventListener('click', async () => {
+      if (!await askConfirm('Mettre à jour la borne ?\n\nElle devra ensuite redémarrer.', 'Mettre à jour', 'retake')) return;
+      try { S.update = (await api('/api/admin/update/install', { method: 'POST' })).update; render(); pollUpdate(); } catch (err) { toast(err.message, true); }
+    });
+    $('#btnUpdateRestart')?.addEventListener('click', () => $('#btnRestart')?.click());
+    if (S.update?.updating) pollUpdate();
     // Revérifier, installer ce qui manque (suivi tant que ça tourne)
     $('#btnSetupCheck')?.addEventListener('click', async (e) => {
       e.currentTarget.disabled = true;
@@ -2476,8 +2747,8 @@ function bindSection(sec) {
     });
     upload($('#formLogo'), '/api/admin/logo', 'Logo envoyé, la borne est à jour');
     upload($('#formBg'), '/api/admin/background', 'Image de fond envoyée');
-    $('#btnLogoReset')?.addEventListener('click', () => saveConfig({ booth: { logo: '' }, theme: { custom: { logo: '' } } }, 'Logo par défaut rétabli'));
-    $('#btnBgReset')?.addEventListener('click', () => saveConfig({ booth: { backgroundImage: '' }, theme: { custom: { backgroundImage: '' } } }, 'Image de fond retirée'));
+    $('#btnLogoReset')?.addEventListener('click', async () => await askConfirm('Revenir au logo par défaut ?', 'Logo par défaut', 'delete') && saveConfig({ booth: { logo: '' }, theme: { custom: { logo: '' } } }, 'Logo par défaut rétabli'));
+    $('#btnBgReset')?.addEventListener('click', async () => await askConfirm('Retirer l\'image de fond ?', 'Retirer', 'delete') && saveConfig({ booth: { backgroundImage: '' }, theme: { custom: { backgroundImage: '' } } }, 'Image de fond retirée'));
   }
 
   if (sec === 'templates') {
@@ -2493,9 +2764,13 @@ function bindSection(sec) {
     document.querySelectorAll('[data-enable], input[name=defaultTpl], #guestCanChoose, #defaultFormat, #gifEnabled').forEach((el) => el.addEventListener('change', () => saveTemplates()));
     $('#cutoutAuto')?.addEventListener('change', (e) => saveConfig({ templates: { cutoutAuto: e.target.checked } }));
     document.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
-      if (!confirm(`Supprimer le template « ${b.dataset.del} » ?`)) return;
+      if (!await askConfirm(`Supprimer le template « ${b.dataset.del} » ?`, 'Supprimer', 'delete')) return;
       try { await api(`/api/admin/templates/${encodeURIComponent(b.dataset.del)}`, { method: 'DELETE' }); toast('Template supprimé'); refresh(); } catch (e) { toast(e.message, true); }
     }));
+    const dlg = $('#dlgNewTemplate');
+    $('#btnNewTemplate').onclick = () => { dlg.showModal(); dlg.querySelector('input[name=name]').focus(); };
+    $('#btnNewTemplateCancel').onclick = () => { dlg.close(); $('#formNewTemplate').reset(); };
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); }); // clic hors de la fenêtre
     $('#formNewTemplate').onsubmit = async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
@@ -2503,6 +2778,7 @@ function bindSection(sec) {
       try {
         const t = await api('/api/admin/templates', { method: 'POST', form: fd });
         S = await api('/api/admin/state');
+        dlg.close();
         toast(`Template « ${t.name} » créé`);
         location.hash = `editor=${encodeURIComponent(t.id)}`;
       } catch (err) { toast(err.message, true); }
@@ -2515,23 +2791,41 @@ function bindSection(sec) {
     const views = [...document.querySelectorAll('[data-view]')]; // les photos de la liste, dans l'ordre affiché
     const viewList = views.map((b) => ({ url: b.dataset.view, alt: b.dataset.alt }));
     views.forEach((b, k) => b.addEventListener('click', () => openLightbox(null, null, viewList, k)));
+    const reload = () => { eventSessions = null; refresh(); };
     document.querySelectorAll('[data-reprint]').forEach((b) => b.addEventListener('click', async () => {
       const copies = Number(prompt('Nombre de copies à réimprimer ?', '1'));
       if (!copies) return;
-      try { await api(`/api/admin/reprint/${b.dataset.reprint}`, { method: 'POST', body: { copies } }); toast('Réimpression lancée'); eventSessions = null; refresh(); } catch (e) { toast(e.message, true); }
+      try { await api(`/api/admin/reprint/${b.dataset.reprint}`, { method: 'POST', body: { copies } }); toast('Réimpression lancée'); reload(); } catch (e) { toast(e.message, true); }
     }));
     document.querySelectorAll('[data-del-session]').forEach((b) => b.addEventListener('click', async () => {
-      const id = b.dataset.delSession;
-      if (!confirm(`Supprimer la session ${id} et ses photos ?`)) return;
-      try { await api(`/api/admin/sessions/${id}`, { method: 'DELETE' }); toast('Session supprimée'); eventSessions = null; refresh(); } catch (e) { toast(e.message, true); }
+      if (!await askConfirm('Supprimer cette session et ses photos ?', 'Supprimer', 'delete')) return;
+      try { await api(`/api/admin/sessions/${b.dataset.delSession}`, { method: 'DELETE' }); toast('Session supprimée'); reload(); } catch (e) { toast(e.message, true); }
+    }));
+    document.querySelectorAll('[data-move-to]').forEach((b) => b.addEventListener('click', async () => {
+      const sid = b.dataset.moveTo;
+      const eventId = await pickEvent(selectedEventId());
+      if (!eventId) return;
+      try { await api(`/api/admin/sessions/${sid}/move`, { method: 'POST', body: { eventId } }); toast('Session déplacée'); reload(); } catch (e) { toast(e.message, true); }
+    }));
+    document.querySelectorAll('[data-photos-view]').forEach((b) => b.addEventListener('click', () => {
+      photosView = b.dataset.photosView;
+      try { localStorage.setItem('photosView', photosView); } catch { /* navigation privée */ }
+      render();
     }));
     const evId = selectedEventId();
-    const ev = S.events.find((e) => e.id === evId);
-    const reload = () => { eventSessions = null; refresh(); };
-    $('#btnResetSessions').onclick = () => resetSessions(evId);
-    document.querySelectorAll('[data-move]').forEach((sel) => sel.addEventListener('change', async () => {
-      try { await api(`/api/admin/sessions/${sel.dataset.move}/move`, { method: 'POST', body: { eventId: sel.value } }); toast('Session déplacée'); reload(); } catch (e) { toast(e.message, true); }
+    document.querySelectorAll('[data-page]').forEach((b) => b.addEventListener('click', () => {
+      sessionsPage = { id: evId, page: Number(b.dataset.page) };
+      render();
+      window.scrollTo(0, 0);
     }));
+    $('#photosEvent')?.addEventListener('change', (e) => { location.hash = `#sessions=${encodeURIComponent(e.target.value)}`; });
+  }
+
+  if (sec === 'events') {
+    const evOf = (id) => S.events.find((e) => e.id === id);
+    const reload = () => { eventSessions = null; refresh(); };
+    bindUsb();
+    document.querySelectorAll('[data-ev-page]').forEach((b) => b.addEventListener('click', () => { eventsPage = Number(b.dataset.evPage); render(); window.scrollTo(0, 0); }));
     $('#btnNewEvent').onclick = async () => {
       const name = prompt('Nom de l\'événement ?', '');
       if (!name?.trim()) return;
@@ -2540,29 +2834,28 @@ function bindSection(sec) {
       try {
         const created = await api('/api/admin/events', { method: 'POST', body: { name, date, activate: true } });
         toast(`« ${created.name} » est l'événement en cours`);
-        location.hash = `#sessions=${encodeURIComponent(created.id)}`;
+        eventsPage = 1;
         reload();
       } catch (e) { toast(e.message, true); }
     };
-    if ($('#btnActivateEvent')) $('#btnActivateEvent').onclick = async () => {
-      try { await api(`/api/admin/events/${encodeURIComponent(evId)}/activate`, { method: 'POST' }); toast(`« ${ev.name} » est l'événement en cours`); reload(); } catch (e) { toast(e.message, true); }
-    };
-    $('#btnEditEvent').onclick = async () => {
+    document.querySelectorAll('[data-ev-activate]').forEach((b) => b.addEventListener('click', async () => {
+      const ev = evOf(b.dataset.evActivate);
+      try { await api(`/api/admin/events/${encodeURIComponent(ev.id)}/activate`, { method: 'POST' }); toast(`« ${ev.name} » est l'événement en cours`); reload(); } catch (e) { toast(e.message, true); }
+    }));
+    document.querySelectorAll('[data-ev-rename]').forEach((b) => b.addEventListener('click', async () => {
+      const ev = evOf(b.dataset.evRename);
       const name = prompt('Nom de l\'événement ?', ev.name);
       if (name === null) return;
       const date = prompt('Date (AAAA-MM-JJ) ?', ev.date);
       if (date === null) return;
-      try { await api(`/api/admin/events/${encodeURIComponent(evId)}`, { method: 'PUT', body: { name, date } }); toast('Événement mis à jour'); reload(); } catch (e) { toast(e.message, true); }
-    };
-    if ($('#btnDeleteEvent')) $('#btnDeleteEvent').onclick = async () => {
-      if (!confirm(`Supprimer l'événement « ${ev.name} », ses ${ev.sessions} session(s) et toutes leurs photos ?\nPensez à exporter d'abord. Cette action est irréversible.`)) return;
-      try {
-        await api(`/api/admin/events/${encodeURIComponent(evId)}`, { method: 'DELETE' });
-        toast('Événement supprimé');
-        location.hash = '#sessions';
-        reload();
-      } catch (e) { toast(e.message, true); }
-    };
+      try { await api(`/api/admin/events/${encodeURIComponent(ev.id)}`, { method: 'PUT', body: { name, date } }); toast('Événement mis à jour'); reload(); } catch (e) { toast(e.message, true); }
+    }));
+    document.querySelectorAll('[data-ev-empty]').forEach((b) => b.addEventListener('click', () => resetSessions(b.dataset.evEmpty)));
+    document.querySelectorAll('[data-ev-delete]').forEach((b) => b.addEventListener('click', async () => {
+      const ev = evOf(b.dataset.evDelete);
+      if (!await askConfirm(`Supprimer « ${ev.name} » ?\n\n${ev.sessions} session(s) et toutes leurs photos seront supprimées.`, 'Supprimer', 'delete')) return;
+      try { await api(`/api/admin/events/${encodeURIComponent(ev.id)}`, { method: 'DELETE' }); toast('Événement supprimé'); reload(); } catch (e) { toast(e.message, true); }
+    }));
   }
 
 }
@@ -2850,7 +3143,11 @@ function onDeckPress(id) {
 let refreshTimer = 0;
 function scheduleRefresh() {
   clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(() => refresh().catch(() => {}), 400);
+  refreshTimer = setTimeout(async () => {
+    await refresh().catch(() => {});
+    // Page de sessions autre que la première de l'événement en cours : relue elle aussi
+    if (currentSection() === 'sessions' && eventSessions) loadEventSessions(eventSessions.id, eventSessions.page);
+  }, 400);
 }
 
 // Rafraîchit compteurs et sessions quand la borne travaille ; relaie le Stream Deck (admin ouverte sur la borne).
@@ -2864,7 +3161,7 @@ function scheduleRefresh() {
     if (msg?.type === 'deck') return onDeckPress(msg.id);
     if (msg?.type === 'deckInfo') return;
     if (msg?.type === 'config') refreshDevices(); // pilote de caméra changé (boîtier branché / débranché), entre autres
-    if (S && ['dashboard', 'sessions'].includes(currentSection())) scheduleRefresh();
+    if (S && ['dashboard', 'sessions', 'events'].includes(currentSection())) scheduleRefresh();
   };
   sock.onclose = () => setTimeout(ws, 3000);
 })();

@@ -18,7 +18,8 @@ import { buildPreviews } from '../template-previews.js';
 import { MjpegBroadcaster } from '../camera/mjpeg.js';
 import { OUTPUT_DIR as OUT } from '../paths.js';
 
-const EDITABLE_SECTIONS = ['booth', 'camera', 'printer', 'limits', 'templates', 'theme', 'texts', 'admin', 'share', 'gallery', 'lights', 'screen'];
+const EDITABLE_SECTIONS = ['booth', 'camera', 'printer', 'limits', 'templates', 'theme', 'texts', 'admin', 'share', 'gallery', 'lights', 'screen', 'usb'];
+const SESSIONS_PER_PAGE = 48;
 
 /** Réglages de l'écran (DDC/CI) : luminosité et volume de 0 à 100, ou null = la borne n'y touche pas. */
 function screenPatch(body = {}) {
@@ -34,7 +35,7 @@ function screenPatch(body = {}) {
 }
 const IMAGE_EXT = { 'image/png': '.png', 'image/svg+xml': '.svg', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
 
-export function adminRouter({ booth, config, store, templates, themes, devices, deck, lights = null, screen = null, setup = null, shutdown, restart, kioskScreen = () => null, remoteScreen = null }) {
+export function adminRouter({ booth, config, store, templates, themes, devices, deck, lights = null, screen = null, setup = null, updater = null, usb = null, shutdown, restart, kioskScreen = () => null, remoteScreen = null }) {
   const r = express.Router();
   const tokens = new Set();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024 } });
@@ -202,6 +203,8 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       lights: lights?.status() || null,
       screen: screen?.status() || null, // écran de la borne (DDC/CI) : luminosité, volume
       setup: setup?.status() || null, // installation : dépendances présentes ou manquantes
+      update: updater?.status() || null, // version en cours, mise à jour disponible
+      usb: usb?.status() || null, // clé USB branchée, copie en cours ou dernière copie
       cameraSettings: MANUAL_SETTINGS, // réglages du mode manuel, dans l'ordre, avec leur libellé
       canShutdown: !!shutdown,
       canRestart: !!restart,
@@ -210,7 +213,8 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       cutoutPerf: cutoutPerf(), // vitesse mesurée du modèle précis sur cette machine
       events: store.listEvents().map((ev) => booth.eventView(ev)),
       activeEventId: store.data.activeEventId,
-      sessions: store.sessionsOfEvent(store.data.activeEventId).map((s) => booth.view(s)),
+      sessions: store.sessionsOfEvent(store.data.activeEventId).slice(0, SESSIONS_PER_PAGE).map((s) => booth.view(s)), // première page
+      sessionsPerPage: SESSIONS_PER_PAGE,
       prints: store.listPrints(50),
       shareBaseUrl: booth.shareBaseUrl()
     });
@@ -224,12 +228,38 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     if (patch.booth?.touch && !['auto', 'touch', 'buttons'].includes(patch.booth.touch)) throw new HttpError(400, 'TOUCH', 'Mode d\'écran tactile inconnu');
     if (patch.booth?.window && !['kiosk', 'fullscreen'].includes(patch.booth.window)) throw new HttpError(400, 'WINDOW', 'Mode de fenêtre inconnu');
     if (patch.screen) patch.screen = screenPatch(patch.screen);
+    if (patch.usb?.content && !['originals', 'finals', 'both'].includes(patch.usb.content)) throw new HttpError(400, 'USB_CONTENT', 'Contenu attendu : originals, finals ou both');
     if (patch.camera?.driver && !CAMERA_DRIVERS.includes(patch.camera.driver)) throw new HttpError(400, 'DRIVER', 'Pilote caméra inconnu');
     if (patch.camera?.fallback && !CAMERA_FALLBACKS.includes(patch.camera.fallback)) throw new HttpError(400, 'DRIVER', 'Repli caméra inconnu');
     if (patch.printer?.driver && !PRINTER_DRIVERS.includes(patch.printer.driver)) throw new HttpError(400, 'DRIVER', 'Pilote imprimante inconnu');
     if (patch.printer?.fallback && !PRINTER_FALLBACKS.includes(patch.printer.fallback)) throw new HttpError(400, 'DRIVER', 'Repli imprimante inconnu');
     if (patch.templates?.defaultFormat && !FORMATS[patch.templates.defaultFormat]) throw new HttpError(400, 'FORMAT', 'Format inconnu');
     res.json({ config: config.update(patch) });
+  });
+
+  // Mise à jour (dépôt git) : version, recherche, installation en arrière-plan suivie par la page Installation
+  const updaterOrFail = () => { if (!updater?.status().available) throw new HttpError(409, 'UPDATE_OFF', 'Mise à jour indisponible : la borne n\'est pas un dépôt git'); return updater; };
+  r.get('/update', (req, res) => res.json({ update: updater?.status() || null }));
+  r.post('/update/check', async (req, res) => res.json({ update: await updaterOrFail().check() }));
+  r.post('/update/install', (req, res) => {
+    const u = updaterOrFail();
+    u.update().catch(() => {});
+    res.json({ update: u.status() });
+  });
+
+  // Clé USB : état, copie d'un événement (en arrière-plan), éjection
+  const usbOrFail = () => { if (!usb?.status().available) throw new HttpError(409, 'USB_OFF', 'Clé USB désactivée (BOOTH_USB=off)'); return usb; };
+  r.get('/usb', (req, res) => res.json({ usb: usb?.status() || null }));
+  r.post('/usb/export', (req, res) => {
+    const u = usbOrFail();
+    if (!u.status().volume) throw new HttpError(409, 'USB_NONE', 'Aucune clé USB branchée');
+    const eventId = String(req.body?.eventId || store.data.activeEventId);
+    booth.event(eventId); // 404 si inconnu
+    u.export(eventId).catch(() => {});
+    res.json({ usb: u.status() });
+  });
+  r.post('/usb/eject', async (req, res) => {
+    try { res.json({ usb: await usbOrFail().eject() }); } catch (e) { throw e instanceof HttpError ? e : new HttpError(409, 'USB_EJECT', e.message); }
   });
 
   // Installation : état revérifié à la demande, installation de ce qui manque en arrière-plan (suivie par le tableau de bord)
@@ -423,9 +453,14 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
 
   // ---------- Événements (dossiers de sessions) ----------
 
+  // Sessions d'un événement, par page (les plus récentes d'abord) : l'admin n'affiche jamais des milliers de lignes
   r.get('/events/:id/sessions', (req, res) => {
     const ev = booth.event(req.params.id);
-    res.json({ event: booth.eventView(ev), sessions: store.sessionsOfEvent(ev.id).map((s) => booth.view(s)) });
+    const all = store.sessionsOfEvent(ev.id);
+    const per = Math.min(500, Math.max(1, Number(req.query.per) || SESSIONS_PER_PAGE));
+    const pages = Math.max(1, Math.ceil(all.length / per));
+    const page = Math.min(pages, Math.max(1, Number(req.query.page) || 1));
+    res.json({ event: booth.eventView(ev), sessions: all.slice((page - 1) * per, page * per).map((s) => booth.view(s)), page, pages, per, total: all.length });
   });
 
   r.post('/events', (req, res) => {

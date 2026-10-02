@@ -151,6 +151,8 @@ export const DEFAULTS = {
     remoteHint: 'Connectez-vous au Wi-Fi de la borne : scannez le QR code Wi-Fi en bas à droite de son écran. Votre photo s\'affichera ici toute seule.'
   },
   admin: { pin: '1234' },
+  // Clé USB (server/usb.js) : copie de l'événement en cours au branchement ; content : originals | finals | both
+  usb: { autoExport: true, content: 'both' },
   share: {
     baseUrl: '',           // vide = http://<ip locale>:<port>
     // Adresse publique (ex. https://photobooth.domain.fr) : les QR codes de photo y mènent. Sur le Wi-Fi de la borne,

@@ -45,7 +45,9 @@ class M1ddc {
   prop(p) { return p === 'volume' ? 'volume' : 'luminance'; }
   async get(id, prop) {
     const v = parseInt(await run(this.bin, ['display', this.num(id), 'get', this.prop(prop)]), 10);
-    if (Number.isNaN(v)) throw new Error('pas de réponse DDC/CI');
+    // Écran qui ne répond pas (port HDMI intégré des Mac Apple Silicon, DDC/CI coupé dans le menu de l'écran) :
+    // m1ddc rend une valeur hors bornes (110, -128…) au lieu d'une erreur
+    if (Number.isNaN(v) || v < 0 || v > 100) throw new Error('pas de réponse DDC/CI');
     return v;
   }
   async set(id, prop, value) { await run(this.bin, ['display', this.num(id), 'set', this.prop(prop), String(value)]); }
@@ -142,12 +144,18 @@ export class Screen extends EventEmitter {
       try {
         s.displays = await this.driver.list();
         const wanted = String(this.cfg().display || '');
-        s.display = (wanted && s.displays.find((d) => d.id === wanted || d.name === wanted)) || s.displays.find((d) => d.name) || null;
-        s.error = null;
+        // Écran demandé, sinon le premier écran externe nommé qui répond vraiment en DDC/CI
+        const named = s.displays.filter((d) => d.name);
+        const candidates = wanted ? s.displays.filter((d) => d.id === wanted || d.name === wanted) : named;
+        s.display = null; s.brightness = null; s.volume = null; s.error = null;
+        for (const d of candidates) {
+          try { s.brightness = await this.driver.get(d.id, 'brightness'); s.display = d; break; } catch { /* écran muet : le suivant */ }
+        }
         if (s.display) {
-          s.brightness = await this.driver.get(s.display.id, 'brightness');
           try { s.volume = await this.driver.get(s.display.id, 'volume'); s.volumeOk = true; } catch { s.volume = null; s.volumeOk = false; }
-        } else { s.brightness = null; s.volume = null; }
+        } else if (candidates.length) {
+          s.error = `${candidates.map((d) => d.name || d.id).join(', ')} ne répond pas en DDC/CI`;
+        }
       } catch (e) {
         s.error = firstLine(e);
         s.display = null;
