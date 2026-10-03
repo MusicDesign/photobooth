@@ -473,6 +473,7 @@ export class Booth {
       }
     } finally {
       this.capturing.delete(s.id);
+      this.onShotDone?.(); // lumières de prise de vue : retour à la lumière douce
     }
 
     if (isRetake) {
@@ -547,6 +548,7 @@ export class Booth {
       throw e instanceof HttpError ? e : new HttpError(502, 'CLIP_FAILED', `Vidéo impossible : ${e.message}`);
     } finally {
       this.capturing.delete(s.id);
+      this.onShotDone?.();
     }
     if (frames.length < 2) throw new HttpError(502, 'CLIP_FAILED', 'Vidéo trop courte : l\'aperçu n\'a presque pas envoyé d\'images');
     const clipDir = path.join(this.sessionDir(s.id), `clip-${Date.now()}`);

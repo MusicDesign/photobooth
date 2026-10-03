@@ -25,6 +25,9 @@ export const lightType = (sku = '') => TYPES[sku] || (/ring light/i.test(sku) ? 
 const RESCAN_MS = 60000;
 const ONLINE_MS = 3 * RESCAN_MS; // plus vue depuis 3 recherches : hors ligne
 const SETTLE_MS = 1000;          // le temps que les lumières atteignent leur niveau (calibrage)
+const WHITE_MIN_K = 2900, WHITE_MAX_K = 7000; // plage des Elgato : cycle d'ambiance du blanc chaud au blanc froid
+const WHITE_STEP_MS = 150;       // pas des lumières blanches (Elgato) : petits pas fréquents, fondu continu
+const RAMP_STEP_MS = 120;        // pas de la montée de lumière pendant le décompte
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function hexToRgb(hex) {
@@ -46,6 +49,9 @@ export class Lights extends EventEmitter {
     this.seen = new Map();     // id → { id, sku, ip, firmware, drv, at } (réponses aux recherches)
     this.state = new Map();    // id → dernier état lu
     this.saved = new Map();    // id → état d'avant la borne (lu avant la première commande)
+    this.ringOverride = null;  // luminosité des ring lights imposée par le calibrage en cours
+    this.boost = 'wait';       // prise de vue : wait (lumière douce), ramp (montée du décompte), full (photo)
+    this.ramp = null;          // { timer, start, dur, sent } montée en cours
     this.screen = null;        // écran de la borne
     this.holds = new Set();    // raisons d'imposer la prise de vue (calibrage, essai depuis l'admin)
     this.scene = null;         // scène appliquée : idle | shooting
@@ -196,11 +202,35 @@ export class Lights extends EventEmitter {
 
   release(reason) {
     if (!this.holds.delete(reason) || !this.running) return;
-    this.enqueue(() => this.applyWanted());
+    // Scène réappliquée même si elle ne change pas (prise de vue → prise de vue) : la lumière quitte la pleine
+    // puissance du calibrage ou de l'essai pour son niveau du moment (lumière douce d'attente)
+    this.enqueue(() => { this.scene = null; return this.applyWanted(); });
   }
 
   wanted() {
     return this.holds.size || SHOOTING_SCREENS.includes(this.screen) ? 'shooting' : 'idle';
+  }
+
+  /** Ring lights (Elgato) en ligne et utilisées pour la prise de vue : avec elles, plus jamais de flash. */
+  ringLights() {
+    return this.running ? this.targets('shooting').filter((d) => lightType(d.sku) === 'ring light') : [];
+  }
+  hasRingLight() { return this.ringLights().length > 0; }
+
+  /** Réglage des ring lights en prise de vue : essai du calibrage, sinon celui qu'il a retenu, sinon rien. */
+  ringProfile() {
+    if (this.ringOverride) return this.ringOverride;
+    const c = this.config.get().camera?.control;
+    return c?.mode === 'auto' ? c.auto?.profile?.light || null : null;
+  }
+  ringBrightness() { return this.ringProfile()?.brightness ?? null; }
+
+  /** Calibrage : ring lights à cette luminosité et cette couleur, le temps qu'elles s'y stabilisent ; null rend la main. */
+  async setRingLight(brightness, kelvin = null) {
+    this.ringOverride = brightness == null ? null : { brightness: clamp(brightness, 1, 100), kelvin: kelvin ? clamp(kelvin, 2000, 9000) : null };
+    if (this.scene !== 'shooting') return;
+    await this.enqueue(async () => { for (const d of this.ringLights()) await this.shoot(d); });
+    await wait(SETTLE_MS);
   }
 
   /** Applique la scène voulue si elle a changé. Renvoie vrai si des lumières viennent de passer en prise de vue. */
@@ -208,6 +238,7 @@ export class Lights extends EventEmitter {
     const scene = this.wanted();
     if (scene === this.scene) return false;
     this.scene = scene;
+    if (scene !== 'shooting') { this.stopRamp(); this.boost = 'wait'; } // retour à l'accueil : la prochaine séance repart douce
     // Animation arrêtée d'abord : sinon, pendant la lecture d'état des lumières de prise de vue, le cycle ou la
     // respiration continue d'envoyer couleurs et luminosités par-dessus le blanc (clignotement)
     this.stopEffect();
@@ -226,12 +257,75 @@ export class Lights extends EventEmitter {
     return shooting.length > 0;
   }
 
+  /** Luminosité de prise de vue d'une lumière : celle du calibrage pour une ring light, sinon le réglage. */
+  fullLevel(d) {
+    const s = this.cfg().shooting || {};
+    const ring = lightType(d.sku) === 'ring light' ? this.ringBrightness() : null;
+    return clamp(ring ?? s.brightness ?? 100, 1, 100);
+  }
+  /** Lumière douce d'avant la photo (choix du cadre, aperçu) : jamais plus que la pleine luminosité. */
+  waitLevel(d) {
+    const w = this.cfg().shooting?.waitBrightness;
+    return Math.min(this.fullLevel(d), clamp(w ?? 30, 1, 100));
+  }
+  /** Niveau du moment : plein pendant un calibrage ou un essai, sinon selon l'étape (attente, montée, photo). */
+  levelNow(d) {
+    if (this.holds.size || this.boost === 'full') return this.fullLevel(d);
+    if (this.boost === 'ramp' && this.ramp) {
+      const p = Math.min(1, (Date.now() - this.ramp.start) / this.ramp.dur);
+      const e = p * p * (3 - 2 * p); // départ et arrivée en douceur
+      return Math.round(this.waitLevel(d) + (this.fullLevel(d) - this.waitLevel(d)) * e);
+    }
+    return this.waitLevel(d);
+  }
+
+  /**
+   * Décompte affiché sur la borne (n secondes restantes, relayé par app.js) : la lumière monte progressivement de
+   * l'attente à la pleine luminosité, atteinte un peu avant le « 0 ». Les yeux s'adaptent, sans réflexe de clignement.
+   */
+  setCountdown(n) {
+    if (!Number.isFinite(n) || n <= 0 || this.boost !== 'wait' || this.scene !== 'shooting' || this.holds.size || !this.running) return;
+    this.boost = 'ramp';
+    console.log(`[lights] décompte ${n} s : montée vers la pleine luminosité`);
+    this.ramp = { start: Date.now(), dur: Math.max(300, n * 1000 - 400), sent: new Map() };
+    const step = () => {
+      if (this.boost !== 'ramp' || !this.running) return this.stopRamp();
+      const done = Date.now() - this.ramp.start >= this.ramp.dur;
+      for (const d of this.targets('shooting')) {
+        const v = done ? this.fullLevel(d) : this.levelNow(d);
+        if (this.ramp.sent.get(d.id) !== v) { this.ramp.sent.set(d.id, v); d.drv.command(d.ip, 'brightness', { value: v }); }
+      }
+      if (done) { this.stopRamp(); this.boost = 'full'; }
+    };
+    this.ramp.timer = setInterval(step, RAMP_STEP_MS);
+    this.ramp.timer.unref?.();
+    step();
+  }
+
+  stopRamp() {
+    if (this.ramp?.timer) clearInterval(this.ramp.timer);
+    this.ramp = null;
+  }
+
+  /** Photo prise (ou film du boomerang terminé) : retour à la lumière douce jusqu'au prochain décompte. */
+  shotDone() {
+    if (this.boost === 'wait' || !this.running) return;
+    this.stopRamp();
+    this.boost = 'wait';
+    console.log('[lights] photo prise : retour à la lumière douce');
+    if (this.scene !== 'shooting' || this.holds.size) return;
+    this.enqueue(async () => { for (const d of this.targets('shooting')) d.drv.command(d.ip, 'brightness', { value: this.waitLevel(d) }); });
+  }
+
   async shoot(d) {
     const s = this.cfg().shooting || {};
     await this.remember(d);
     d.drv.command(d.ip, 'turn', { value: 1 });
-    d.drv.command(d.ip, 'brightness', { value: clamp(s.brightness ?? 100, 1, 100) });
-    d.drv.command(d.ip, 'colorwc', { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: clamp(s.kelvin ?? 5000, 2000, 9000) });
+    const lvl = this.levelNow(d);
+    d.drv.command(d.ip, 'brightness', { value: lvl });
+    console.log(`[lights] prise de vue : ${this.cfg().devices?.[d.id]?.name || d.sku} ${lvl} % (${this.holds.size ? [...this.holds].join(', ') : this.boost}, écran ${this.screen})`);
+    const ringK = lightType(d.sku) === 'ring light' ? this.ringProfile()?.kelvin : null; // couleur choisie au calibrage
+    d.drv.command(d.ip, 'colorwc', { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: clamp(ringK ?? s.kelvin ?? 5000, 2000, 9000) });
   }
 
   /** État d'avant la borne, lu une seule fois : c'est lui qu'on remet ensuite. */
@@ -276,26 +370,33 @@ export class Lights extends EventEmitter {
     const low = Math.max(3, Math.round(bright * 0.15));
     const level = (d, now) => Math.round(low + (bright - low) * (0.5 - 0.5 * Math.cos(2 * Math.PI * phase(d, now))));
     const hue = (d, now) => hueToRgb(phase(d, now) * 360);
+    // Lumières blanches seulement (Elgato) : le cycle passe du blanc chaud au blanc froid et revient
+    const white = (d) => !!d.drv.whiteOnly?.(d.sku);
+    const kelvin = (d, now) => Math.round(WHITE_MIN_K + (WHITE_MAX_K - WHITE_MIN_K) * (0.5 - 0.5 * Math.cos(2 * Math.PI * phase(d, now))));
     for (const d of devices) {
       await this.remember(d);
       if (resumed?.ids?.has(d.id)) continue; // déjà dans l'animation : elle continue telle quelle
       d.drv.command(d.ip, 'turn', { value: 1 });
       d.drv.command(d.ip, 'brightness', { value: effect === 'breathe' ? level(d) : bright });
-      d.drv.command(d.ip, 'colorwc', effect === 'cycle' ? { color: hue(d), colorTemInKelvin: 0 } : tint); // directement la valeur de la phase en cours
+      d.drv.command(d.ip, 'colorwc', effect === 'cycle' ? (white(d) ? { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: kelvin(d) } : { color: hue(d), colorTemInKelvin: 0 }) : tint); // directement la valeur de la phase en cours
     }
     if (effect === 'fixed') return;
     const last = new Map();  // dernière luminosité envoyée (respiration)
     const sentAt = new Map(); // dernier envoi par lumière
     // Pas de chaque lumière : celles qui font un fondu d'elles-mêmes (ampoules H6008, Elgato) glissent vers la
     // valeur suivante, une par seconde suffit (cycle). Les autres (tube H6076) sautent : 5 petits pas par seconde.
-    const stepOf = (d) => (d.drv.fades(d.sku) ? (effect === 'cycle' ? 1000 : 350) : 200);
+    const stepOf = (d) => (white(d) ? WHITE_STEP_MS : d.drv.fades(d.sku) ? (effect === 'cycle' ? 1000 : 350) : 200);
+    const lastK = new Map(); // dernière température envoyée (cycle des lumières blanches)
     const tick = () => {
       if (!this.running) return;
       const now = Date.now();
       for (const d of devices) {
         if (now - (sentAt.get(d.id) || 0) < stepOf(d) - 50) continue;
         sentAt.set(d.id, now);
-        if (effect === 'cycle') d.drv.command(d.ip, 'colorwc', { color: hue(d, now), colorTemInKelvin: 0 });
+        if (effect === 'cycle' && white(d)) {
+          const k = kelvin(d, now);
+          if (Math.abs(k - (lastK.get(d.id) ?? 0)) >= 20) { lastK.set(d.id, k); d.drv.command(d.ip, 'colorwc', { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: k }); }
+        } else if (effect === 'cycle') d.drv.command(d.ip, 'colorwc', { color: hue(d, now), colorTemInKelvin: 0 });
         else { const v = level(d, now); if (last.get(d.id) !== v) { last.set(d.id, v); d.drv.command(d.ip, 'brightness', { value: v }); } }
       }
     };
@@ -359,6 +460,7 @@ export class Lights extends EventEmitter {
       error: this.drivers.map((drv) => drv.error).filter(Boolean).join(' · ') || null,
       network: this.drivers[0]?.local ? `${this.drivers[0].local.address} (${this.drivers[0].local.name})` : null,
       scene: this.scene,
+      ringLight: this.hasRingLight(), // flash interdit, calibrage à la ring light
       devices: Object.entries(devices).map(([id, d]) => ({
         id, name: d.name || '', sku: d.sku || '', type: lightType(d.sku), ip: this.seen.get(id)?.ip || d.ip || '',
         online: online.has(id), ambiance: d.ambiance ?? true, shooting: d.shooting ?? true, state: this.state.get(id) || null

@@ -47,6 +47,14 @@ export const AUTO_BASE = {
   reviewtime: 'None'
 };
 
+/**
+ * Flash interdit quand une ring light éclaire la scène (lights/index.js, hasRingLight) : posé par app.js, lu par
+ * le pilote avant chaque photo. Pas d'éclair par-dessus une lumière continue.
+ */
+let flashBlocked = () => false;
+export function setFlashBlocker(fn) { flashBlocked = fn; }
+export const isFlashBlocked = () => { try { return !!flashBlocked(); } catch { return false; } };
+
 /** Exposition de départ si aucun calibrage n'a été fait. */
 export const AUTO_DEFAULT = { flash: false, settings: { shutterspeed: '1/125', aperture: '5.6', iso: 'Auto' } };
 
@@ -101,6 +109,17 @@ const fmtExposure = (t) => (t == null ? '?' : t >= 1 ? `${t} s` : `1/${Math.roun
 const describe = (m) => `${fmtExposure(m.exposure)} · f/${m.fnumber ?? '?'} · ISO ${m.iso ?? '?'}${m.flashFired ? ' · flash' : ''}`;
 const good = (m) => m.mean >= OK_MIN && m.mean <= OK_MAX && m.clipped <= MAX_CLIP;
 
+/**
+ * Dominante de couleur d'une photo (0 = neutre) : écart des moyennes rouge et bleu à la moyenne verte, en % de la
+ * luminosité. Mesurée sur la photo réduite, toutes zones confondues.
+ */
+export async function colorCast(file) {
+  const { channels } = await sharp(file).resize(320, 320, { fit: 'inside' }).stats();
+  const [r, g, b] = channels.map((c) => c.mean);
+  const y = Math.max(1, (r + g + b) / 3);
+  return Math.round((Math.hypot(r - g, b - g) / y) * 1000) / 10;
+}
+
 /** Note d'une photo (plus petite = meilleure) : écart à la luminosité visée, zones brûlées, puis bruit (ISO). */
 export function score(m) {
   const iso = Number(m.iso) || 100;
@@ -111,6 +130,13 @@ export function score(m) {
 const NO_FLASH_SERIES = [{ shutterspeed: '1/125', aperture: '5.6', iso: 'Auto' }, { shutterspeed: '1/125', aperture: '8', iso: 'Auto' }];
 const FLASH_SERIES = ['200', '400', '800', '1600'].map((iso) => ({ shutterspeed: '1/60', aperture: '5.6', iso }));
 const NO_FLASH_BONUS = 15; // à qualité proche, la lumière du lieu l'emporte (rendu plus doux, pas d'éblouissement)
+// Ring light, jamais de flash : trois luminosités (balance des blancs auto), puis trois couleurs à la meilleure
+// luminosité, balance des blancs du boîtier fixée sur « Lumière du jour » pour que la couleur compte (MAX_SHOTS photos)
+const LIGHT_LEVELS = [40, 70, 100];
+const LIGHT_KELVINS = [4000, 5000, 6000];
+const LIGHT_WB = 'Daylight';
+const CAST_WEIGHT = 1.5; // poids de la dominante de couleur dans la note de la série des couleurs
+const LIGHT_GLARE = 0.08; // à qualité proche, la luminosité la plus douce l'emporte (moins d'éblouissement)
 
 /**
  * Calibrage sur place, complet : photos de test à l'endroit de la borne, pour trouver l'exposition du lieu.
@@ -142,6 +168,38 @@ export async function calibrate(cam, { dir, onStep = () => {} }) {
   };
 
   await cam.write(AUTO_BASE);
+
+  // Ring light : elle seule éclaire ; le flash n'est jamais levé
+  if (cam.light) {
+    const exposure = { shutterspeed: '1/125', aperture: '5.6', iso: 'Auto' };
+    // 1. Luminosité : la plus douce qui expose bien
+    for (const level of LIGHT_LEVELS) {
+      await cam.light.set(level, 5000);
+      const shot = await shoot(`Ring light ${level} %`, exposure, false);
+      shot.light = { brightness: level, kelvin: 5000 };
+      shot.score += Math.round(LIGHT_GLARE * level);
+    }
+    const lit = shots.slice().sort((a, b) => a.score - b.score)[0];
+    // 2. Couleur, à cette luminosité : la plus neutre avec la balance du jour (lumière du lieu comprise)
+    const daylight = { ...exposure, whitebalance: LIGHT_WB };
+    for (const kelvin of LIGHT_KELVINS) {
+      await cam.light.set(lit.light.brightness, kelvin);
+      const shot = await shoot(`Ring light ${lit.light.brightness} %, ${kelvin} K`, daylight, false);
+      shot.light = { brightness: lit.light.brightness, kelvin };
+      shot.cast = await colorCast(shot.file);
+      shot.summary += ` · dominante ${shot.cast}`;
+      shot.score += Math.round(LIGHT_GLARE * lit.light.brightness + CAST_WEIGHT * shot.cast);
+    }
+    for (const sh of shots) if (sh.flashFired) sh.label = `${sh.label} (flash levé à la main : rabats-le)`;
+    const best = shots.filter((sh) => sh.cast != null).sort((a, b) => a.score - b.score)[0];
+    best.best = true;
+    const up = shots.some((sh) => sh.flashFired);
+    return {
+      profile: { flash: false, settings: { ...best.settings }, light: { ...best.light } },
+      shots,
+      reason: `Ring light : ${best.light.brightness} % et ${best.light.kelvin} K (dominante ${best.cast}), ${best.summary.split(' · dominante')[0]}, luminosité ${best.mean}/255${best.ok ? '' : ', au plus près de la cible'}. Balance des blancs du boîtier : lumière du jour. Flash jamais utilisé.${up ? ' Le flash était levé : rabats-le à la main.' : ''}`
+    };
+  }
 
   // 1. Sans flash
   for (const s of NO_FLASH_SERIES) await shoot(`Sans flash, f/${s.aperture}`, s, false);

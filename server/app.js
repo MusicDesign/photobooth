@@ -13,6 +13,7 @@ import { Devices } from './devices.js';
 import { StreamDeckRemote } from './streamdeck.js';
 import { Lights } from './lights/index.js';
 import { Screen } from './screen.js';
+import { setFlashBlocker } from './camera/control.js';
 import { Setup } from './setup.js';
 import { Updater } from './update.js';
 import { Usb } from './usb.js';
@@ -73,6 +74,8 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
 
   // Lumières du réseau local : ambiance à l'accueil, blanc neutre pour la prise de vue (voir lights/index.js)
   const lights = new Lights({ config });
+  setFlashBlocker(() => lights.hasRingLight()); // ring light branchée : le pilote ne lève plus jamais le flash
+  booth.onShotDone = () => lights.shotDone(); // photo prise : lumière douce jusqu'au prochain décompte
 
   // Stream Deck : la borne décrit son écran ('ui'), un appui lui est renvoyé ('deck'), à elle seule.
   let boothSocket = null;
@@ -92,6 +95,9 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
         boothScreen = typeof msg.screen === 'string' ? msg.screen : null;
         deck.setUi(msg);
         lights.setScreen(boothScreen);
+        // Décompte affiché (touche « countdown » de l'écran décrit) : montée de la lumière jusqu'au « 0 »
+        const cd = Number(msg.items?.find?.((i) => i?.id === 'countdown')?.label);
+        if (Number.isFinite(cd)) lights.setCountdown(cd);
       }
     });
     ws.on('close', () => { if (boothSocket === ws) boothScreen = null; });

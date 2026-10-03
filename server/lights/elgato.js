@@ -33,15 +33,17 @@ export class ElgatoLan {
     this.error = null;
     this.local = null;
     this.onScan = null;
-    this.pending = new Map(); // ip → champs à envoyer au prochain PUT (les commandes d'un même instant regroupées)
-    this.chain = new Map();   // ip → dernier PUT, pour qu'ils arrivent dans l'ordre
+    this.pending = new Map(); // ip → champs à envoyer au prochain PUT (les commandes en attente regroupées)
+    this.inflight = new Map(); // ip → PUT en cours : le suivant part à sa réponse, avec les dernières valeurs seulement
   }
 
   async start() { this.local = lanAddress(); }
-  async stop() { await Promise.all([...this.chain.values()]); }
+  async stop() { await Promise.all([...this.inflight.values()]); }
 
   /** Les Elgato font un fondu d'elles-mêmes entre deux niveaux. */
   fades() { return true; }
+  /** Lumière blanche seulement : l'ambiance la fait passer du blanc chaud au blanc froid. */
+  whiteOnly() { return true; }
 
   async get(ip, p, ms = 1500) {
     const res = await fetch(`http://${ip}:${PORT}${p}`, { signal: AbortSignal.timeout(ms) });
@@ -62,23 +64,29 @@ export class ElgatoLan {
     for (let i = 0; i < hosts.length; i += 64) await Promise.all(hosts.slice(i, i + 64).map(probe));
   }
 
+  /**
+   * Une requête à la fois par lumière ; pendant qu'elle part, les commandes suivantes sont fusionnées et seule la
+   * dernière valeur est envoyée ensuite. Une animation rapide ne crée donc jamais de retard qui s'accumule.
+   */
   command(ip, cmd, data) {
     const fields = toElgato(cmd, data);
     if (!fields) return;
-    const queued = this.pending.get(ip);
-    if (queued) { Object.assign(queued, fields); return; }
-    this.pending.set(ip, { ...fields });
-    setImmediate(() => {
-      const body = this.pending.get(ip);
-      this.pending.delete(ip);
-      const prev = this.chain.get(ip) || Promise.resolve();
-      const next = prev.then(() => fetch(`http://${ip}:${PORT}/elgato/lights`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ numberOfLights: 1, lights: [body] }), signal: AbortSignal.timeout(2000)
-      })).catch(() => { /* lumière débranchée : ignorée */ });
-      this.chain.set(ip, next);
-      next.then(() => { if (this.chain.get(ip) === next) this.chain.delete(ip); });
+    this.pending.set(ip, { ...(this.pending.get(ip) || {}), ...fields });
+    if (!this.inflight.has(ip)) setImmediate(() => this.flush(ip));
+  }
+
+  flush(ip) {
+    const body = this.pending.get(ip);
+    if (!body || this.inflight.has(ip)) return;
+    this.pending.delete(ip);
+    const req = fetch(`http://${ip}:${PORT}/elgato/lights`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ numberOfLights: 1, lights: [body] }), signal: AbortSignal.timeout(2000)
+    }).catch(() => { /* lumière débranchée : ignorée */ }).finally(() => {
+      this.inflight.delete(ip);
+      if (this.pending.has(ip)) this.flush(ip);
     });
+    this.inflight.set(ip, req);
   }
 
   async status(ip) {
@@ -99,6 +107,7 @@ export class MockElgato {
   async start() {}
   async stop() {}
   fades() { return true; }
+  whiteOnly() { return true; }
   async scan() { for (const d of this.devices) this.onScan?.({ ...d }); }
 
   command(ip, cmd, data) {

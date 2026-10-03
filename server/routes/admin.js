@@ -130,7 +130,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   wipeCalibDir(); // restes d'une version précédente ou d'un arrêt en plein calibrage
   const urlOf = (file) => `/output/calibration/${path.relative(calibDir, file).split(path.sep).join('/')}`;
   // settings + flash : de quoi garder n'importe quelle photo de test comme réglage (choix à la main)
-  const shotView = (s) => ({ n: s.n, label: s.label, summary: s.summary, mean: s.mean, clipped: Math.round(s.clipped * 1000) / 10, ok: s.ok, thumb: urlOf(s.thumb), url: urlOf(s.file), settings: s.settings, flash: !!s.flash, score: s.score, best: !!s.best });
+  const shotView = (s) => ({ n: s.n, label: s.label, summary: s.summary, mean: s.mean, clipped: Math.round(s.clipped * 1000) / 10, ok: s.ok, thumb: urlOf(s.thumb), url: urlOf(s.file), settings: s.settings, flash: !!s.flash, light: s.light ?? null, score: s.score, best: !!s.best });
   r.get('/camera/calibration', (req, res) => res.json({ calibration }));
   /** Écran du calibrage quitté : plus aucune photo de test. En plein calibrage, ce sera fait à la fin. */
   r.post('/camera/calibration/discard', (req, res) => {
@@ -157,7 +157,10 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     const lit = lights ? lights.hold('calibration').catch(() => false) : Promise.resolve(false);
     lit.then((on) => {
       if (on) calibration = { ...calibration, lights: true };
-      return cam.calibrateVenue(path.join(calibDir, id), (s) => { calibration = { ...calibration, step: s.step, label: s.label, shots: s.shots.map(shotView) }; }, { evictViewers: true });
+      // Ring light : calibrage à plusieurs luminosités, sans flash
+      const light = on && lights?.hasRingLight() ? { set: (b, k) => lights.setRingLight(b, k) } : null;
+      if (light) calibration = { ...calibration, ringLight: true };
+      return cam.calibrateVenue(path.join(calibDir, id), (s) => { calibration = { ...calibration, step: s.step, label: s.label, shots: s.shots.map(shotView) }; }, { evictViewers: true, light });
     })
       .then((result) => {
         calibration = { ...calibration, state: 'done', profile: result.profile, reason: result.reason, shots: result.shots.map(shotView), flashRaised: result.shots.some((s) => s.flashFired) };
@@ -168,6 +171,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
         console.warn(`[booth] calibrage : ${e.message}`);
       })
       .finally(() => {
+        lights?.setRingLight(null).catch(() => {});
         lights?.release('calibration');
         if (calibration?.discard) { calibration = null; wipeCalibDir(); } // écran quitté pendant le calibrage
       });

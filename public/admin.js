@@ -309,9 +309,13 @@ function settingsSummary() {
   </div>`;
 }
 
+/** Luminosité de ring light retenue par le calibrage (mode auto), pour les résumés. */
+const autoLight = () => { const p = S.config.camera.control?.mode === 'auto' ? S.config.camera.control.auto?.profile : null; return p?.light?.brightness ? ` · ${p.light.brightness} %${p.light.kelvin ? `, ${p.light.kelvin} K` : ''}` : ''; };
+
 /** Tableau de bord : le réglage de la borne, puis la dernière photo, et un conseil si les deux ne collent pas. */
 function flashSummary() {
   const c = S.camera || {};
+  if (S.lights?.ringLight) return `jamais, ring light branchée${autoLight()}`;
   const manual = c.flashControl === false;
   const autoProfile = S.config.camera.control?.mode === 'auto' ? S.config.camera.control.auto?.profile : undefined;
   const mode = manual ? 'manuel : levé à la main, il part à chaque photo'
@@ -950,7 +954,8 @@ function lightsSection() {
         <label>Température du blanc <output id="lightsKelvinOut" class="kelvin-out">${shoot.kelvin ?? 5000} K</output>
           <input name="lightsKelvin" class="kelvin-range" type="range" min="2000" max="9000" step="100" value="${shoot.kelvin ?? 5000}">
           <span class="kelvin-scale"><span>Chaud</span><span>Neutre</span><span>Froid</span></span></label>
-        <label>Luminosité (%) <input name="lightsShootBrightness" type="number" min="1" max="100" value="${shoot.brightness ?? 100}" style="width:120px"></label>
+        <label>Luminosité de la photo (%) <input name="lightsShootBrightness" type="number" min="1" max="100" value="${shoot.brightness ?? 100}" style="width:120px"></label>
+        <label>Luminosité avant le décompte (%) <input name="lightsWaitBrightness" type="number" min="1" max="100" value="${shoot.waitBrightness ?? 30}" style="width:120px"></label>
       </div>
       <small>Refaire le calibrage après avoir changé ces réglages ou déplacé les lumières.</small>
     </div>
@@ -977,7 +982,7 @@ function bindLights() {
     saveConfig({ lights: {
       enabled: fd.get('lightsEnabled') === 'on', devices,
       idle: { mode: fd.get('lightsMode') || 'ambiance', effect: fd.get('lightsEffect'), color: fd.get('lightsColor'), white: fd.get('lightsWhite') === 'on', kelvin: num(fd, 'lightsIdleKelvin'), brightness: num(fd, 'lightsBrightness'), periodSec: num(fd, 'lightsPeriod'), sync: fd.get('lightsSync') === 'on' },
-      shooting: { kelvin: num(fd, 'lightsKelvin'), brightness: num(fd, 'lightsShootBrightness') },
+      shooting: { kelvin: num(fd, 'lightsKelvin'), brightness: num(fd, 'lightsShootBrightness'), waitBrightness: num(fd, 'lightsWaitBrightness') },
       shutdown: { mode: fd.get('lightsOffMode') || 'white', kelvin: num(fd, 'lightsOffKelvin'), brightness: num(fd, 'lightsOffBrightness') }
     } }, 'Lumières enregistrées');
   });
@@ -1176,7 +1181,7 @@ function renderCalibration() {
           <ol>
             <li>Place l'appareil à sa position définitive et règle le cadrage avec l'aperçu.</li>
             <li>Allume l'éclairage de l'événement.</li>
-            <li><b>Rabats le flash avant de lancer.</b> La borne fait d'abord les photos sans flash, puis le lève elle-même pour la série avec flash : tu n'as rien à toucher pendant le calibrage.</li>
+            ${S.lights?.ringLight ? '<li><b>Rabats le flash.</b> Ring light branchée : la borne essaie plusieurs luminosités de la ring light, jamais le flash.</li>' : '<li><b>Rabats le flash avant de lancer.</b> La borne fait d\'abord les photos sans flash, puis le lève elle-même pour la série avec flash : tu n\'as rien à toucher pendant le calibrage.</li>'}
             <li>Au lancement, place-toi (ou un substitut) là où se tiendront les invités, et ne bouge plus pendant les photos.</li>
           </ol>
           ${S.camera.flashFired || S.camera.flashStray ? '<div class="alert">La dernière photo a été prise avec le flash : il est sûrement levé. <b>Rabats-le avant de lancer</b>, sinon il partira sur toutes les photos de test (la borne le relèvera elle-même s\'il en faut).</div>' : ''}
@@ -1225,7 +1230,7 @@ function renderCalibration() {
     ov.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => {
       const sh = c.shots.find((x) => String(x.n) === b.dataset.pick);
       if (!sh.flash && (c.flashRaised || c.shots.some((x) => x.flash))) toast('Réglage sans flash : rabats le flash à la main, sinon il part à chaque photo', true);
-      keepCalibration({ flash: sh.flash, settings: { ...sh.settings } }, `Choisi à la main : ${sh.label} (${sh.summary}, luminosité ${sh.mean}/255).`);
+      keepCalibration({ flash: sh.flash, settings: { ...sh.settings }, ...(sh.light ? { light: { ...sh.light } } : {}) }, `Choisi à la main : ${sh.label} (${sh.summary}, luminosité ${sh.mean}/255).`);
     }));
     $('#coKeep')?.addEventListener('click', () => keepCalibration(pick, c.reason));
     $('#coAgain').onclick = () => { discardCalibration(); openCalibration('preview'); };

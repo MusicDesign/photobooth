@@ -183,7 +183,8 @@ export const DEFAULTS = {
     // white : blanc (température kelvin) à la place de la couleur, pour la couleur fixe et la respiration
     idle: { mode: 'ambiance', effect: 'cycle', color: '#ff7a1a', white: false, kelvin: 2700, brightness: 60, periodSec: 20, sync: false },
     // Du choix du template à la dernière photo, et pendant le calibrage
-    shooting: { kelvin: 5000, brightness: 100 },
+    // waitBrightness : lumière douce du choix du cadre jusqu'au décompte, qui monte ensuite jusqu'à brightness au « 0 »
+    shooting: { kelvin: 5000, brightness: 100, waitBrightness: 30 },
     // À l'arrêt de la borne : white (blanc chaud doux, pour ranger sans être dans le noir) | off (éteintes) | keep (comme avant la borne)
     shutdown: { mode: 'white', kelvin: 2700, brightness: 20 }
   }

@@ -906,8 +906,8 @@ async function runSteps(app, camera) {
     await new Promise((r) => ws.on('open', r));
     const screen = async (name) => { ws.send(JSON.stringify({ type: 'ui', screen: name, items: [] })); await settle(); };
     await screen('template');
-    assert.ok(ips.every((ip) => st()[ip].onOff === 1 && st()[ip].brightness === 100 && st()[ip].colorTemInKelvin === 5000), 'prise de vue : 5000 K, 100 %');
-    assert.deepEqual([ring().on, ring().brightness, ring().temperature], [1, 100, 200], 'ring light : 5000 K = 200 mireds, 100 %');
+    assert.ok(ips.every((ip) => st()[ip].onOff === 1 && st()[ip].brightness === 30 && st()[ip].colorTemInKelvin === 5000), 'choix du cadre : 5000 K, lumière douce 30 %');
+    assert.deepEqual([ring().on, ring().brightness, ring().temperature], [1, 30, 200], 'ring light : 5000 K = 200 mireds, 30 %');
     await screen('pin'); // code opérateur par-dessus : la scène continue
     await screen('capture');
     assert.equal(st()[ips[0]].colorTemInKelvin, 5000);
@@ -962,6 +962,61 @@ async function runSteps(app, camera) {
     await L.stop();
     assert.ok(Object.values(g3.state).every((x) => x.onOff === 0) && e3.state['10.0.0.21'].on === 0, 'arrêt en mode éteintes : tout éteint, ring light comprise');
     ws.close();
+  });
+
+  await step('ring light : flash interdit, calibrage à plusieurs luminosités, luminosité retenue en prise de vue', async () => {
+    const { calibrate, isFlashBlocked } = await import('../server/camera/control.js');
+    // Calibrage seul, boîtier simulé : chaque photo est la photo d'exemple
+    const sample = fs.readFileSync(path.join(SAMPLES_DIR, 'sample-1.jpg'));
+    const levels = [];
+    const dir = path.join(process.env.BOOTH_OUTPUT_DIR, 'calib-ring');
+    const res = await calibrate({ flashControl: true, write: async () => {}, shoot: async (file) => fs.writeFileSync(file, sample), raiseFlash: async () => { throw new Error('flash levé alors qu\'une ring light est branchée'); }, light: { set: async (b, k) => levels.push([b, k]) } }, { dir });
+    assert.deepEqual(levels.slice(0, 3).map(([b]) => b), [40, 70, 100], 'trois luminosités essayées');
+    assert.deepEqual(levels.slice(3).map(([, k]) => k), [4000, 5000, 6000], 'puis trois couleurs');
+    assert.equal(new Set(levels.slice(3).map(([b]) => b)).size, 1, 'couleurs essayées à la luminosité retenue');
+    assert.equal(res.shots.length, 6);
+    assert.equal(res.profile.flash, false, 'jamais de flash');
+    assert.equal(res.profile.settings.whitebalance, 'Daylight');
+    assert.ok([40, 70, 100].includes(res.profile.light.brightness) && [4000, 5000, 6000].includes(res.profile.light.kelvin), JSON.stringify(res.profile));
+    fs.rmSync(dir, { recursive: true, force: true });
+    // Lumières simulées : la ring light Elgato en ligne bloque le flash ; la luminosité retenue est appliquée
+    const L = app.lights;
+    await put('/api/admin/config', { lights: { enabled: false } }, ADMIN); // l'étape d'avant a simulé l'arrêt de la borne
+    await put('/api/admin/config', { lights: { enabled: true } }, ADMIN);
+    await new Promise((r) => setTimeout(r, 30)); await L.queue;
+    for (let i = 0; i < 50 && !L.hasRingLight(); i++) { await new Promise((r) => setTimeout(r, 20)); await L.queue; }
+    assert.equal(L.hasRingLight(), true, JSON.stringify({ running: L.running, ids: L.onlineIds(), targets: L.targets('shooting').map((d) => d.sku), devices: app.config.get().lights.devices }));
+    assert.equal(isFlashBlocked(), true, 'flash interdit avec la ring light');
+    await put('/api/admin/config', { camera: { control: { mode: 'auto', auto: { profile: { flash: false, settings: { shutterspeed: '1/125', aperture: '5.6', iso: 'Auto' }, light: { brightness: 70, kelvin: 4000 } } } } } }, ADMIN);
+    await L.hold('test');
+    const [, el] = L.drivers;
+    assert.equal(el.state['10.0.0.21'].brightness, 70, 'ring light à la luminosité du calibrage');
+    assert.equal(el.state['10.0.0.21'].temperature, 250, 'et à sa couleur (4000 K = 250 mireds)');
+    L.release('test');
+    // Séance : lumière douce (30 %), montée pendant le décompte jusqu'à 70 %, retour à 30 % après la photo
+    const settle = async (ms) => { await new Promise((r) => setTimeout(r, ms)); await L.queue; };
+    L.setScreen('capture');
+    await settle(60);
+    assert.equal(el.state['10.0.0.21'].brightness, 30, 'attente : lumière douce');
+    L.setCountdown(1);
+    await settle(250);
+    const mid = el.state['10.0.0.21'].brightness;
+    assert.ok(mid > 30 && mid < 70, `montée en cours (${mid})`);
+    await settle(600);
+    assert.equal(el.state['10.0.0.21'].brightness, 70, 'au « 0 » : pleine luminosité');
+    L.shotDone();
+    await settle(60);
+    assert.equal(el.state['10.0.0.21'].brightness, 30, 'après la photo : retour à la lumière douce');
+    L.setScreen('idle');
+    await settle(60);
+    // Ambiance « cycle » : la ring light passe du blanc chaud au blanc froid
+    await put('/api/admin/config', { lights: { idle: { mode: 'ambiance', effect: 'cycle', periodSec: 2 } } }, ADMIN);
+    await settle(1200);
+    const temps = new Set(el.sent.filter(([ip, f]) => ip === '10.0.0.21' && f.temperature).slice(-6).map(([, f]) => f.temperature));
+    assert.ok(temps.size >= 3, `température qui varie (${[...temps]})`);
+    await put('/api/admin/config', { lights: { enabled: false }, camera: { control: { mode: 'camera' } } }, ADMIN);
+    await new Promise((r) => setTimeout(r, 30)); await L.queue;
+    assert.equal(isFlashBlocked(), false, 'lumières coupées : flash de nouveau possible');
   });
 
   await step('arrêt : indisponible sans lanceur (409)', async () => {

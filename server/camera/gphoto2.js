@@ -6,7 +6,7 @@ import { BaseCamera } from './base.js';
 import { JpegFrameParser, MjpegBroadcaster } from './mjpeg.js';
 import { parseAutoDetect, NOT_A_CAMERA } from './detect.js';
 import { sleep } from '../util.js';
-import { AUTO_BASE, AUTO_DEFAULT, MANUAL_KEYS, calibrate as runCalibration } from './control.js';
+import { AUTO_BASE, AUTO_DEFAULT, MANUAL_KEYS, calibrate as runCalibration, isFlashBlocked } from './control.js';
 
 const execFileP = promisify(execFile);
 // Boîtiers qui acceptent popupflash sans lever le flash (vérifié sur le 2000D, alias 1500D / Rebel T7 / Kiss X90)…
@@ -538,7 +538,7 @@ export class Gphoto2Camera extends BaseCamera {
    * Refusé pendant une séance. Les réglages du boîtier sont remis comme avant à la fin ; le profil trouvé
    * n'est appliqué que si l'admin le garde.
    */
-  async calibrateVenue(dir, onStep = () => {}, { evictViewers = false } = {}) {
+  async calibrateVenue(dir, onStep = () => {}, { evictViewers = false, light = null } = {}) {
     if (this.calibrating) throw new Error('Calibrage déjà en cours');
     // Aucune séance en cours (vérifié par l'appelant) : le seul aperçu ouvert est celui de l'écran de
     // calibrage, qu'on ferme ici plutôt que d'attendre que le navigateur coupe sa connexion.
@@ -553,6 +553,7 @@ export class Gphoto2Camera extends BaseCamera {
         const before = await this.readConfig(keys);
         try {
           const result = await runCalibration({
+            light, // ring light : calibrage à sa luminosité, sans flash (voir control.js)
             flashControl: this.flashControl(),
             write: (v) => this.writeConfig(v),
             shoot: async (file) => {
@@ -586,6 +587,7 @@ export class Gphoto2Camera extends BaseCamera {
 
   /** Le flash intégré doit-il être levé pour la prochaine photo ? (mode on, ou auto et scène sombre) */
   wantFlash() {
+    if (isFlashBlocked()) return false; // ring light branchée : jamais de flash
     if (this.control?.mode === 'auto') return !!(this.control.auto?.profile || AUTO_DEFAULT).flash; // choisi par le calibrage
     const mode = this.opts.flash || 'off';
     if (mode === 'on') return true;
