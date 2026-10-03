@@ -294,6 +294,20 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   r.post('/lights/discover', async (req, res) => {
     try { res.json({ lights: await lightsOrFail().discover() }); } catch (e) { throw e instanceof HttpError ? e : new HttpError(409, 'LIGHTS', e.message); }
   });
+  // Philips Hue : recherche du pont, association (bouton du pont, 30 s), dissociation
+  r.post('/lights/hue/discover', async (req, res) => {
+    try { res.json({ bridges: await lightsOrFail().discoverHue() }); } catch (e) { throw e instanceof HttpError ? e : new HttpError(409, 'HUE', e.message); }
+  });
+  r.post('/lights/hue/pair', async (req, res) => {
+    const ip = String(req.body?.ip || '');
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) throw new HttpError(400, 'HUE_IP', 'Adresse du pont invalide');
+    let paired;
+    try { paired = await lightsOrFail().pairHue({ ip, name: String(req.body?.name || '').slice(0, 60) }); } catch (e) { throw e instanceof HttpError ? e : new HttpError(409, 'HUE', e.message); }
+    if (!paired) throw new HttpError(408, 'HUE_BUTTON', 'Bouton du pont non pressé à temps');
+    res.json({ lights: lights.status() });
+  });
+  r.post('/lights/hue/forget', (req, res) => { lightsOrFail().forgetHue(); res.json({ lights: lights.status() }); });
+
   r.post('/lights/identify', async (req, res) => {
     try { await lightsOrFail().identify(String(req.body?.id || '')); } catch (e) { throw e instanceof HttpError ? e : new HttpError(404, 'LIGHT', e.message); }
     res.json({ ok: true });

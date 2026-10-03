@@ -186,7 +186,8 @@ export const DEFAULTS = {
     // waitBrightness : lumière douce du choix du cadre jusqu'au décompte, qui monte ensuite jusqu'à brightness au « 0 »
     shooting: { kelvin: 5000, brightness: 100, waitBrightness: 30 },
     // À l'arrêt de la borne : white (blanc chaud doux, pour ranger sans être dans le noir) | off (éteintes) | keep (comme avant la borne)
-    shutdown: { mode: 'white', kelvin: 2700, brightness: 20 }
+    shutdown: { mode: 'white', kelvin: 2700, brightness: 20 },
+    hue: { ip: '', username: '', name: '' } // pont Philips Hue associé (admin → Lumières)
   }
 };
 

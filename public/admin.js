@@ -879,7 +879,7 @@ function bindScreen() {
   });
 }
 
-// ---------- Lumières Govee et Elgato du réseau local (section Stream Deck & lumières) ----------
+// ---------- Lumières Govee, Elgato et Philips Hue du réseau local (section Stream Deck & lumières) ----------
 
 const LIGHT_EFFECTS = [['cycle', 'Cycle de couleurs'], ['breathe', 'Respiration'], ['fixed', 'Couleur fixe']];
 const LIGHT_MODES = [['ambiance', 'Ambiance', 'Les lumières animent l\'accueil (effet ci-dessous).'], ['keep', 'Laisser telles quelles', 'Elles gardent l\'état qu\'elles avaient avant la borne.'], ['off', 'Éteintes', 'Éteintes à l\'accueil, allumées pour la prise de vue.']];
@@ -914,7 +914,8 @@ function lightsSection() {
           <button class="btn ghost small" type="button" data-light-forget="${esc(d.id)}">Oublier</button></td>
       </tr>`).join('');
   return `
-  <p class="sub">Lumières Govee et Elgato du réseau local, pilotées directement par la borne (sans internet ni compte) : allumées à son démarrage, ambiance à l'accueil, blanc neutre pour les photos, blanc chaud doux (réglable) quand on éteint la borne. Govee : activer <b>LAN Control</b> dans l'app Govee Home (appareil → réglages). Elgato (Ring Light, Key Light) : rien à activer, la lumière doit seulement être sur le Wi-Fi (app Elgato Control Center). Toutes doivent être sur le même réseau que la borne.</p>
+  <p class="sub">Lumières Govee, Elgato et Philips Hue du réseau local, pilotées directement par la borne (sans internet ni compte) : allumées à son démarrage, ambiance à l'accueil, blanc neutre pour les photos, blanc chaud doux (réglable) quand on éteint la borne. Govee : activer <b>LAN Control</b> dans l'app Govee Home (appareil → réglages). Elgato (Ring Light, Key Light) : rien à activer, la lumière doit seulement être sur le Wi-Fi (app Elgato Control Center). Toutes doivent être sur le même réseau que la borne.</p>
+  ${hueCard(L)}
   <form id="formLights">
     <div class="card">
       <label class="inline"><input name="lightsEnabled" type="checkbox" ${cfg.enabled ? 'checked' : ''}> Piloter les lumières</label>
@@ -972,6 +973,31 @@ function lightsSection() {
   </form>`;
 }
 
+/** Philips Hue : pont associé, ou recherche et association (bouton du pont). */
+let hueBridges = null; // ponts trouvés par la dernière recherche
+let hueSearching = false;
+async function searchHueBridges() {
+  if (hueSearching) return;
+  hueSearching = true;
+  if (currentSection() === 'lights') render();
+  try { hueBridges = (await api('/api/admin/lights/hue/discover', { method: 'POST' })).bridges; } catch (e) { toast(e.message, true); hueBridges = []; }
+  hueSearching = false;
+  if (currentSection() === 'lights') render();
+}
+let huePairing = null; // adresse du pont en cours d'association
+function hueCard(L) {
+  const h = L.hue;
+  const bulbs = L.devices.filter((d) => /^Hue /i.test(d.sku));
+  const body = h
+    ? `<div class="row"><span class="badge ok">associé</span> <b>${esc(h.name || 'Pont Hue')}</b> <small>${esc(h.ip)} · ${plural(bulbs.length, 'ampoule')}</small>
+        <button class="btn small link-danger" type="button" id="btnHueForget">Dissocier</button></div>`
+    : huePairing ? `<div class="row"><span class="badge warn">en attente</span> <b>Appuyez sur le bouton du pont Hue</b> <small>${esc(huePairing)}, 30 s</small></div>`
+    : `<div class="row"><span class="badge">${hueSearching ? 'recherche du pont…' : 'aucun pont associé'}</span>
+        <button class="btn small" type="button" id="btnHueDiscover" ${L.running && !hueSearching ? '' : 'disabled'}>Rechercher un pont</button></div>
+      ${hueBridges ? (hueBridges.length ? `<div class="hue-bridges">${hueBridges.map((b) => `<div class="row"><b>${esc(b.name)}</b> <small>${esc(b.ip)}</small> <button class="btn small primary" type="button" data-hue-pair="${esc(b.ip)}" data-hue-name="${esc(b.name)}">Associer</button></div>`).join('')}</div>` : '<small>Aucun pont Hue trouvé sur le réseau.</small>') : ''}`;
+  return `<div class="card"><h3>Philips Hue</h3>${body}</div>`;
+}
+
 function bindLights() {
   const f = $('#formLights');
   if (!f) return;
@@ -991,7 +1017,25 @@ function bindLights() {
     el?.addEventListener('input', () => { $(out).textContent = `${el.value} K`; });
   }
   const busy = async (btn, fn) => { btn.disabled = true; try { await fn(); } catch (e) { toast(e.message, true); } finally { btn.disabled = false; } };
+  $('#btnHueDiscover')?.addEventListener('click', () => searchHueBridges());
+  if (S.lights?.running && !S.lights.hue && hueBridges === null && !hueSearching) searchHueBridges(); // en arrivant sur la page
+  document.querySelectorAll('[data-hue-pair]').forEach((b) => b.addEventListener('click', async () => {
+    huePairing = b.dataset.huePair;
+    render();
+    try {
+      await api('/api/admin/lights/hue/pair', { method: 'POST', body: { ip: b.dataset.huePair, name: b.dataset.hueName } });
+      hueBridges = null;
+      toast('Pont Hue associé');
+    } catch (err) { toast(err.message, true); }
+    huePairing = null;
+    await refresh();
+  }));
+  $('#btnHueForget')?.addEventListener('click', async () => {
+    if (!await askConfirm('Dissocier le pont Hue ?', 'Dissocier', 'delete')) return;
+    try { await api('/api/admin/lights/hue/forget', { method: 'POST' }); await refresh(); } catch (err) { toast(err.message, true); }
+  });
   $('#btnLightsScan')?.addEventListener('click', (e) => busy(e.currentTarget, async () => {
+    if (!S.lights?.hue) searchHueBridges(); // aucun pont associé : il est cherché aussi
     const r = await api('/api/admin/lights/discover', { method: 'POST' });
     toast(`${r.lights.devices.filter((d) => d.online).length} lumière(s) en ligne`);
     await refresh();

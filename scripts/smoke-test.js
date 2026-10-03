@@ -1019,6 +1019,32 @@ async function runSteps(app, camera) {
     assert.equal(isFlashBlocked(), false, 'lumières coupées : flash de nouveau possible');
   });
 
+  await step('Philips Hue : pont trouvé, associé, ampoules pilotées (couleur et blanc), dissocié', async () => {
+    const L = app.lights;
+    await put('/api/admin/config', { lights: { enabled: false } }, ADMIN);
+    await put('/api/admin/config', { lights: { enabled: true, idle: { mode: 'ambiance', effect: 'fixed', color: '#ff0000', white: false, brightness: 50 } } }, ADMIN);
+    for (let i = 0; i < 50 && !L.running; i++) { await new Promise((r) => setTimeout(r, 20)); await L.queue; }
+    const { bridges } = (await post('/api/admin/lights/hue/discover', {}, ADMIN)).data;
+    assert.equal(bridges[0]?.id, 'MOCKBRIDGE');
+    const pr = await post('/api/admin/lights/hue/pair', { ip: bridges[0].ip, name: bridges[0].name }, ADMIN);
+    assert.equal(pr.status, 200, JSON.stringify(pr.data));
+    assert.equal(app.config.get().lights.hue.username, 'mock-user');
+    const hueDevs = pr.data.lights.devices.filter((d) => /^Hue /.test(d.sku));
+    assert.equal(hueDevs.length, 2, 'deux ampoules Hue listées');
+    assert.deepEqual(hueDevs.map((d) => d.name).sort(), ['Entrée', 'Salon'], 'nom repris du pont');
+    L.scene = null; await L.enqueue(() => L.applyWanted()); await new Promise((r) => setTimeout(r, 30));
+    const hue = L.drivers[2];
+    assert.equal(hue.lights[1].state.on, true, 'ampoule couleur allumée');
+    assert.equal(hue.lights[1].state.bri, 127, '50 % = 127 sur 254');
+    assert.equal(hue.lights[1].state.colormode, 'xy', 'couleur de l\'ambiance en xy');
+    assert.ok(hue.lights[1].state.xy[0] > 0.6, 'rouge');
+    assert.equal(hue.lights[2].state.colormode, 'ct', 'ampoule blanche : reste en blanc');
+    assert.equal((await post('/api/admin/lights/hue/forget', {}, ADMIN)).status, 200);
+    assert.equal(app.config.get().lights.hue.username, '');
+    assert.ok(!Object.values(app.config.get().lights.devices).some((d) => /^Hue /.test(d?.sku || '')), 'ampoules oubliées');
+    await put('/api/admin/config', { lights: { enabled: false } }, ADMIN);
+  });
+
   await step('arrêt : indisponible sans lanceur (409)', async () => {
     const r = await post('/api/admin/shutdown', {}, ADMIN);
     assert.equal(r.status, 409);

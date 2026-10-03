@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { GoveeLan, MockGovee } from './govee.js';
 import { ElgatoLan, MockElgato } from './elgato.js';
+import { HueLan, MockHue } from './hue.js';
 
 /**
  * Appareils connectés (admin → Appareils connectés) : les lumières Govee et Elgato du réseau local, pour deux usages.
@@ -19,7 +20,7 @@ export const EFFECTS = ['fixed', 'cycle', 'breathe'];
 export const IDLE_MODES = ['ambiance', 'keep', 'off'];
 export const SHUTDOWN_MODES = ['white', 'off', 'keep'];
 const TYPES = { H6008: 'ampoule', H6009: 'ampoule', H6006: 'ampoule', H6076: 'tube' };
-export const lightType = (sku = '') => TYPES[sku] || (/ring light/i.test(sku) ? 'ring light' : /key light/i.test(sku) ? 'panneau'
+export const lightType = (sku = '') => TYPES[sku] || (/ring light/i.test(sku) ? 'ring light' : /^Hue /i.test(sku) ? (/color light/i.test(sku) ? 'ampoule Hue' : 'ampoule Hue blanche') : /key light/i.test(sku) ? 'panneau'
   : /^H60[0-9]{2}$/.test(sku) ? 'ampoule' : 'lumière');
 
 const RESCAN_MS = 60000;
@@ -83,7 +84,8 @@ export class Lights extends EventEmitter {
   }
 
   async boot() {
-    this.drivers = this.driverName === 'mock' ? [new MockGovee(), new MockElgato()] : [new GoveeLan(), new ElgatoLan()];
+    const hueAuth = () => this.cfg().hue || null; // pont Hue associé (admin → Lumières)
+    this.drivers = this.driverName === 'mock' ? [new MockGovee(), new MockElgato(), new MockHue({ auth: hueAuth })] : [new GoveeLan(), new ElgatoLan(), new HueLan({ auth: hueAuth })];
     for (const drv of this.drivers) {
       drv.onScan = (d) => this.found(d, drv);
       await drv.start();
@@ -154,7 +156,7 @@ export class Lights extends EventEmitter {
     const known = this.cfg().devices?.[d.id];
     // Appareil nouveau ou adresse changée (DHCP) : retenu dans la config, même éteint il reste listé
     if (!known || known.ip !== d.ip || known.sku !== d.sku) {
-      this.config.update({ lights: { devices: { [d.id]: { name: known?.name || '', ambiance: known?.ambiance ?? true, shooting: known?.shooting ?? true, ...known, ip: d.ip, sku: d.sku } } } });
+      this.config.update({ lights: { devices: { [d.id]: { name: known?.name || d.name || '', ambiance: known?.ambiance ?? true, shooting: known?.shooting ?? true, ...known, ip: d.ip, sku: d.sku } } } });
     }
     if (!prev) this.emit('change');
   }
@@ -409,6 +411,39 @@ export class Lights extends EventEmitter {
     this.effect = null;
   }
 
+  // ---------- Philips Hue : recherche du pont et association ----------
+
+  hueClass() { return this.driverName === 'mock' ? MockHue : HueLan; }
+
+  /** Ponts Hue du réseau local. */
+  discoverHue() { return this.hueClass().discover(); }
+
+  /**
+   * Association avec un pont : réessaie toutes les 2 s pendant maxMs, le temps qu'on appuie sur son bouton.
+   * Réussie : enregistrée dans la config (lights.hue) puis ampoules recherchées. Rend true, ou false au bout du délai.
+   */
+  async pairHue({ ip, name = '' }, { maxMs = 30000 } = {}) {
+    const t0 = Date.now();
+    for (;;) {
+      const username = await this.hueClass().pair(ip);
+      if (username) {
+        this.config.update({ lights: { hue: { ip, username, name } } });
+        console.log(`[lights] pont Hue ${name || ip} associé`);
+        if (this.running) await this.discover().catch(() => {});
+        return true;
+      }
+      if (Date.now() - t0 > maxMs) return false;
+      await wait(2000);
+    }
+  }
+
+  /** Dissociation : le pont et ses ampoules sont oubliés. */
+  forgetHue() {
+    const ids = Object.entries(this.cfg().devices || {}).filter(([, d]) => /^Hue /i.test(d?.sku || '')).map(([id]) => id);
+    for (const id of ids) { this.seen.delete(id); this.state.delete(id); this.saved.delete(id); this.config.remove(['lights', 'devices', id]); }
+    this.config.update({ lights: { hue: { ip: '', username: '', name: '' } } });
+  }
+
   // ---------- Admin ----------
 
   /** Recherche immédiate puis lecture de l'état de chaque lumière (bouton « Rechercher »). */
@@ -460,6 +495,7 @@ export class Lights extends EventEmitter {
       error: this.drivers.map((drv) => drv.error).filter(Boolean).join(' · ') || null,
       network: this.drivers[0]?.local ? `${this.drivers[0].local.address} (${this.drivers[0].local.name})` : null,
       scene: this.scene,
+      hue: this.cfg().hue?.username ? { ip: this.cfg().hue.ip, name: this.cfg().hue.name || '' } : null,
       ringLight: this.hasRingLight(), // flash interdit, calibrage à la ring light
       devices: Object.entries(devices).map(([id, d]) => ({
         id, name: d.name || '', sku: d.sku || '', type: lightType(d.sku), ip: this.seen.get(id)?.ip || d.ip || '',
