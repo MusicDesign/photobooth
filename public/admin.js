@@ -1,6 +1,7 @@
 /* Page d'administration : réglages, thème, templates (éditeur de calques), compteurs, sessions. */
 import { renderTemplate, loadAssets, loadImage } from './template-render.js';
 import { FILTERS } from './filters.js';
+import { deviceNotice } from './device-toasts.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -885,21 +886,68 @@ const LIGHT_EFFECTS = [['cycle', 'Cycle de couleurs'], ['breathe', 'Respiration'
 const LIGHT_MODES = [['ambiance', 'Ambiance', 'Les lumières animent l\'accueil (effet ci-dessous).'], ['keep', 'Laisser telles quelles', 'Elles gardent l\'état qu\'elles avaient avant la borne.'], ['off', 'Éteintes', 'Éteintes à l\'accueil, allumées pour la prise de vue.']];
 
 function lightState(d) {
-  if (!d.online) return '<span class="badge">hors ligne</span>';
-  const st = d.state;
-  if (!st) return '<span class="badge ok">en ligne</span>';
-  if (!st.onOff) return '<span class="badge ok">en ligne</span> <small>éteinte</small>';
-  const c = st.color || {};
-  const tint = st.colorTemInKelvin > 0 ? `${st.colorTemInKelvin} K` : `<span class="light-swatch" style="background:rgb(${c.r},${c.g},${c.b})"></span>`;
-  return `<span class="badge ok">en ligne</span> <small>allumée, ${st.brightness} %, ${tint}</small>`;
+  return d.online ? '<span class="badge ok">en ligne</span>' : '<span class="badge">hors ligne</span>';
+}
+
+const openLightBlocks = new Set(); // blocs repliables ouverts : gardés d'un enregistrement (donc d'un rendu) à l'autre
+const WHITE_EFFECTS = [['fixed', 'Fixe'], ['breathe', 'Respiration'], ['cycle', 'Cycle chaud → froid']];
+
+/**
+ * Réglages d'une famille de lumières. fam : rgb (cfg.idle…) ou wh (cfg.whiteLights).
+ * data-when="champ=valeur|valeur;autre" : le bloc n'est visible que si les conditions sont remplies (voir bindLights).
+ */
+function lightsFamily(fam, title) {
+  const cfg = S.config.lights || {};
+  const src = fam === 'wh' ? cfg.whiteLights || {} : cfg;
+  const idle = src.idle || {}, shoot = src.shooting || {}, sd = src.shutdown || {};
+  const n = (k) => `${fam}_${k}`;
+  const white = fam === 'wh';
+  const sel = (name, opts, cur, when = '') => `<label ${when ? `data-when="${when}"` : ''}>${name[1]} <select name="${n(name[0])}">${opts.map(([v, lb]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${lb}</option>`).join('')}</select></label>`;
+  const kelvin = (name, v, label = 'Température', when = '') => `<label ${when ? `data-when="${when}"` : ''}>${label} <output id="${n(name)}Out" class="kelvin-out">${v} K</output>
+            <input name="${n(name)}" class="kelvin-range" type="range" min="2000" max="9000" step="100" value="${v}"></label>`;
+  const pct = (name, label, v, when = '') => `<label ${when ? `data-when="${when}"` : ''}>${label} <input name="${n(name)}" type="number" min="1" max="100" value="${v}" style="width:90px"></label>`;
+  // Ring light seule en lumière blanche de prise de vue, calibrage en auto : c'est lui qui règle sa photo
+  const shootWhite = (S.lights?.devices || []).filter((d) => d.shooting && ['ring light', 'panneau', 'ampoule Hue blanche'].includes(d.type));
+  const byCalibration = white && S.config.camera?.control?.mode === 'auto' && shootWhite.length > 0 && shootWhite.every((d) => d.type === 'ring light');
+  const effect = idle.effect || (white ? 'fixed' : 'cycle');
+  const amb = `${n('mode')}=ambiance`;
+  const rate = `${n('effect')}=cycle|breathe`;
+  return `<div class="card">
+      <h3>${title}</h3>
+      <div class="grid-2">
+        ${sel(['mode', 'À l\'accueil'], LIGHT_MODES.map(([v, t]) => [v, t]), idle.mode || 'ambiance')}
+        ${sel(['effect', 'Effet'], white ? WHITE_EFFECTS : LIGHT_EFFECTS, effect, amb)}
+        ${white ? kelvin('idleKelvin', idle.kelvin ?? 4000, 'Température', `${amb};${n('effect')}=fixed|breathe`) : `<label data-when="${amb};${n('effect')}=fixed|breathe">Couleur <input name="rgb_color" type="color" value="${esc(idle.color || '#ff7a1a')}"></label>
+        <label class="inline" data-when="${amb};${n('effect')}=fixed|breathe"><input name="rgb_white" type="checkbox" ${idle.white ? 'checked' : ''}> Blanc plutôt qu'une couleur</label>
+        ${kelvin('idleKelvin', idle.kelvin ?? 2700, 'Température', `${amb};${n('effect')}=fixed|breathe;rgb_white`)}`}
+        ${white ? `<label data-when="${amb};${n('effect')}=cycle">Du blanc chaud (K) <input name="wh_kelvinMin" type="number" min="2000" max="9000" step="100" value="${idle.kelvinMin ?? 2900}" style="width:100px"></label>
+        <label data-when="${amb};${n('effect')}=cycle">au blanc froid (K) <input name="wh_kelvinMax" type="number" min="2000" max="9000" step="100" value="${idle.kelvinMax ?? 7000}" style="width:100px"></label>` : ''}
+        ${pct('brightness', 'Luminosité (%)', idle.brightness ?? 60, amb)}
+        <label data-when="${amb};${rate}">Durée d'un tour (s) <input name="${n('period')}" type="number" min="2" max="600" value="${idle.periodSec ?? 20}" style="width:90px"></label>
+        <label class="inline" data-when="${amb};${rate}"><input name="${n('sync')}" type="checkbox" ${idle.sync ? 'checked' : ''}> Lumières synchronisées</label>
+      </div>
+      <details class="fam-more" data-k="${n('shoot')}" ${openLightBlocks.has(n('shoot')) ? 'open' : ''}><summary>Prise de vue</summary>
+        <div class="grid-2">
+          ${byCalibration ? `<p class="sub">Luminosité et température de la photo : décidées par le calibrage du boîtier${autoLight() || ' (pas encore fait)'}.</p>
+          <input type="hidden" name="${n('shootKelvin')}" value="${shoot.kelvin ?? 5000}"><input type="hidden" name="${n('shootBrightness')}" value="${shoot.brightness ?? 70}">`
+            : `${kelvin('shootKelvin', shoot.kelvin ?? 5000)}
+          ${pct('shootBrightness', 'Luminosité de la photo (%)', shoot.brightness ?? 100)}`}
+          ${pct('waitBrightness', 'Avant le décompte (%)', shoot.waitBrightness ?? 30)}
+        </div>
+      </details>
+      <details class="fam-more" data-k="${n('off')}" ${openLightBlocks.has(n('off')) ? 'open' : ''}><summary>À l'arrêt de la borne</summary>
+        <div class="grid-2">
+          ${sel(['offMode', 'Lumières'], [['white', 'Blanc chaud doux'], ['off', 'Éteintes'], ['keep', 'Comme avant la borne']], sd.mode || 'white')}
+          ${kelvin('offKelvin', sd.kelvin ?? 2700, 'Température', `${n('offMode')}=white`)}
+          ${pct('offBrightness', 'Luminosité (%)', sd.brightness ?? 20, `${n('offMode')}=white`)}
+        </div>
+      </details>
+    </div>`;
 }
 
 function lightsSection() {
   const L = S.lights;
   const cfg = S.config.lights || {};
-  const idle = cfg.idle || {};
-  const shoot = cfg.shooting || {};
-  const sd = cfg.shutdown || {};
   if (!L?.available) {
     return '<div class="card"><p class="sub">Désactivées pour cette borne (BOOTH_LIGHTS=off).</p></div>';
   }
@@ -927,49 +975,10 @@ function lightsSection() {
         <button class="btn" type="button" id="btnLightsScan" ${L.running ? '' : 'disabled'}>Rechercher</button>
         <button class="btn" type="button" id="btnLightsTry" ${L.running && L.devices.some((d) => d.online && d.shooting) ? '' : 'disabled'}>Essayer la prise de vue (8 s)</button>
       </div>
-      <small>Recherche automatique chaque minute : une lumière rallumée au mur reprend sa place. « Identifier » la fait clignoter (en bleu, en blanc pour une Elgato). Les Elgato sont blanches : à l'accueil elles gardent leur blanc, à la luminosité de l'ambiance (respiration comprise).</small>
+      <small>Recherche automatique chaque minute : une lumière rallumée au mur reprend sa place. « Identifier » la fait clignoter (en bleu, en blanc pour une Elgato). Les lumières blanches (Elgato, ampoules Hue blanches) ont leurs propres réglages, séparés de ceux des lumières RGB.</small>
     </div>
-    <div class="card">
-      <h3>Accueil</h3>
-      <div class="ctl-modes">${LIGHT_MODES.map(([v, t, desc]) => `<label class="inline ctl-mode"><input type="radio" name="lightsMode" value="${v}" ${(idle.mode || 'ambiance') === v ? 'checked' : ''}> <span><b>${t}</b><small>${desc}</small></span></label>`).join('')}</div>
-      <div class="grid-2">
-        <label>Effet <select name="lightsEffect">${LIGHT_EFFECTS.map(([v, lb]) => `<option value="${v}" ${(idle.effect || 'cycle') === v ? 'selected' : ''}>${lb}</option>`).join('')}</select>
-          <small>Cycle : les lumières font le tour des couleurs. Respiration : la couleur choisie monte et descend doucement.</small></label>
-        <div>
-          <label>Couleur (fixe et respiration) <input name="lightsColor" type="color" value="${esc(idle.color || '#ff7a1a')}"></label>
-          <label class="inline"><input name="lightsWhite" type="checkbox" ${idle.white ? 'checked' : ''}> Blanc plutôt qu'une couleur</label>
-          <label>Température du blanc <output id="lightsIdleKelvinOut" class="kelvin-out">${idle.kelvin ?? 2700} K</output>
-            <input name="lightsIdleKelvin" class="kelvin-range" type="range" min="2000" max="9000" step="100" value="${idle.kelvin ?? 2700}">
-            <span class="kelvin-scale"><span>Chaud</span><span>Neutre</span><span>Froid</span></span></label>
-        </div>
-        <label>Luminosité (%) <input name="lightsBrightness" type="number" min="1" max="100" value="${idle.brightness ?? 60}" style="width:120px"></label>
-        <label>Durée d'un cycle ou d'une respiration (secondes) <input name="lightsPeriod" type="number" min="2" max="600" value="${idle.periodSec ?? 20}" style="width:120px"></label>
-      </div>
-      <label class="inline"><input name="lightsSync" type="checkbox" ${idle.sync ? 'checked' : ''}> Lumières synchronisées</label>
-      <small>Coché : toutes les lumières ont la même couleur au même moment (cycle) et respirent ensemble. Décoché : chacune est décalée des autres, les couleurs se répartissent dans la pièce.</small>
-    </div>
-    <div class="card">
-      <h3>Prise de vue</h3>
-      <p class="sub">Du choix du template à la dernière photo (le résultat se regarde dans l'ambiance), et pendant le calibrage du boîtier : les lumières sont allumées et stabilisées avant sa première mesure, le calibrage décide du flash dans cette lumière-là.</p>
-      <div class="grid-2">
-        <label>Température du blanc <output id="lightsKelvinOut" class="kelvin-out">${shoot.kelvin ?? 5000} K</output>
-          <input name="lightsKelvin" class="kelvin-range" type="range" min="2000" max="9000" step="100" value="${shoot.kelvin ?? 5000}">
-          <span class="kelvin-scale"><span>Chaud</span><span>Neutre</span><span>Froid</span></span></label>
-        <label>Luminosité de la photo (%) <input name="lightsShootBrightness" type="number" min="1" max="100" value="${shoot.brightness ?? 100}" style="width:120px"></label>
-        <label>Luminosité avant le décompte (%) <input name="lightsWaitBrightness" type="number" min="1" max="100" value="${shoot.waitBrightness ?? 30}" style="width:120px"></label>
-      </div>
-      <small>Refaire le calibrage après avoir changé ces réglages ou déplacé les lumières.</small>
-    </div>
-    <div class="card">
-      <h3>À l'arrêt de la borne</h3>
-      <div class="ctl-modes">${[['white', 'Blanc chaud doux', 'Pour ranger sans être dans le noir : température et luminosité ci-dessous.'], ['off', 'Éteintes', 'Toutes les lumières s\'éteignent.'], ['keep', 'Comme avant la borne', 'Chaque lumière retrouve l\'état qu\'elle avait avant le démarrage.']].map(([v, t, desc]) => `<label class="inline ctl-mode"><input type="radio" name="lightsOffMode" value="${v}" ${(sd.mode || 'white') === v ? 'checked' : ''}> <span><b>${t}</b><small>${desc}</small></span></label>`).join('')}</div>
-      <div class="grid-2">
-        <label>Température du blanc <output id="lightsOffKelvinOut" class="kelvin-out">${sd.kelvin ?? 2700} K</output>
-          <input name="lightsOffKelvin" class="kelvin-range" type="range" min="2000" max="9000" step="100" value="${sd.kelvin ?? 2700}">
-          <span class="kelvin-scale"><span>Chaud</span><span>Neutre</span><span>Froid</span></span></label>
-        <label>Luminosité (%) <input name="lightsOffBrightness" type="number" min="1" max="100" value="${sd.brightness ?? 20}" style="width:120px"></label>
-      </div>
-    </div>
+    ${lightsFamily('rgb', 'Lumières RGB (Govee, Hue couleur)')}
+    ${lightsFamily('wh', 'Lumières blanches (Elgato, Hue blanches)')}
   </form>`;
 }
 
@@ -1005,16 +1014,33 @@ function bindLights() {
     const devices = Object.fromEntries((S.lights?.devices || []).map((d) => [d.id, {
       name: String(fd.get(`name_${d.id}`) || '').trim(), ambiance: fd.get(`amb_${d.id}`) === 'on', shooting: fd.get(`shoot_${d.id}`) === 'on'
     }]));
-    saveConfig({ lights: {
-      enabled: fd.get('lightsEnabled') === 'on', devices,
-      idle: { mode: fd.get('lightsMode') || 'ambiance', effect: fd.get('lightsEffect'), color: fd.get('lightsColor'), white: fd.get('lightsWhite') === 'on', kelvin: num(fd, 'lightsIdleKelvin'), brightness: num(fd, 'lightsBrightness'), periodSec: num(fd, 'lightsPeriod'), sync: fd.get('lightsSync') === 'on' },
-      shooting: { kelvin: num(fd, 'lightsKelvin'), brightness: num(fd, 'lightsShootBrightness'), waitBrightness: num(fd, 'lightsWaitBrightness') },
-      shutdown: { mode: fd.get('lightsOffMode') || 'white', kelvin: num(fd, 'lightsOffKelvin'), brightness: num(fd, 'lightsOffBrightness') }
-    } }, 'Lumières enregistrées');
+    const family = (f) => {
+      const k = (x) => `${f}_${x}`;
+      return {
+        idle: { mode: fd.get(k('mode')) || 'ambiance', effect: fd.get(k('effect')), kelvin: num(fd, k('idleKelvin')), brightness: num(fd, k('brightness')), periodSec: num(fd, k('period')), sync: fd.get(k('sync')) === 'on' },
+        shooting: { kelvin: num(fd, k('shootKelvin')), brightness: num(fd, k('shootBrightness')), waitBrightness: num(fd, k('waitBrightness')) },
+        shutdown: { mode: fd.get(k('offMode')) || 'white', kelvin: num(fd, k('offKelvin')), brightness: num(fd, k('offBrightness')) }
+      };
+    };
+    const rgb = family('rgb'), wh = family('wh');
+    Object.assign(rgb.idle, { color: fd.get('rgb_color'), white: fd.get('rgb_white') === 'on' });
+    Object.assign(wh.idle, { kelvinMin: num(fd, 'wh_kelvinMin'), kelvinMax: num(fd, 'wh_kelvinMax') });
+    saveConfig({ lights: { enabled: fd.get('lightsEnabled') === 'on', devices, ...rgb, whiteLights: wh } }, 'Lumières enregistrées');
   });
-  for (const [name, out] of [['lightsKelvin', '#lightsKelvinOut'], ['lightsIdleKelvin', '#lightsIdleKelvinOut'], ['lightsOffKelvin', '#lightsOffKelvinOut']]) {
-    const el = f.querySelector(`[name=${name}]`);
-    el?.addEventListener('input', () => { $(out).textContent = `${el.value} K`; });
+  const showWhen = () => f.querySelectorAll('[data-when]').forEach((el) => {
+    el.hidden = !el.dataset.when.split(';').every((c) => {
+      const [name, vals] = c.split('=');
+      const field = f.querySelector(`[name="${name}"]:checked`) || f.querySelector(`[name="${name}"]`);
+      if (vals === undefined) return !!field?.checked;
+      return vals.split('|').includes(field?.value);
+    });
+  });
+  showWhen();
+  f.querySelectorAll('details[data-k]').forEach((d) => d.addEventListener('toggle', () => (d.open ? openLightBlocks.add(d.dataset.k) : openLightBlocks.delete(d.dataset.k))));
+  f.addEventListener('change', showWhen);
+  for (const fam of ['rgb', 'wh']) for (const name of ['idleKelvin', 'shootKelvin', 'offKelvin']) {
+    const el = f.querySelector(`[name=${fam}_${name}]`);
+    el?.addEventListener('input', () => { $(`#${fam}_${name}Out`).textContent = `${el.value} K`; });
   }
   const busy = async (btn, fn) => { btn.disabled = true; try { await fn(); } catch (e) { toast(e.message, true); } finally { btn.disabled = false; } };
   $('#btnHueDiscover')?.addEventListener('click', () => searchHueBridges());
@@ -3209,6 +3235,7 @@ function scheduleRefresh() {
     try { msg = JSON.parse(ev.data); } catch { /* ignoré */ }
     if (msg?.type === 'deck') return onDeckPress(msg.id);
     if (msg?.type === 'deckInfo') return;
+    if (msg?.type === 'device') { deviceNotice(msg); if (S && currentSection() === 'dashboard') scheduleRefresh(); return; }
     if (msg?.type === 'config') refreshDevices(); // pilote de caméra changé (boîtier branché / débranché), entre autres
     if (S && ['dashboard', 'sessions', 'events'].includes(currentSection())) scheduleRefresh();
   };

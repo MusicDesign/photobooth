@@ -10,6 +10,7 @@ import { buildAllPreviews } from './template-previews.js';
 import { Themes, DEFAULT_LOGO, defaultLogoSvg } from './themes.js';
 import { Booth } from './booth.js';
 import { Devices } from './devices.js';
+import { DeviceWatch, deviceSources } from './device-watch.js';
 import { StreamDeckRemote } from './streamdeck.js';
 import { Lights } from './lights/index.js';
 import { Screen } from './screen.js';
@@ -240,7 +241,12 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
     else res.status(status).type('text').send(`${status} · ${body.message}`);
   });
 
+  // Connexions et déconnexions d'appareils : notification en haut à droite de l'admin et de la borne
+  const deviceWatch = new DeviceWatch({ sources: deviceSources({ devices, deck, lights, screen }), notify: broadcast });
+  deviceWatch.start();
+
   const close = async () => {
+    deviceWatch.stop();
     await devices.stop();
     await deck.stop();
     await lights.stop().catch(() => {}); // borne éteinte : lumières éteintes

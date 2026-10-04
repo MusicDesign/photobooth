@@ -17,7 +17,7 @@ import { wifiStatus } from './network.js';
  * et 'network' quand le Wi-Fi apparaît ou disparaît (les QR codes en dépendent).
  */
 export class Devices extends EventEmitter {
-  constructor({ config, pollMs = 10000, printerBusy = () => false }) {
+  constructor({ config, pollMs = 3000, printerBusy = () => false }) {
     super();
     this.config = config;
     this.pollMs = pollMs;

@@ -23,12 +23,14 @@ const TYPES = { H6008: 'ampoule', H6009: 'ampoule', H6006: 'ampoule', H6076: 'tu
 export const lightType = (sku = '') => TYPES[sku] || (/ring light/i.test(sku) ? 'ring light' : /^Hue /i.test(sku) ? (/color light/i.test(sku) ? 'ampoule Hue' : 'ampoule Hue blanche') : /key light/i.test(sku) ? 'panneau'
   : /^H60[0-9]{2}$/.test(sku) ? 'ampoule' : 'lumière');
 
-const RESCAN_MS = 60000;
-const ONLINE_MS = 3 * RESCAN_MS; // plus vue depuis 3 recherches : hors ligne
+const RESCAN_MS = 10000;
+const ONLINE_MS = 3 * RESCAN_MS; // plus vue depuis 3 recherches (30 s) : hors ligne
 const SETTLE_MS = 1000;          // le temps que les lumières atteignent leur niveau (calibrage)
-const WHITE_MIN_K = 2900, WHITE_MAX_K = 7000; // plage des Elgato : cycle d'ambiance du blanc chaud au blanc froid
-const WHITE_STEP_MS = 150;       // pas des lumières blanches (Elgato) : petits pas fréquents, fondu continu
+const WHITE_MIN_K = 2900, WHITE_MAX_K = 7000; // plage par défaut du cycle des lumières blanches (Elgato : 2900-7000 K)
+const TICK_MS = 100, WHITE_TICK_MS = 40; // cadence de l'ambiance ; les lumières blanches (Elgato) : valeur recalculée très souvent, un seul envoi à la fois
 const RAMP_STEP_MS = 120;        // pas de la montée de lumière pendant le décompte
+/** Lumière blanche seulement (Elgato, ampoule Hue blanche) : elle a ses propres réglages, distincts des lumières RGB. */
+const isWhite = (d) => !!d.drv.whiteOnly?.(d.sku);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function hexToRgb(hex) {
@@ -56,18 +58,22 @@ export class Lights extends EventEmitter {
     this.screen = null;        // écran de la borne
     this.holds = new Set();    // raisons d'imposer la prise de vue (calibrage, essai depuis l'admin)
     this.scene = null;         // scène appliquée : idle | shooting
-    this.effect = null;        // { timer, ... } ambiance en cours
+    this.effects = new Map();  // famille (rgb | white) → { timer, ... } ambiance en cours
+    this.lastEffects = new Map();
     this.queue = Promise.resolve();
     this.rescanTimer = null;
     this.running = false;
   }
 
   cfg() { return this.config.get().lights || {}; }
+  /** Réglages d'une lumière (idle, shooting ou shutdown) : ceux de sa famille, RGB ou blanche. */
+  famCfg(d, key) { const c = this.cfg(); return (isWhite(d) ? c.whiteLights?.[key] : c[key]) || {}; }
+
   enabled() { return this.driverName !== 'off' && !!this.cfg().enabled; }
 
   async start() {
     // Seuls les réglages des lumières comptent (pas l'adresse d'une lumière, ni le reste de la config)
-    const sig = () => { const c = this.cfg(); return JSON.stringify([this.enabled(), c.idle, c.shooting, Object.entries(c.devices || {}).map(([id, d]) => [id, d.ambiance, d.shooting])]); };
+    const sig = () => { const c = this.cfg(); return JSON.stringify([this.enabled(), c.idle, c.shooting, c.whiteLights, Object.entries(c.devices || {}).map(([id, d]) => [id, d.ambiance, d.shooting])]); };
     let last = sig();
     this.config.on('change', () => { const now = sig(); if (now !== last) { last = now; this.sync(); } });
     await this.sync();
@@ -105,7 +111,7 @@ export class Lights extends EventEmitter {
 
   /**
    * Option coupée : ambiance stoppée, chaque lumière remise comme avant la borne.
-   * Arrêt de la borne (off) : selon lights.shutdown, blanc chaud doux (white), toutes éteintes (off) ou remises comme
+   * Arrêt de la borne (off) : selon lights.shutdown (RGB) ou lights.whiteLights.shutdown (blanches), blanc chaud doux (white), toutes éteintes (off) ou remises comme
    * avant la borne (keep). Envois doublés, l'UDP ne garantit rien.
    */
   async shutdown({ off = false } = {}) {
@@ -113,21 +119,21 @@ export class Lights extends EventEmitter {
     clearInterval(this.rescanTimer);
     this.rescanTimer = null;
     if (off) {
-      const sd = this.cfg().shutdown || {};
-      const mode = SHUTDOWN_MODES.includes(sd.mode) ? sd.mode : 'white';
-      if (mode !== 'keep') {
-        const all = this.targets('any');
-        for (let i = 0; i < 2; i++) {
-          for (const d of all) {
-            if (mode === 'off') { d.drv.command(d.ip, 'turn', { value: 0 }); continue; }
-            d.drv.command(d.ip, 'turn', { value: 1 });
-            d.drv.command(d.ip, 'brightness', { value: clamp(sd.brightness ?? 20, 1, 100) });
-            d.drv.command(d.ip, 'colorwc', { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: clamp(sd.kelvin ?? 2700, 2000, 9000) });
-          }
-          await wait(150);
+      const keep = new Set();
+      const all = this.targets('any');
+      for (let i = 0; i < 2; i++) {
+        for (const d of all) {
+          const sd = this.famCfg(d, 'shutdown');
+          const mode = SHUTDOWN_MODES.includes(sd.mode) ? sd.mode : 'white';
+          if (mode === 'keep') { keep.add(d.id); continue; }
+          if (mode === 'off') { d.drv.command(d.ip, 'turn', { value: 0 }); continue; }
+          d.drv.command(d.ip, 'turn', { value: 1 });
+          d.drv.command(d.ip, 'brightness', { value: clamp(sd.brightness ?? 20, 1, 100) });
+          d.drv.command(d.ip, 'colorwc', { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: clamp(sd.kelvin ?? 2700, 2000, 9000) });
         }
-        this.saved.clear();
+        await wait(150);
       }
+      for (const id of [...this.saved.keys()]) if (!keep.has(id)) this.saved.delete(id); // les autres : remises comme avant
     }
     for (const id of [...this.saved.keys()]) await this.restore(id);
     await wait(150); // derniers paquets partis avant de fermer le socket
@@ -162,7 +168,12 @@ export class Lights extends EventEmitter {
   }
 
   async rescan() {
-    if (!this.running) return;
+    if (!this.running || this.rescanning) return; // une recherche à la fois : celle des Elgato dure quelques secondes
+    this.rescanning = true;
+    try { await this.rescanOnce(); } finally { this.rescanning = false; }
+  }
+
+  async rescanOnce() {
     const before = new Set(this.onlineIds());
     await this.scanAll();
     // Lumière revenue (rallumée au mur) : elle reprend la scène en cours
@@ -247,27 +258,39 @@ export class Lights extends EventEmitter {
     const shooting = scene === 'shooting' ? this.targets('shooting') : [];
     const busy = new Set(shooting.map((d) => d.id));
     for (const d of shooting) await this.shoot(d);
-    const idle = this.cfg().idle || {};
-    const mode = IDLE_MODES.includes(idle.mode) ? idle.mode : 'ambiance';
-    const ambiance = mode === 'keep' ? [] : this.targets('ambiance').filter((d) => !busy.has(d.id));
-    const amb = new Set(ambiance.map((d) => d.id));
+    // Ambiance : chaque famille (RGB, blanches) a son mode et son effet
+    const amb = new Set();
+    const families = [['rgb', (d) => !isWhite(d)], ['white', isWhite]];
+    const plans = [];
+    for (const [fam, member] of families) {
+      const idle = (fam === 'white' ? this.cfg().whiteLights?.idle : this.cfg().idle) || {};
+      const mode = IDLE_MODES.includes(idle.mode) ? idle.mode : 'ambiance';
+      const devices = mode === 'keep' ? [] : this.targets('ambiance').filter((d) => member(d) && !busy.has(d.id));
+      for (const d of devices) amb.add(d.id);
+      plans.push({ fam, idle, mode, devices });
+    }
     // Les autres lumières que la borne avait touchées retrouvent leur état d'avant
     for (const id of [...this.saved.keys()]) if (!busy.has(id) && !amb.has(id)) await this.restore(id);
-    if (mode === 'off') for (const d of ambiance) { await this.remember(d); d.drv.command(d.ip, 'turn', { value: 0 }); }
-    else if (ambiance.length) await this.startEffect(ambiance, idle);
+    // Une lumière passée en prise de vue (ou rendue à son état d'avant) n'est plus dans l'animation : elle la reçoit
+    // de nouveau en entier, au lieu de rester à la luminosité de la photo
+    for (const e of this.lastEffects.values()) for (const id of [...e.ids]) if (busy.has(id) || !amb.has(id)) e.ids.delete(id);
+    for (const { fam, idle, mode, devices } of plans) {
+      if (mode === 'off') for (const d of devices) { await this.remember(d); d.drv.command(d.ip, 'turn', { value: 0 }); }
+      else if (devices.length) await this.startEffect(devices, idle, fam);
+    }
     this.emit('change');
     return shooting.length > 0;
   }
 
   /** Luminosité de prise de vue d'une lumière : celle du calibrage pour une ring light, sinon le réglage. */
   fullLevel(d) {
-    const s = this.cfg().shooting || {};
+    const s = this.famCfg(d, 'shooting');
     const ring = lightType(d.sku) === 'ring light' ? this.ringBrightness() : null;
     return clamp(ring ?? s.brightness ?? 100, 1, 100);
   }
   /** Lumière douce d'avant la photo (choix du cadre, aperçu) : jamais plus que la pleine luminosité. */
   waitLevel(d) {
-    const w = this.cfg().shooting?.waitBrightness;
+    const w = this.famCfg(d, 'shooting').waitBrightness;
     return Math.min(this.fullLevel(d), clamp(w ?? 30, 1, 100));
   }
   /** Niveau du moment : plein pendant un calibrage ou un essai, sinon selon l'étape (attente, montée, photo). */
@@ -320,7 +343,7 @@ export class Lights extends EventEmitter {
   }
 
   async shoot(d) {
-    const s = this.cfg().shooting || {};
+    const s = this.famCfg(d, 'shooting');
     await this.remember(d);
     d.drv.command(d.ip, 'turn', { value: 1 });
     const lvl = this.levelNow(d);
@@ -352,63 +375,67 @@ export class Lights extends EventEmitter {
 
   // ---------- Ambiance de l'accueil ----------
 
-  async startEffect(devices, idle) {
-    const effect = EFFECTS.includes(idle.effect) ? idle.effect : 'cycle';
+  async startEffect(devices, idle, fam = 'rgb') {
+    const isW = fam === 'white';
+    const effect = EFFECTS.includes(idle.effect) ? idle.effect : isW ? 'fixed' : 'cycle';
     const bright = clamp(idle.brightness ?? 60, 1, 100);
-    // Couleur fixe et respiration : la couleur choisie, ou un blanc (température) si l'admin l'a demandé
-    const tint = idle.white ? { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: clamp(idle.kelvin ?? 2700, 2000, 9000) } : { color: hexToRgb(idle.color), colorTemInKelvin: 0 };
+    // Couleur fixe et respiration : la couleur choisie, ou un blanc (température) si l'admin l'a demandé. Les lumières
+    // blanches n'ont que le blanc.
+    const tint = isW || idle.white ? { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: clamp(idle.kelvin ?? (isW ? 4000 : 2700), 2000, 9000) } : { color: hexToRgb(idle.color), colorTemInKelvin: 0 };
     const period = clamp(idle.periodSec ?? (effect === 'breathe' ? 6 : 20), 2, 600) * 1000;
+    const kMin = clamp(idle.kelvinMin ?? WHITE_MIN_K, 2000, 9000), kMax = Math.max(kMin, clamp(idle.kelvinMax ?? WHITE_MAX_K, 2000, 9000));
     // Même animation qu'avant l'interruption (changement de scène, lumière revenue) : elle reprend là où elle en
     // était, et les lumières qui y étaient déjà ne reçoivent rien : pas de saut de couleur ni de luminosité
-    const key = `${effect}|${period}|${idle.sync ? 1 : 0}|${bright}|${JSON.stringify(tint)}`;
-    const resumed = this.lastEffect?.key === key ? this.lastEffect : null;
+    const key = `${effect}|${period}|${idle.sync ? 1 : 0}|${bright}|${JSON.stringify(tint)}|${kMin}|${kMax}`;
+    const lastEffect = this.lastEffects.get(fam);
+    const resumed = lastEffect?.key === key ? lastEffect : null;
     const t0 = resumed ? resumed.t0 : Date.now();
-    // Décalage entre lumières d'après leur rang parmi toutes les lumières d'ambiance : il ne bouge pas quand l'une
-    // d'elles passe en prise de vue. Synchronisées : aucun décalage.
-    const all = this.targets('ambiance');
+    // Décalage entre lumières d'après leur rang parmi toutes les lumières d'ambiance de la famille : il ne bouge pas
+    // quand l'une d'elles passe en prise de vue. Synchronisées : aucun décalage.
+    const all = this.targets('ambiance').filter((d) => isWhite(d) === isW);
     const rank = new Map(all.map((d, i) => [d.id, i]));
     const offset = (d) => (idle.sync ? 0 : (rank.get(d.id) || 0) / Math.max(1, all.length));
     const phase = (d, now = Date.now()) => ((now - t0) / period + offset(d)) % 1;
     const low = Math.max(3, Math.round(bright * 0.15));
     const level = (d, now) => Math.round(low + (bright - low) * (0.5 - 0.5 * Math.cos(2 * Math.PI * phase(d, now))));
     const hue = (d, now) => hueToRgb(phase(d, now) * 360);
-    // Lumières blanches seulement (Elgato) : le cycle passe du blanc chaud au blanc froid et revient
-    const white = (d) => !!d.drv.whiteOnly?.(d.sku);
-    const kelvin = (d, now) => Math.round(WHITE_MIN_K + (WHITE_MAX_K - WHITE_MIN_K) * (0.5 - 0.5 * Math.cos(2 * Math.PI * phase(d, now))));
+    // Lumières blanches : le cycle passe du blanc chaud au blanc froid et revient
+    const kelvin = (d, now) => Math.round(kMin + (kMax - kMin) * (0.5 - 0.5 * Math.cos(2 * Math.PI * phase(d, now))));
     for (const d of devices) {
       await this.remember(d);
       if (resumed?.ids?.has(d.id)) continue; // déjà dans l'animation : elle continue telle quelle
       d.drv.command(d.ip, 'turn', { value: 1 });
       d.drv.command(d.ip, 'brightness', { value: effect === 'breathe' ? level(d) : bright });
-      d.drv.command(d.ip, 'colorwc', effect === 'cycle' ? (white(d) ? { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: kelvin(d) } : { color: hue(d), colorTemInKelvin: 0 }) : tint); // directement la valeur de la phase en cours
+      d.drv.command(d.ip, 'colorwc', effect === 'cycle' ? (isW ? { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: kelvin(d) } : { color: hue(d), colorTemInKelvin: 0 }) : tint); // directement la valeur de la phase en cours
     }
     if (effect === 'fixed') return;
     const last = new Map();  // dernière luminosité envoyée (respiration)
     const sentAt = new Map(); // dernier envoi par lumière
     // Pas de chaque lumière : celles qui font un fondu d'elles-mêmes (ampoules H6008, Elgato) glissent vers la
     // valeur suivante, une par seconde suffit (cycle). Les autres (tube H6076) sautent : 5 petits pas par seconde.
-    const stepOf = (d) => (white(d) ? WHITE_STEP_MS : d.drv.fades(d.sku) ? (effect === 'cycle' ? 1000 : 350) : 200);
+    const stepOf = (d) => (isW ? 0 : d.drv.fades(d.sku) ? (effect === 'cycle' ? 1000 : 350) : 200);
     const lastK = new Map(); // dernière température envoyée (cycle des lumières blanches)
     const tick = () => {
       if (!this.running) return;
       const now = Date.now();
       for (const d of devices) {
-        if (now - (sentAt.get(d.id) || 0) < stepOf(d) - 50) continue;
+        if (stepOf(d) && now - (sentAt.get(d.id) || 0) < stepOf(d) - 50) continue;
         sentAt.set(d.id, now);
-        if (effect === 'cycle' && white(d)) {
+        if (effect === 'cycle' && isW) {
           const k = kelvin(d, now);
-          if (Math.abs(k - (lastK.get(d.id) ?? 0)) >= 20) { lastK.set(d.id, k); d.drv.command(d.ip, 'colorwc', { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: k }); }
+          if (k !== lastK.get(d.id)) { lastK.set(d.id, k); d.drv.command(d.ip, 'colorwc', { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: k }); }
         } else if (effect === 'cycle') d.drv.command(d.ip, 'colorwc', { color: hue(d, now), colorTemInKelvin: 0 });
         else { const v = level(d, now); if (last.get(d.id) !== v) { last.set(d.id, v); d.drv.command(d.ip, 'brightness', { value: v }); } }
       }
     };
-    this.effect = { timer: setInterval(tick, 100), key, t0, ids: new Set(devices.map((d) => d.id)) };
-    this.effect.timer.unref?.();
+    const timer = setInterval(tick, isW ? WHITE_TICK_MS : TICK_MS);
+    timer.unref?.();
+    this.effects.set(fam, { timer, key, t0, ids: new Set(devices.map((d) => d.id)) });
   }
 
   stopEffect() {
-    if (this.effect) { clearInterval(this.effect.timer); this.lastEffect = { key: this.effect.key, t0: this.effect.t0, ids: this.effect.ids }; }
-    this.effect = null;
+    for (const [fam, e] of this.effects) { clearInterval(e.timer); this.lastEffects.set(fam, { key: e.key, t0: e.t0, ids: e.ids }); }
+    this.effects.clear();
   }
 
   // ---------- Philips Hue : recherche du pont et association ----------

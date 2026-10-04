@@ -533,3 +533,8 @@ details.more .menu { position: absolute; right: 0; top: calc(100% + 4px); z-inde
 .tpl-card canvas.tpl-preview { width: auto; height: auto; max-width: 170px; max-height: 120px; }
 .tpl-card .tpl-thumb-box { width: 170px; height: 120px; flex: none; display: flex; align-items: center; justify-content: center; }
 .hue-bridges { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+
+.card h4 { margin: 18px 0 8px; font-size: 14px; opacity: .8; }
+[data-when][hidden] { display: none !important; }
+.fam-more { margin-top: 14px; }
+.fam-more summary { cursor: pointer; font-weight: 600; font-size: 14px; padding: 6px 0; }

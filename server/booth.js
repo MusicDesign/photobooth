@@ -191,7 +191,7 @@ export class Booth {
     }
     const template = this.templates.get(id);
     const session = {
-      id: newId(),
+      id: newId((id) => !!this.store.getSession(id)),
       eventId: this.store.data.activeEventId, // rangée dans l'événement en cours
       createdAt: new Date().toISOString(),
       templateId: template.id,

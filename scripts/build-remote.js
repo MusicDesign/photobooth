@@ -6,35 +6,30 @@
  *
  *   npm run remote [dossier de sortie]   (défaut : output/remote)
  *
- * Reprend le nom, les couleurs, le logo et les textes de la config actuelle : à relancer après
- * un changement de thème. Le mot de passe Wi-Fi n'y figure jamais (page publique).
+ * Reprend le nom et les textes de la config actuelle, mais toujours le thème par défaut et le logo Cheeesy
+ * d'origine (pas ceux de la borne) : à relancer après un changement de nom ou de textes.
+ * Le mot de passe Wi-Fi n'y figure jamais (page publique).
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { Config } from '../server/config.js';
-import { Themes, DEFAULT_LOGO, defaultLogoSvg } from '../server/themes.js';
-import { OUTPUT_DIR, PUBLIC_DIR, DATA_DIR } from '../server/paths.js';
+import { Themes, DEFAULT_LOGO } from '../server/themes.js';
+import { OUTPUT_DIR, PUBLIC_DIR } from '../server/paths.js';
 import { completeUrl } from '../server/booth.js';
 
 const OUT = path.resolve(process.argv[2] || path.join(OUTPUT_DIR, 'remote'));
 const config = new Config();
 const cfg = config.load();
-const theme = new Themes().resolve(cfg);
+// Toujours le thème par défaut et le logo Cheeesy d'origine, quel que soit le thème ou le logo de la borne
+const theme = new Themes().resolve({ ...cfg, theme: { active: 'default-light' }, booth: { ...cfg.booth, logo: '', backgroundImage: '' } });
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });
 
-// Logo : le logo Cheeesy par défaut est écrit aux couleurs du thème ; un logo importé (/uploads/…, dossier data/)
-// ou livré (/assets/…, dossier public/) est copié tel quel.
-let logoName = 'logo.svg';
-if (theme.defaultLogo) {
-  fs.writeFileSync(path.join(OUT, logoName), defaultLogoSvg(theme.colors));
-} else {
-  const logoSrc = theme.logo.startsWith('/uploads/') ? path.join(DATA_DIR, theme.logo) : path.join(PUBLIC_DIR, theme.logo || DEFAULT_LOGO);
-  logoName = `logo${path.extname(logoSrc)}`;
-  fs.copyFileSync(logoSrc, path.join(OUT, logoName));
-}
+// Logo : toujours le logo Cheeesy d'origine (aplat jaune), copié tel quel, sans le recolorer aux couleurs du thème
+const logoName = 'logo.svg';
+fs.copyFileSync(path.join(PUBLIC_DIR, DEFAULT_LOGO), path.join(OUT, logoName));
 
 const c = theme.colors;
 const ssid = cfg.share.wifi?.enabled ? String(cfg.share.wifi.ssid || '').trim() : '';

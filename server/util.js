@@ -13,12 +13,16 @@ export class HttpError extends Error {
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Identifiant de session lisible : AAMMJJ-HHMMSS-xxxxxx */
-export function newId() {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  const stamp = `${String(d.getFullYear()).slice(2)}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-  return `${stamp}-${crypto.randomBytes(3).toString('hex')}`;
+/**
+ * Identifiant de session court, pour l'adresse du QR code : 6 lettres et chiffres sans caractères ambigus (ni 0/o, ni 1/l/i),
+ * par exemple k7m2qx. exists(id) : déjà pris (le tirage est refait). Les anciens identifiants AAMMJJ-HHMMSS-xxxxxx restent valables.
+ */
+const ID_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+export function newId(exists = () => false) {
+  for (;;) {
+    const id = Array.from(crypto.randomBytes(6), (b) => ID_ALPHABET[b % ID_ALPHABET.length]).join('');
+    if (!exists(id)) return id;
+  }
 }
 
 export const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);

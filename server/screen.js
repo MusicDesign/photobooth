@@ -15,7 +15,7 @@ const execFileP = promisify(execFile);
  * réglages de la config (screen.brightness, screen.volume ; null = ne pas y toucher) sont renvoyés à l'écran à
  * chaque démarrage : certains écrans oublient les leurs en s'éteignant.
  */
-const RESCAN_MS = 60000;
+const RESCAN_MS = 10000;
 const TIMEOUT_MS = 10000; // ddcutil est lent (I2C) : plusieurs secondes par commande
 const PROPS = ['brightness', 'volume'];
 

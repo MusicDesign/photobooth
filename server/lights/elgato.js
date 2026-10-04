@@ -10,6 +10,7 @@ import { lanAddress, subnetHosts } from './govee.js';
  * Même interface que GoveeLan (scan, command, status) : le gestionnaire pilote les deux de la même façon.
  */
 const PORT = 9123;
+export const MAX_BRIGHTNESS = 60; // jamais plus : à pleine puissance la lumière est trop violente pour les yeux
 const MIRED_MIN = 143; // ≈ 7000 K
 const MIRED_MAX = 344; // ≈ 2900 K
 
@@ -20,7 +21,7 @@ const miredToKelvin = (m) => Math.round(1e6 / m / 10) * 10;
 /** Commande Govee (turn, brightness, colorwc) → champs Elgato. Une couleur sans blanc ne donne rien. */
 function toElgato(cmd, data) {
   if (cmd === 'turn') return { on: data.value ? 1 : 0 };
-  if (cmd === 'brightness') return { brightness: clamp(data.value, 3, 100) };
+  if (cmd === 'brightness') return { brightness: clamp(data.value, 3, MAX_BRIGHTNESS) };
   if (cmd === 'colorwc' && data.colorTemInKelvin > 0) return { temperature: kelvinToMired(data.colorTemInKelvin) };
   return null;
 }
@@ -33,6 +34,7 @@ export class ElgatoLan {
     this.error = null;
     this.local = null;
     this.onScan = null;
+    this.lastSent = new Map(); // ip → derniers champs envoyés (doublons ignorés)
     this.pending = new Map(); // ip → champs à envoyer au prochain PUT (les commandes en attente regroupées)
     this.inflight = new Map(); // ip → PUT en cours : le suivant part à sa réponse, avec les dernières valeurs seulement
   }
@@ -54,6 +56,7 @@ export class ElgatoLan {
   /** Chaque adresse du réseau est appelée sur le port 9123 (64 à la fois) : seules les Elgato répondent. */
   async scan() {
     if (!this.local) return;
+    this.lastSent.clear(); // à chaque recherche : une lumière changée à la main est reprise
     const hosts = subnetHosts(this.local);
     const probe = async (ip) => {
       try {
@@ -71,7 +74,13 @@ export class ElgatoLan {
   command(ip, cmd, data) {
     const fields = toElgato(cmd, data);
     if (!fields) return;
-    this.pending.set(ip, { ...(this.pending.get(ip) || {}), ...fields });
+    // Valeur déjà envoyée : rien à renvoyer (le cycle et la respiration recalculent plus vite que la lumière ne change)
+    const last = this.lastSent.get(ip) || {};
+    const next = {};
+    for (const [k, v] of Object.entries(fields)) if (last[k] !== v || this.pending.get(ip)?.[k] !== undefined) next[k] = v;
+    if (!Object.keys(next).length) return;
+    this.lastSent.set(ip, { ...last, ...next });
+    this.pending.set(ip, { ...(this.pending.get(ip) || {}), ...next });
     if (!this.inflight.has(ip)) setImmediate(() => this.flush(ip));
   }
 

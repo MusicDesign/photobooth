@@ -178,6 +178,7 @@ export const DEFAULTS = {
   lights: {
     enabled: false,
     devices: {},
+    // Lumières RGB (Govee, ampoules Hue couleur) : idle, shooting et shutdown ci-dessous ; whiteLights pour les blanches.
     // Accueil : ambiance (effet fixed | cycle | breathe) | keep (lumières laissées telles quelles) | off (éteintes).
     // sync : cycle et respiration identiques sur toutes les lumières (sinon décalés entre elles)
     // white : blanc (température kelvin) à la place de la couleur, pour la couleur fixe et la respiration
@@ -187,6 +188,13 @@ export const DEFAULTS = {
     shooting: { kelvin: 5000, brightness: 100, waitBrightness: 30 },
     // À l'arrêt de la borne : white (blanc chaud doux, pour ranger sans être dans le noir) | off (éteintes) | keep (comme avant la borne)
     shutdown: { mode: 'white', kelvin: 2700, brightness: 20 },
+    // Lumières blanches (Elgato, ampoules Hue blanches) : mêmes réglages que ci-dessus, propres à elles. idle.effect :
+    // fixed | breathe | cycle (du blanc chaud kelvinMin au blanc froid kelvinMax)
+    whiteLights: {
+      idle: { mode: 'ambiance', effect: 'fixed', kelvin: 4000, kelvinMin: 2900, kelvinMax: 7000, brightness: 60, periodSec: 20, sync: false },
+      shooting: { kelvin: 5000, brightness: 100, waitBrightness: 30 },
+      shutdown: { mode: 'white', kelvin: 2700, brightness: 20 }
+    },
     hue: { ip: '', username: '', name: '' } // pont Philips Hue associé (admin → Lumières)
   }
 };

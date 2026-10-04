@@ -130,9 +130,9 @@ export function score(m) {
 const NO_FLASH_SERIES = [{ shutterspeed: '1/125', aperture: '5.6', iso: 'Auto' }, { shutterspeed: '1/125', aperture: '8', iso: 'Auto' }];
 const FLASH_SERIES = ['200', '400', '800', '1600'].map((iso) => ({ shutterspeed: '1/60', aperture: '5.6', iso }));
 const NO_FLASH_BONUS = 15; // à qualité proche, la lumière du lieu l'emporte (rendu plus doux, pas d'éblouissement)
-// Ring light, jamais de flash : trois luminosités (balance des blancs auto), puis trois couleurs à la meilleure
+// Ring light, jamais de flash : trois luminosités (jamais plus de 60 %) (balance des blancs auto), puis trois couleurs à la meilleure
 // luminosité, balance des blancs du boîtier fixée sur « Lumière du jour » pour que la couleur compte (MAX_SHOTS photos)
-const LIGHT_LEVELS = [40, 70, 100];
+const LIGHT_LEVELS = [30, 45, 60]; // la ring light ne dépasse jamais 60 % (lights/elgato.js)
 const LIGHT_KELVINS = [4000, 5000, 6000];
 const LIGHT_WB = 'Daylight';
 const CAST_WEIGHT = 1.5; // poids de la dominante de couleur dans la note de la série des couleurs
