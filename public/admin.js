@@ -973,6 +973,7 @@ function bindScreen() {
 
 // ---------- Lumières Govee, Elgato et Philips Hue du réseau local (section Stream Deck & lumières) ----------
 
+const LIGHT_COLOR_SOURCES = [['custom', 'Personnalisée'], ['primary', 'Accent du thème'], ['secondary', 'Titre du thème'], ['background', 'Fond du thème']];
 const LIGHT_EFFECTS = [['cycle', 'Cycle de couleurs'], ['breathe', 'Respiration'], ['fixed', 'Couleur fixe']];
 const LIGHT_MODES = [['ambiance', 'Ambiance', 'Les lumières animent l\'accueil (effet ci-dessous).'], ['keep', 'Laisser telles quelles', 'Elles gardent l\'état qu\'elles avaient avant la borne.'], ['off', 'Éteintes', 'Éteintes à l\'accueil, allumées pour la prise de vue.']];
 
@@ -1008,7 +1009,10 @@ function lightsFamily(fam, title) {
       <div class="grid-2">
         ${sel(['mode', 'À l\'accueil'], LIGHT_MODES.map(([v, t]) => [v, t]), idle.mode || 'ambiance')}
         ${sel(['effect', 'Effet'], white ? WHITE_EFFECTS : LIGHT_EFFECTS, effect, amb)}
-        ${white ? kelvin('idleKelvin', idle.kelvin ?? 4000, 'Température', `${amb};${n('effect')}=fixed|breathe`) : `<label data-when="${amb};${n('effect')}=fixed|breathe">Couleur <input name="rgb_color" type="color" value="${esc(idle.color || '#ff7a1a')}"></label>
+        ${white ? kelvin('idleKelvin', idle.kelvin ?? 4000, 'Température', `${amb};${n('effect')}=fixed|breathe`) : `${sel(['colorSource', 'Couleur'], LIGHT_COLOR_SOURCES, idle.colorSource === 'theme' ? 'primary' : idle.colorSource || 'custom', `${amb};${n('effect')}=fixed|breathe`)}
+        <label data-when="${amb};${n('effect')}=fixed|breathe;rgb_colorSource=custom">Couleur choisie <input name="rgb_color" type="color" value="${esc(idle.color || '#ff7a1a')}"></label>
+        ${sel(['cyclePalette', 'Couleurs'], [['rainbow', 'Toutes les couleurs'], ['theme', 'Accent, titre et fond du thème']], idle.cyclePalette || 'rainbow', `${amb};${n('effect')}=cycle`)}
+        ${['primary', 'secondary', 'background'].map((k) => `<div class="light-theme-color" data-when="${amb};${n('effect')}=fixed|breathe;rgb_colorSource=${k}"><span class="light-swatch" style="background:${esc(S.theme?.colors?.[k] || '#ffffff')}"></span> Couleur du thème actif</div>`).join('')}
         <label class="inline" data-when="${amb};${n('effect')}=fixed|breathe"><input name="rgb_white" type="checkbox" ${idle.white ? 'checked' : ''}> Blanc plutôt qu'une couleur</label>
         ${kelvin('idleKelvin', idle.kelvin ?? 2700, 'Température', `${amb};${n('effect')}=fixed|breathe;rgb_white`)}`}
         ${white ? `<label data-when="${amb};${n('effect')}=cycle">Du blanc chaud (K) <input name="wh_kelvinMin" type="number" min="2000" max="9000" step="100" value="${idle.kelvinMin ?? 2900}" style="width:100px"></label>
@@ -1114,7 +1118,7 @@ function bindLights() {
       };
     };
     const rgb = family('rgb'), wh = family('wh');
-    Object.assign(rgb.idle, { color: fd.get('rgb_color'), white: fd.get('rgb_white') === 'on' });
+    Object.assign(rgb.idle, { color: fd.get('rgb_color'), colorSource: fd.get('rgb_colorSource') || 'custom', cyclePalette: fd.get('rgb_cyclePalette') || 'rainbow', white: fd.get('rgb_white') === 'on' });
     Object.assign(wh.idle, { kelvinMin: num(fd, 'wh_kelvinMin'), kelvinMax: num(fd, 'wh_kelvinMax') });
     saveConfig({ lights: { enabled: fd.get('lightsEnabled') === 'on', devices, ...rgb, whiteLights: wh } }, 'Lumières enregistrées');
   });

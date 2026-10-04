@@ -943,6 +943,35 @@ async function runSteps(app, camera) {
     await put('/api/admin/config', { lights: { idle: { mode: 'ambiance', effect: 'fixed', white: true, kelvin: 4000 } } }, ADMIN);
     await settle();
     assert.ok(ips.every((ip) => st()[ip].onOff === 1 && st()[ip].colorTemInKelvin === 4000), `accueil : blanc 4000 K (${JSON.stringify(st())})`);
+    // Couleur du thème : accent, titre ou fond du thème actif, suivi quand le thème change
+    const rgbOf = (ip) => [st()[ip].color.r, st()[ip].color.g, st()[ip].color.b].join();
+    await put('/api/admin/config', { lights: { idle: { mode: 'ambiance', effect: 'fixed', white: false, colorSource: 'primary' } }, theme: { active: 'default-dark' } }, ADMIN);
+    await settle();
+    assert.ok(ips.every((ip) => rgbOf(ip) === '233,196,106'), `accent du thème #e9c46a (${rgbOf(ips[0])})`);
+    await put('/api/admin/config', { lights: { idle: { colorSource: 'secondary' } } }, ADMIN);
+    await settle();
+    assert.ok(ips.every((ip) => rgbOf(ip) === '255,255,255'), `titre du thème #ffffff (${rgbOf(ips[0])})`);
+    await put('/api/admin/config', { lights: { idle: { colorSource: 'background' } } }, ADMIN);
+    await settle();
+    assert.ok(ips.every((ip) => rgbOf(ip) === '15,17,21'), `fond du thème #0f1115 (${rgbOf(ips[0])})`);
+    await put('/api/admin/config', { lights: { idle: { colorSource: 'primary' } }, theme: { active: 'default-light' } }, ADMIN);
+    await settle();
+    assert.ok(ips.every((ip) => rgbOf(ip) === '29,53,87'), `thème changé : accent #1d3557 (${rgbOf(ips[0])})`);
+    // Cycle en fondu par les couleurs du thème (début de cycle : l'accent), à la place de l'arc-en-ciel
+    const near = (ip, [r, g, b]) => [st()[ip].color.r - r, st()[ip].color.g - g, st()[ip].color.b - b].every((d) => Math.abs(d) <= 3);
+    await put('/api/admin/config', { lights: { idle: { effect: 'cycle', cyclePalette: 'theme', periodSec: 600, sync: true } }, theme: { active: 'default-dark' } }, ADMIN);
+    await settle();
+    await new Promise((r) => setTimeout(r, 1100));
+    assert.ok(ips.every((ip) => near(ip, [233, 196, 106])), `cycle du thème : début sur l'accent (${rgbOf(ips[0])})`);
+    await put('/api/admin/config', { theme: { active: 'default-light' } }, ADMIN);
+    await settle();
+    await new Promise((r) => setTimeout(r, 1100));
+    assert.ok(ips.every((ip) => near(ip, [29, 53, 87])), `cycle : thème changé, palette accent / fond (${rgbOf(ips[0])})`);
+    await put('/api/admin/config', { lights: { idle: { effect: 'fixed', cyclePalette: 'rainbow' } } }, ADMIN);
+    await settle();
+    await put('/api/admin/config', { lights: { idle: { colorSource: 'custom', color: '#00ff00' } } }, ADMIN);
+    await settle();
+    assert.ok(ips.every((ip) => st()[ip].color.g === 255 && st()[ip].color.r === 0), 'couleur choisie');
     // Option coupée : état d'avant rendu, plus aucune commande
     await put('/api/admin/config', { lights: { enabled: false } }, ADMIN);
     await settle();

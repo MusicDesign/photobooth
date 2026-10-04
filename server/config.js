@@ -181,8 +181,10 @@ export const DEFAULTS = {
     // Lumières RGB (Govee, ampoules Hue couleur) : idle, shooting et shutdown ci-dessous ; whiteLights pour les blanches.
     // Accueil : ambiance (effet fixed | cycle | breathe) | keep (lumières laissées telles quelles) | off (éteintes).
     // sync : cycle et respiration identiques sur toutes les lumières (sinon décalés entre elles)
+    // cyclePalette (effet cycle) : rainbow (toutes les couleurs) | theme (en fondu par l'accent, le titre et le fond du thème)
+    // colorSource : custom (la couleur choisie) | primary (accent) | secondary (titres) | background (fond) du thème de la borne, suivi quand le thème change
     // white : blanc (température kelvin) à la place de la couleur, pour la couleur fixe et la respiration
-    idle: { mode: 'ambiance', effect: 'cycle', color: '#ff7a1a', white: false, kelvin: 2700, brightness: 60, periodSec: 20, sync: false },
+    idle: { mode: 'ambiance', effect: 'cycle', color: '#ff7a1a', colorSource: 'custom', cyclePalette: 'rainbow', white: false, kelvin: 2700, brightness: 60, periodSec: 20, sync: false },
     // Du choix du template à la dernière photo, et pendant le calibrage
     // waitBrightness : lumière douce du choix du cadre jusqu'au décompte, qui monte ensuite jusqu'à brightness au « 0 »
     shooting: { kelvin: 5000, brightness: 100, waitBrightness: 30 },

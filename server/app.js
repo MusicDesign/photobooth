@@ -74,7 +74,7 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   buildAllPreviews(templates).then((n) => { if (n) broadcast({ type: 'config' }); });
 
   // Lumières du réseau local : ambiance à l'accueil, blanc neutre pour la prise de vue (voir lights/index.js)
-  const lights = new Lights({ config });
+  const lights = new Lights({ config, themeColor: (key = 'primary') => themes.resolve(config.get()).colors?.[key] });
   setFlashBlocker(() => lights.hasRingLight()); // ring light branchée : le pilote ne lève plus jamais le flash
   booth.onShotDone = () => lights.shotDone(); // photo prise : lumière douce jusqu'au prochain décompte
 

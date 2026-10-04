@@ -546,3 +546,4 @@ details.more .menu { position: absolute; right: 0; top: calc(100% + 4px); z-inde
 .fam-more summary { cursor: pointer; font-weight: 600; font-size: 14px; padding: 6px 0; }
 .col { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 14px; }
 #formImportRead input[type=file] { flex: 1; min-width: 220px; }
+.light-theme-color { display: flex; align-items: center; gap: 8px; align-self: end; padding: 10px 0; }

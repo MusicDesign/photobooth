@@ -38,15 +38,23 @@ function hexToRgb(hex) {
   const n = m ? parseInt(m[1], 16) : 0xff7a1a;
   return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
 }
+/** Couleur de la palette à la phase p (0 à 1), en fondu d'une couleur à la suivante puis retour à la première. */
+function paletteColor(palette, p) {
+  const x = (((p % 1) + 1) % 1) * palette.length;
+  const i = Math.floor(x), f = x - i;
+  const a = palette[i % palette.length], b = palette[(i + 1) % palette.length];
+  return { r: Math.round(a.r + (b.r - a.r) * f), g: Math.round(a.g + (b.g - a.g) * f), b: Math.round(a.b + (b.b - a.b) * f) };
+}
 function hueToRgb(h) {
   const f = (n) => { const k = (n + h / 30) % 12; return Math.round(255 * (0.5 - 0.5 * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
   return { r: f(0), g: f(8), b: f(4) };
 }
 
 export class Lights extends EventEmitter {
-  constructor({ config, driver = process.env.BOOTH_LIGHTS || 'govee' }) {
+  constructor({ config, driver = process.env.BOOTH_LIGHTS || 'govee', themeColor = () => null }) {
     super();
     this.config = config;
+    this.themeColor = themeColor; // (clé) → couleur du thème actif : accent, titre ou fond (option « couleur du thème » de l'ambiance)
     this.driverName = driver;
     this.drivers = [];         // Govee (UDP) et Elgato (HTTP), même interface
     this.seen = new Map();     // id → { id, sku, ip, firmware, drv, at } (réponses aux recherches)
@@ -69,11 +77,25 @@ export class Lights extends EventEmitter {
   /** Réglages d'une lumière (idle, shooting ou shutdown) : ceux de sa famille, RGB ou blanche. */
   famCfg(d, key) { const c = this.cfg(); return (isWhite(d) ? c.whiteLights?.[key] : c[key]) || {}; }
 
+  /** Couleur du thème choisie pour l'ambiance RGB (colorSource : primary, secondary ou background), ou null si la couleur est personnalisée. */
+  themedColor(idle = {}) {
+    const key = ({ theme: 'primary', primary: 'primary', secondary: 'secondary', background: 'background' })[idle.colorSource];
+    return key ? this.themeColor(key) || null : null;
+  }
+
+  /** Palette du cycle « couleurs du thème » : accent, titre, fond (sans doublon voisin), ou null s'il y a moins de deux couleurs. */
+  themePalette(idle = {}) {
+    if (idle.cyclePalette !== 'theme') return null;
+    const hexes = ['primary', 'secondary', 'background'].map((k) => this.themeColor(k)).filter((c) => /^#?[0-9a-f]{6}$/i.test(c || '')).map((c) => c.toLowerCase());
+    const distinct = hexes.filter((c, i) => c !== hexes[(i + hexes.length - 1) % hexes.length]);
+    return distinct.length >= 2 ? distinct : null;
+  }
+
   enabled() { return this.driverName !== 'off' && !!this.cfg().enabled; }
 
   async start() {
     // Seuls les réglages des lumières comptent (pas l'adresse d'une lumière, ni le reste de la config)
-    const sig = () => { const c = this.cfg(); return JSON.stringify([this.enabled(), c.idle, c.shooting, c.whiteLights, Object.entries(c.devices || {}).map(([id, d]) => [id, d.ambiance, d.shooting])]); };
+    const sig = () => { const c = this.cfg(); return JSON.stringify([this.enabled(), c.idle, c.shooting, c.whiteLights, this.themedColor(c.idle), this.themePalette(c.idle), Object.entries(c.devices || {}).map(([id, d]) => [id, d.ambiance, d.shooting])]); };
     let last = sig();
     this.config.on('change', () => { const now = sig(); if (now !== last) { last = now; this.sync(); } });
     await this.sync();
@@ -381,12 +403,14 @@ export class Lights extends EventEmitter {
     const bright = clamp(idle.brightness ?? 60, 1, 100);
     // Couleur fixe et respiration : la couleur choisie, ou un blanc (température) si l'admin l'a demandé. Les lumières
     // blanches n'ont que le blanc.
-    const tint = isW || idle.white ? { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: clamp(idle.kelvin ?? (isW ? 4000 : 2700), 2000, 9000) } : { color: hexToRgb(idle.color), colorTemInKelvin: 0 };
+    const tint = isW || idle.white ? { color: { r: 0, g: 0, b: 0 }, colorTemInKelvin: clamp(idle.kelvin ?? (isW ? 4000 : 2700), 2000, 9000) } : { color: hexToRgb(this.themedColor(idle) || idle.color), colorTemInKelvin: 0 };
     const period = clamp(idle.periodSec ?? (effect === 'breathe' ? 6 : 20), 2, 600) * 1000;
     const kMin = clamp(idle.kelvinMin ?? WHITE_MIN_K, 2000, 9000), kMax = Math.max(kMin, clamp(idle.kelvinMax ?? WHITE_MAX_K, 2000, 9000));
     // Même animation qu'avant l'interruption (changement de scène, lumière revenue) : elle reprend là où elle en
     // était, et les lumières qui y étaient déjà ne reçoivent rien : pas de saut de couleur ni de luminosité
-    const key = `${effect}|${period}|${idle.sync ? 1 : 0}|${bright}|${JSON.stringify(tint)}|${kMin}|${kMax}`;
+    // Cycle « couleurs du thème » : palette accent, titre, fond ; sinon tout le tour de l'arc-en-ciel
+    const palette = isW ? null : this.themePalette(idle)?.map(hexToRgb);
+    const key = `${effect}|${period}|${idle.sync ? 1 : 0}|${bright}|${JSON.stringify(tint)}|${kMin}|${kMax}|${JSON.stringify(palette)}`;
     const lastEffect = this.lastEffects.get(fam);
     const resumed = lastEffect?.key === key ? lastEffect : null;
     const t0 = resumed ? resumed.t0 : Date.now();
@@ -398,7 +422,7 @@ export class Lights extends EventEmitter {
     const phase = (d, now = Date.now()) => ((now - t0) / period + offset(d)) % 1;
     const low = Math.max(3, Math.round(bright * 0.15));
     const level = (d, now) => Math.round(low + (bright - low) * (0.5 - 0.5 * Math.cos(2 * Math.PI * phase(d, now))));
-    const hue = (d, now) => hueToRgb(phase(d, now) * 360);
+    const hue = (d, now) => (palette ? paletteColor(palette, phase(d, now)) : hueToRgb(phase(d, now) * 360));
     // Lumières blanches : le cycle passe du blanc chaud au blanc froid et revient
     const kelvin = (d, now) => Math.round(kMin + (kMax - kMin) * (0.5 - 0.5 * Math.cos(2 * Math.PI * phase(d, now))));
     for (const d of devices) {
