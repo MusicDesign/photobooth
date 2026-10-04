@@ -557,8 +557,21 @@ export class Gphoto2Camera extends BaseCamera {
             flashControl: this.flashControl(),
             write: (v) => this.writeConfig(v),
             shoot: async (file) => {
-              await this.gp(`--set-config capturetarget=0 --capture-image-and-download --filename ${quoteArg(file)} --force-overwrite`, 30000)
-                .catch(async (e) => { await this.recover(); throw e; });
+              const capture = () => this.gp(`--set-config capturetarget=0 --capture-image-and-download --filename ${quoteArg(file)} --force-overwrite`, 30000);
+              // Comme pour les vraies photos : si le boîtier refuse (mise au point qui n'accroche pas, « Device Busy »),
+              // on relâche le déclencheur et on réessaie une fois avant d'abandonner
+              await capture().catch(async (e) => {
+                if (!/Full-Press failed|0x2019/.test(e.message)) throw e;
+                console.warn('[gphoto2] calibrage : le boîtier refuse de déclencher (Device Busy) : déclencheur relâché, nouvel essai');
+                await this.recover();
+                await sleep(1000);
+                await capture();
+              }).catch(async (e) => {
+                await this.recover();
+                // « Full-Press failed / Device Busy » : mise au point impossible (scène presque noire, rien devant l'objectif)
+                if (/Full-Press failed|0x2019/.test(e.message)) throw new Error(`Le boîtier n'arrive pas à déclencher (mise au point impossible : scène trop sombre ? lumières éteintes ?). ${e.message.split('\n')[0]}`);
+                throw e;
+              });
               if (!fs.existsSync(file)) throw new Error('le boîtier n\'a pas rendu de photo');
             },
             // Lever le flash (sans effet s'il l'est déjà) ; un refus est journalisé, la photo le révélera (EXIF)

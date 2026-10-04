@@ -130,7 +130,7 @@ export function score(m) {
 const NO_FLASH_SERIES = [{ shutterspeed: '1/125', aperture: '5.6', iso: 'Auto' }, { shutterspeed: '1/125', aperture: '8', iso: 'Auto' }];
 const FLASH_SERIES = ['200', '400', '800', '1600'].map((iso) => ({ shutterspeed: '1/60', aperture: '5.6', iso }));
 const NO_FLASH_BONUS = 15; // à qualité proche, la lumière du lieu l'emporte (rendu plus doux, pas d'éblouissement)
-// Ring light, jamais de flash : trois luminosités (jamais plus de 60 %) (balance des blancs auto), puis trois couleurs à la meilleure
+// Ring light, jamais de flash : trois luminosités (jamais plus de 60 %, balance des blancs auto), puis trois couleurs à la meilleure
 // luminosité, balance des blancs du boîtier fixée sur « Lumière du jour » pour que la couleur compte (MAX_SHOTS photos)
 const LIGHT_LEVELS = [30, 45, 60]; // la ring light ne dépasse jamais 60 % (lights/elgato.js)
 const LIGHT_KELVINS = [4000, 5000, 6000];
@@ -202,7 +202,16 @@ export async function calibrate(cam, { dir, onStep = () => {} }) {
   }
 
   // 1. Sans flash
-  for (const s of NO_FLASH_SERIES) await shoot(`Sans flash, f/${s.aperture}`, s, false);
+  // Dans une scène trop sombre le boîtier refuse de déclencher (mise au point impossible) : ce n'est pas une panne,
+  // la série avec flash (qui éclaire la scène) peut encore réussir
+  let darkRefused = 0;
+  for (const s of NO_FLASH_SERIES) {
+    try { await shoot(`Sans flash, f/${s.aperture}`, s, false); } catch (e) {
+      if (!/mise au point impossible/.test(e.message)) throw e;
+      darkRefused++;
+      console.warn(`[calibrage] sans flash f/${s.aperture} : le boîtier refuse de déclencher (scène trop sombre) → série avec flash`);
+    }
+  }
   const flashUp = shots.some((sh) => sh.flashFired);
 
   // 2. Avec flash
@@ -246,7 +255,7 @@ export async function calibrate(cam, { dir, onStep = () => {} }) {
   }
   if (!best) return { profile: null, shots, reason: 'Aucune photo exploitable.' };
   best.best = true;
-  const ambientNote = flashUp ? 'Flash levé à la main dès le départ : pas de vraie photo sans flash.'
+  const ambientNote = darkRefused ? 'Sans flash : le boîtier refuse de déclencher (scène trop sombre).' : flashUp ? 'Flash levé à la main dès le départ : pas de vraie photo sans flash.'
     : ambient ? `Meilleure sans flash : ${ambient.summary}, luminosité ${ambient.mean}/255 (note ${ambient.score}).`
     : `Sans flash : ${shots.filter((sh) => !sh.flash).map((sh) => `ISO ${sh.iso ?? '?'}, luminosité ${sh.mean}`).join(' ; ')}, pas assez bon.`;
   const flashNote = flashed ? ` Meilleure avec flash : ${flashed.summary}, luminosité ${flashed.mean}/255 (note ${flashed.score}).` : '';

@@ -245,6 +245,18 @@ export class Config extends EventEmitter {
     return cfg;
   }
 
+  /**
+   * Remplace des sections entières (import de configuration) : chacune repart de ses valeurs par défaut, complétées
+   * par celles du fichier (donc rien d'une autre borne ne reste, comme les lumières connues). Un seul enregistrement.
+   */
+  replaceSections(sections) {
+    for (const [key, value] of Object.entries(sections)) this.data[key] = deepMerge(clone(DEFAULTS[key] ?? {}), value);
+    this.save();
+    const cfg = this.get();
+    this.emit('change', cfg);
+    return cfg;
+  }
+
   /** Retire une clé, ex. remove(['lights', 'devices', id]) : deepMerge ne sait qu'ajouter ou remplacer. */
   remove(keys) {
     const last = keys.at(-1);

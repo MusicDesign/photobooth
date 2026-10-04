@@ -15,6 +15,7 @@ import { compose } from '../compositor.js';
 import { modelStatus, downloadModel } from '../models.js';
 import { cutoutPerf } from '../cutout-ai.js';
 import { buildPreviews } from '../template-previews.js';
+import { buildBundle, readBundle, describeBundle, applyBundle, backupBeforeImport, revertLastImport, lastImportBackup } from '../config-bundle.js';
 import { MjpegBroadcaster } from '../camera/mjpeg.js';
 import { OUTPUT_DIR as OUT } from '../paths.js';
 
@@ -516,6 +517,58 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     zip.pipe(res);
     for (const f of files) zip.file(f.file, { name: `${base}/${f.name}` });
     zip.finalize();
+  });
+
+  // ---------- Export et import de la configuration (voir config-bundle.js) ----------
+  const bundleUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 300 * 1024 * 1024 } });
+  let pendingImport = null; // fichier lu, en attente du choix de l'admin : { id, bundle, at }
+  const bundleCtx = () => ({ config, templates });
+  const bundleInfo = () => ({ boothName: config.get().booth.name || '', appVersion: updater?.status?.().version || '' });
+
+  r.get('/config/export', (req, res) => {
+    const on = (k, def) => (req.query[k] === undefined ? def : req.query[k] === '1');
+    const parts = { settings: on('settings', true), templates: on('templates', false) };
+    if (!parts.settings && !parts.templates) throw new HttpError(400, 'EXPORT_EMPTY', 'Rien à exporter : coche au moins un contenu');
+    const { boothName, appVersion } = bundleInfo();
+    const base = `${boothName || 'Borne'} - configuration ${new Date().toISOString().slice(0, 10)}`.replace(/[\\/:*?"<>|]+/g, '-');
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="configuration.zip"; filename*=UTF-8''${encodeURIComponent(`${base}.zip`)}`);
+    const zip = buildBundle({ config, templates, parts, secrets: on('secrets', false), boothName, appVersion });
+    zip.on('warning', (e) => console.warn(`[export] ${e.message}`));
+    zip.on('error', (e) => { console.warn(`[export] ${e.message}`); res.destroy(e); });
+    res.on('close', () => { if (!res.writableFinished) zip.abort(); });
+    zip.pipe(res);
+    zip.finalize();
+  });
+
+  r.post('/config/import/preview', bundleUpload.single('file'), (req, res) => {
+    if (!req.file) throw new HttpError(400, 'FILE_REQUIRED', 'Fichier manquant');
+    const bundle = readBundle(req.file.buffer);
+    pendingImport = { id: crypto.randomBytes(8).toString('hex'), bundle, at: Date.now() };
+    res.json({ import: { id: pendingImport.id, ...describeBundle(bundle, { templates }) } });
+  });
+
+  r.post('/config/import/apply', async (req, res) => {
+    const b = req.body || {};
+    if (!pendingImport || pendingImport.id !== b.id || Date.now() - pendingImport.at > 30 * 60 * 1000) throw new HttpError(409, 'IMPORT_EXPIRED', 'Fichier à relire : l\'import a expiré');
+    const sel = { sections: [].concat(b.sections || []), templates: [].concat(b.templates || []), secrets: !!b.secrets };
+    if (!sel.sections.length && !sel.templates.length) throw new HttpError(400, 'IMPORT_EMPTY', 'Rien de coché');
+    const backup = await backupBeforeImport({ ...bundleCtx(), ...bundleInfo() });
+    const done = applyBundle(pendingImport.bundle, sel, bundleCtx());
+    pendingImport = null;
+    console.log(`[config] import : ${done.sections} section(s), ${done.templates} template(s) (sauvegarde ${path.basename(backup)})`);
+    res.json({ done, backup: { name: path.basename(backup) } });
+  });
+
+  r.get('/config/import/backup', (req, res) => {
+    const last = lastImportBackup(config);
+    res.json({ backup: last ? { name: last.name, at: last.at } : null });
+  });
+
+  r.post('/config/import/revert', (req, res) => {
+    const done = revertLastImport(bundleCtx());
+    console.log('[config] import annulé : état d\'avant rétabli');
+    res.json({ done });
   });
 
   r.all('/{*rest}', () => {

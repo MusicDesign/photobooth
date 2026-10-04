@@ -116,6 +116,97 @@ function flashState() {
 }
 
 /** Section Installation : ce qui est installé sur la machine et ce qui manque, avec de quoi l'installer. */
+// ---------- Sauvegarde : export et import de la configuration ----------
+
+let importPreview = null;     // contenu du fichier lu, en attente du choix : { id, sections, templates, secrets… }
+let importBackup;             // dernière sauvegarde d'avant import ({ name, at } ou null), undefined = pas encore lue
+
+function backupSection() {
+  const im = importPreview;
+  const check = (name, value, label, on = true, extra = '') => `<label class="inline"><input type="checkbox" name="${name}" value="${esc(value)}" ${on ? 'checked' : ''}> ${label}${extra}</label>`;
+  const tag = (exists) => (exists ? ' <span class="badge warn">remplace</span>' : ' <span class="badge ok">nouveau</span>');
+  const importCard = !im ? `
+    <form id="formImportRead" class="row">
+      <input type="file" name="file" accept=".zip,application/zip" required>
+      <button class="btn" type="submit">Lire le fichier</button>
+    </form>` : `
+    <form id="formImportApply">
+      <p class="sub">${esc(im.boothName || 'Borne')}${im.exportedAt ? ` · exporté le ${new Date(im.exportedAt).toLocaleString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}` : ''}${im.appVersion ? ` · version ${esc(im.appVersion)}` : ''}</p>
+      ${im.sections.length ? `<h4>Réglages</h4><div class="col">${im.sections.map((s) => check('section', s.key, esc(s.label))).join('')}</div>` : ''}
+      ${im.templates.length ? `<h4>Templates</h4><div class="col">${im.templates.map((t) => check('template', t.id, esc(t.name), true, tag(t.exists))).join('')}</div>` : ''}
+      ${im.secrets ? `<h4>Secrets</h4>${check('secrets', '1', 'Appliquer aussi les codes et mots de passe du fichier', false)}` : ''}
+      <div class="row">
+        <button class="btn primary" type="submit">Appliquer</button>
+        <button class="btn ghost" type="button" id="btnImportCancel">Annuler</button>
+      </div>
+    </form>`;
+  const rev = importBackup ? `
+  <div class="card">
+    <h3>Dernier import</h3>
+    <p class="sub">État d'avant sauvegardé le ${new Date(importBackup.at).toLocaleString('fr-FR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}.</p>
+    <button class="btn" type="button" id="btnImportRevert">Annuler le dernier import</button>
+  </div>` : '';
+  return `
+  <h2>Sauvegarde</h2>
+  <div class="card">
+    <h3>Exporter</h3>
+    <form id="formExport">
+      <div class="col">
+        <label class="inline"><input type="checkbox" name="settings" checked> Réglages</label>
+        <label class="inline"><input type="checkbox" name="templates" checked> Templates (cadres photo)</label>
+        <label class="inline"><input type="checkbox" name="secrets"> Codes et mots de passe (opérateur, admin, Wi-Fi, pont Hue)</label>
+      </div>
+      <button class="btn primary" type="submit">Télécharger</button>
+    </form>
+  </div>
+  <div class="card">
+    <h3>Importer</h3>
+    ${importCard}
+  </div>
+  ${rev}`;
+}
+
+function bindBackup() {
+  $('#formExport')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const on = (k) => (fd.get(k) ? '1' : '0');
+    if (on('settings') === '0' && on('templates') === '0') { toast('Coche au moins un contenu', true); return; }
+    location.href = `/api/admin/config/export?settings=${on('settings')}&templates=${on('templates')}&secrets=${on('secrets')}`;
+  });
+  $('#formImportRead')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button');
+    btn.disabled = true; btn.textContent = 'Lecture…';
+    try {
+      importPreview = (await api('/api/admin/config/import/preview', { method: 'POST', form: new FormData(e.target) })).import;
+      render();
+    } catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = 'Lire le fichier'; }
+  });
+  $('#btnImportCancel')?.addEventListener('click', () => { importPreview = null; render(); });
+  $('#formImportApply')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const body = { id: importPreview.id, sections: fd.getAll('section'), templates: fd.getAll('template'), secrets: !!fd.get('secrets') };
+    if (!body.sections.length && !body.templates.length) { toast('Rien de coché', true); return; }
+    if (!await askConfirm('Appliquer l\'import ? L\'état actuel est sauvegardé avant.', 'Appliquer')) return;
+    try {
+      await api('/api/admin/config/import/apply', { method: 'POST', body });
+      importPreview = null; importBackup = undefined;
+      toast('Configuration importée');
+      await refresh();
+    } catch (err) { toast(err.message, true); }
+  });
+  $('#btnImportRevert')?.addEventListener('click', async () => {
+    if (!await askConfirm('Revenir à l\'état d\'avant le dernier import ?', 'Revenir', 'delete')) return;
+    try { await api('/api/admin/config/import/revert', { method: 'POST' }); toast('État d\'avant rétabli'); await refresh(); } catch (err) { toast(err.message, true); }
+  });
+  if (importBackup === undefined) {
+    importBackup = null;
+    api('/api/admin/config/import/backup').then((d) => { importBackup = d.backup; if (currentSection() === 'backup' && importBackup) render(); }).catch(() => {});
+  }
+}
+
 function installSection() {
   const su = S.setup;
   const pm = { brew: 'Homebrew', apt: 'apt (Debian, Ubuntu)', dnf: 'dnf (Fedora)' }[su?.pkg] || null;
@@ -1185,13 +1276,12 @@ function bindAutoPanel() {
 
 const MAX_CALIB_SHOTS = 6; // toujours 2 sans flash + 4 avec (server/camera/control.js)
 const CAL = { stage: null, countdown: 10, timer: null };
-const CALIB_DELAYS = [5, 10, 15, 20]; // secondes de décompte proposées avant les photos
+const CALIB_DELAYS = [3, 5, 10, 15, 20]; // secondes de décompte proposées avant les photos
 
 /** Délai du décompte, depuis la liste de l'écran ou les touches − / + du Stream Deck. */
 function setCalibDelay(sec) {
   CAL.countdown = sec;
-  const sel = $('#coDelay');
-  if (sel) sel.value = String(sec);
+  document.querySelectorAll('[data-delay]').forEach((b) => { const on = Number(b.dataset.delay) === sec; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
   sendDeckUi();
 }
 
@@ -1249,18 +1339,21 @@ function renderCalibration() {
       <div class="co-main">${live}
         <aside class="co-side">
           <ol>
-            <li>Place l'appareil à sa position définitive et règle le cadrage avec l'aperçu.</li>
+            <li>Place l'appareil à sa position définitive et règle le cadrage.</li>
             <li>Allume l'éclairage de l'événement.</li>
-            ${S.lights?.ringLight ? '<li><b>Rabats le flash.</b> Ring light branchée : la borne essaie plusieurs luminosités de la ring light, jamais le flash.</li>' : '<li><b>Rabats le flash avant de lancer.</b> La borne fait d\'abord les photos sans flash, puis le lève elle-même pour la série avec flash : tu n\'as rien à toucher pendant le calibrage.</li>'}
-            <li>Au lancement, place-toi (ou un substitut) là où se tiendront les invités, et ne bouge plus pendant les photos.</li>
+            ${S.lights?.ringLight ? '<li><b>Rabats le flash</b> : seule la ring light éclaire.</li>' : '<li><b>Rabats le flash</b> : la borne le lève elle-même pour sa série.</li>'}
+            <li>Au lancement, place-toi où se tiendront les invités et ne bouge plus.</li>
           </ol>
           ${S.camera.flashFired || S.camera.flashStray ? '<div class="alert">La dernière photo a été prise avec le flash : il est sûrement levé. <b>Rabats-le avant de lancer</b>, sinon il partira sur toutes les photos de test (la borne le relèvera elle-même s\'il en faut).</div>' : ''}
-          <label>Décompte avant les photos <select id="coDelay">${CALIB_DELAYS.map((n) => `<option value="${n}" ${n === CAL.countdown ? 'selected' : ''}>${n} secondes</option>`).join('')}</select></label>
-          <p class="co-note">${MAX_CALIB_SHOTS} photos, 25 s environ : 2 sans flash, puis 4 avec flash (ISO 200 à 1600). À la fin, rabats le flash si le réglage choisi est sans flash.</p>
-          <button class="btn primary co-go" type="button" id="coGo">Lancer le calibrage</button>
+          <div class="co-actions">
+            <div class="co-delay-label">Décompte avant les photos</div>
+            <div class="co-delays" role="group" aria-label="Décompte avant les photos">${CALIB_DELAYS.map((n) => `<button type="button" class="co-delay ${n === CAL.countdown ? 'on' : ''}" data-delay="${n}" aria-pressed="${n === CAL.countdown}">${n} s</button>`).join('')}</div>
+            <p class="co-note">${S.lights?.ringLight ? `${MAX_CALIB_SHOTS} photos, 30 s environ : 3 luminosités, puis 3 couleurs.` : `${MAX_CALIB_SHOTS} photos, 25 s environ : 2 sans flash, puis 4 avec flash.`}</p>
+            <button class="btn primary co-go" type="button" id="coGo">Lancer le calibrage</button>
+          </div>
         </aside>
       </div>`;
-    $('#coDelay').onchange = (e) => setCalibDelay(Number(e.target.value));
+    ov.querySelectorAll('[data-delay]').forEach((b) => { b.onclick = () => setCalibDelay(Number(b.dataset.delay)); });
     $('#coGo').onclick = startCalibCountdown;
   } else if (CAL.stage === 'countdown') {
     ov.innerHTML = `${head('Placez-vous')}
@@ -2614,7 +2707,7 @@ function unbindEditor() {
   E.drag = null;
 }
 
-const SECTIONS = { dashboard, events: eventsSection, sessions, templates: templatesSection, editor: editorSection, flow, printing, sharing, theme: themeSection, texts: textsSection, camera, control: controlSection, lights: lightsPage, security, install: installSection };
+const SECTIONS = { dashboard, events: eventsSection, sessions, templates: templatesSection, editor: editorSection, flow, printing, sharing, theme: themeSection, texts: textsSection, camera, control: controlSection, lights: lightsPage, security, backup: backupSection, install: installSection };
 const OLD_HASHES = { limits: 'printing', hardware: 'camera', devices: 'control' }; // anciens liens de l'admin
 
 // ---------- Rendu + événements ----------
@@ -2768,6 +2861,7 @@ function bindSection(sec) {
     if (S.setup?.installing) pollSetup();
   }
 
+  if (sec === 'backup') bindBackup();
   bindSettingsForms();
   bindLights();
   bindScreen();

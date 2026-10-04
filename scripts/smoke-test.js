@@ -15,6 +15,8 @@ process.env.BOOTH_OUTPUT_DIR = path.join(tmp, 'output');
 process.env.BOOTH_TEMPLATES_DIR = path.join(tmp, 'templates');
 process.env.BOOTH_SAMPLES_DIR = path.join(tmp, 'samples');
 process.env.BOOTH_UPLOADS_DIR = path.join(tmp, 'uploads'); // logos envoyés pendant le test : jamais dans data/uploads
+process.env.BOOTH_THEMES_DIR = path.join(tmp, 'themes'); // copie des thèmes : un import de test n'écrit jamais dans data/themes
+fs.cpSync(new URL('../data/themes', import.meta.url).pathname, process.env.BOOTH_THEMES_DIR, { recursive: true });
 process.env.BOOTH_AUTO_INSTALL = 'off';  // pas d'installation (Homebrew, modèle IA) pendant un test
 process.env.BOOTH_USB_DIRS = path.join(tmp, 'cle-usb'); // clé USB simulée : ce dossier, quand il existe (jamais les vraies clés)
 process.env.BOOTH_CAMERA = 'mock';
@@ -973,6 +975,89 @@ async function runSteps(app, camera) {
     ws.close();
   });
 
+  await step('export et import de la configuration : secrets exclus, choix par section, templates, annulation', async () => {
+    const { default: AdmZip } = await import('adm-zip');
+    const cfg = () => app.config.get();
+    await put('/api/admin/config', { booth: { name: 'Borne A' }, limits: { operatorPin: '4321' }, share: { wifi: { enabled: true, ssid: 'Salle', password: 'secret-wifi' } } }, ADMIN);
+    const exportZip = async (q) => {
+      const res = await fetch(`${base}/api/admin/config/export?${q}`, { headers: ADMIN });
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get('content-type'), /zip/);
+      return Buffer.from(await res.arrayBuffer());
+    };
+    const preview = async (buf) => {
+      const form = new FormData();
+      form.append('file', new Blob([buf]), 'config.zip');
+      return j('/api/admin/config/import/preview', { method: 'POST', headers: ADMIN, body: form });
+    };
+    const apply = (body) => post('/api/admin/config/import/apply', body, ADMIN);
+    // Export sans secrets : ni code opérateur ni mot de passe Wi-Fi dans le fichier
+    const plain = await exportZip('settings=1&templates=1&secrets=0');
+    const z = new AdmZip(plain);
+    const names = z.getEntries().map((e) => e.entryName);
+    assert.ok(names.includes('manifest.json') && names.includes('settings.json'));
+    assert.ok(names.some((n) => /^templates\/[^/]+\/template\.json$/.test(n)), 'templates dans l\'archive');
+    assert.ok(!names.some((n) => n.startsWith('themes/')), 'thèmes livrés jamais exportés');
+    const exported = JSON.parse(z.readAsText('settings.json'));
+    assert.equal(exported.share.wifi.password, undefined, 'mot de passe Wi-Fi exclu');
+    assert.equal(exported.limits.operatorPin, undefined, 'code opérateur exclu');
+    assert.equal(exported.share.wifi.ssid, 'Salle');
+    assert.equal(JSON.parse(z.readAsText('manifest.json')).secrets, false);
+    // Réglages changés, puis import de deux sections : les secrets actuels restent
+    await put('/api/admin/config', { booth: { name: 'Borne B' }, limits: { operatorPin: '9999' }, share: { wifi: { ssid: 'Autre', password: 'autre-mdp' } } }, ADMIN);
+    const p1 = await preview(plain);
+    assert.equal(p1.status, 200);
+    assert.ok(p1.data.import.sections.some((s) => s.key === 'booth') && p1.data.import.templates.every((t) => t.exists), JSON.stringify(p1.data.import.sections));
+    assert.equal(p1.data.import.secrets, false);
+    const a1 = await apply({ id: p1.data.import.id, sections: ['booth', 'share', 'limits'], secrets: false });
+    assert.equal(a1.status, 200, JSON.stringify(a1.data));
+    assert.equal(cfg().booth.name, 'Borne A');
+    assert.equal(cfg().share.wifi.ssid, 'Salle');
+    assert.equal(cfg().share.wifi.password, 'autre-mdp', 'mot de passe Wi-Fi actuel gardé');
+    assert.equal(cfg().limits.operatorPin, '9999', 'code opérateur actuel gardé');
+    assert.ok(a1.data.backup.name.startsWith('avant-import-'), 'sauvegarde d\'avant import');
+    // Seules les sections cochées sont appliquées
+    await put('/api/admin/config', { booth: { name: 'Borne C' }, lights: { enabled: true } }, ADMIN);
+    const p2 = await preview(plain);
+    await apply({ id: p2.data.import.id, sections: ['booth'] });
+    assert.equal(cfg().booth.name, 'Borne A');
+    assert.equal(cfg().lights.enabled, true, 'section non cochée : inchangée');
+    // Avec secrets : appliqués seulement si l'export en contient ET si la case est cochée
+    const full = await exportZip('settings=1&templates=0&secrets=1');
+    assert.equal(JSON.parse(new AdmZip(full).readAsText('settings.json')).share.wifi.password, 'autre-mdp');
+    await put('/api/admin/config', { share: { wifi: { password: 'encore-un-autre' } } }, ADMIN);
+    const p3 = await preview(full);
+    assert.equal(p3.data.import.secrets, true);
+    await apply({ id: p3.data.import.id, sections: ['share'], secrets: false });
+    assert.equal(cfg().share.wifi.password, 'encore-un-autre', 'case secrets décochée : mot de passe actuel gardé');
+    const p4 = await preview(full);
+    await apply({ id: p4.data.import.id, sections: ['share'], secrets: true });
+    assert.equal(cfg().share.wifi.password, 'autre-mdp', 'secrets appliqués');
+    // Template supprimé puis restauré depuis l'archive
+    const tpl = app.templates.all()[0];
+    app.templates.remove(tpl.id);
+    assert.ok(!app.templates.all().some((t) => t.id === tpl.id));
+    const p5 = await preview(plain);
+    const info = p5.data.import.templates.find((t) => t.id === tpl.id);
+    assert.equal(info.exists, false);
+    await apply({ id: p5.data.import.id, templates: [tpl.id] });
+    assert.ok(app.templates.all().some((t) => t.id === tpl.id), 'template restauré');
+    // Annulation : retour à l'état d'avant le dernier import
+    await put('/api/admin/config', { booth: { name: 'Avant dernier import' } }, ADMIN);
+    const p6 = await preview(plain);
+    await apply({ id: p6.data.import.id, sections: ['booth'] });
+    assert.equal(cfg().booth.name, 'Borne A');
+    assert.equal((await post('/api/admin/config/import/revert', {}, ADMIN)).status, 200);
+    assert.equal(cfg().booth.name, 'Avant dernier import', 'import annulé');
+    assert.ok((await j('/api/admin/config/import/backup', { headers: ADMIN })).data.backup, 'sauvegarde listée');
+    // Fichiers invalides ou périmés refusés
+    assert.equal((await preview(Buffer.from('pas un zip'))).status, 400);
+    const bad = new AdmZip(); bad.addFile('hello.txt', Buffer.from('x'));
+    assert.equal((await preview(bad.toBuffer())).status, 400, 'zip qui n\'est pas un export');
+    assert.equal((await apply({ id: 'perime', sections: ['booth'] })).status, 409);
+    assert.equal((await j('/api/admin/config/export?settings=0&templates=0', { headers: ADMIN })).status, 400);
+  });
+
   await step('notifications d\'appareils : silence au démarrage, déconnexion immédiate, connexion confirmée', async () => {
     const { DeviceWatch } = await import('../server/device-watch.js');
     let state = { camera: true, light: false };
@@ -1007,6 +1092,11 @@ async function runSteps(app, camera) {
     assert.equal(res.profile.flash, false, 'jamais de flash');
     assert.equal(res.profile.settings.whitebalance, 'Daylight');
     assert.ok([30, 45, 60].includes(res.profile.light.brightness) && [4000, 5000, 6000].includes(res.profile.light.kelvin), JSON.stringify(res.profile));
+    fs.rmSync(dir, { recursive: true, force: true });
+    // Sans ring light, scène sombre : le boîtier refuse les photos sans flash (mise au point impossible), le calibrage continue avec le flash
+    let calls = 0;
+    const dark = await calibrate({ flashControl: true, write: async () => {}, raiseFlash: async () => {}, shoot: async (file) => { if (++calls <= 2) throw new Error('Le boîtier n\'arrive pas à déclencher (mise au point impossible)'); fs.writeFileSync(file, sample); } }, { dir });
+    assert.ok(dark.shots.length >= 4, `séries avec flash faites malgré les refus sans flash (${dark.shots.length} photos : ${dark.reason})`);
     fs.rmSync(dir, { recursive: true, force: true });
     // Lumières simulées : la ring light Elgato en ligne bloque le flash ; la luminosité retenue est appliquée
     const L = app.lights;
