@@ -668,6 +668,7 @@ automatique. Un iPad trop ancien (iOS 9 et avant) ne convient pas.
 | Photo nette sur le décor, floue sur les gens | L'autofocus en live view a accroché le fond (zone AF centrale, pas de visage détecté) | Objectif en MF, mise au point faite sur une marque au sol ; ou méthode AF « Visage + suivi » et invités au centre |
 | Photos floues ou traînées en mode P | Vitesse trop lente en intérieur (1/50 s et moins) | Mode M ou Tv à 1/125 s minimum, ISO en conséquence, ou plus de lumière |
 | La photo échoue juste après le décompte | Autofocus qui échoue, ou pause trop courte après l'arrêt du live | Objectif en MF ; monter la pause à 1200–1500 ms |
+| Calibrage très long, « Device Busy » ou « le boîtier refuse de déclencher » dans le journal, photo qui arrive 15 s après « 0 », flash qui ne se lève pas | Le boîtier n'est pas prêt dans la demi-seconde qui suit l'ouverture d'une liaison gphoto2 : l'action envoyée trop tôt est perdue | La borne attend 800 ms avant chaque action (`readyMs`), ce qui ne suffit pas toujours : monter `camera.gphoto2.readyMs` à 2000 dans `data/config.json` |
 | Photo prise mais « gphoto2 a terminé sans produire de fichier » | Boîtier en RAW ou RAW+JPEG | Qualité d'image : JPEG seul |
 | Impression bloquée, erreur après 5 min | Papier, ruban, bourrage, mauvaise file | `lpstat -p`, vider la file avec `cancel -a`, vérifier le `media` |
 | Webcam refusée en mode navigateur | Borne ouverte via l'adresse IP | Ouvrir sur `http://localhost:3000` (ou passer en pilote gphoto2 / mock) |

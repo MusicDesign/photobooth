@@ -151,8 +151,17 @@ export async function calibrate(cam, { dir, onStep = () => {} }) {
   fs.mkdirSync(dir, { recursive: true });
   const shots = [];
   let n = 0;
+  // Chaque commande gphoto2 ouvre une liaison avec le boîtier (une bonne demi-seconde) : on n'envoie que les
+  // réglages qui changent d'une photo à l'autre
+  const sent = {};
+  const write = async (values) => {
+    const diff = Object.fromEntries(Object.entries(values).filter(([k, v]) => sent[k] !== v));
+    if (!Object.keys(diff).length) return;
+    await cam.write(diff);
+    Object.assign(sent, diff);
+  };
   const shoot = async (label, settings, flash) => {
-    await cam.write(settings);
+    await write(settings);
     const file = path.join(dir, `test-${++n}.jpg`);
     onStep({ step: n, label, settings });
     await cam.shoot(file);
@@ -167,7 +176,7 @@ export async function calibrate(cam, { dir, onStep = () => {} }) {
     return shot;
   };
 
-  await cam.write(AUTO_BASE);
+  await write(AUTO_BASE);
 
   // Ring light : elle seule éclaire ; le flash n'est jamais levé
   if (cam.light) {
@@ -218,10 +227,11 @@ export async function calibrate(cam, { dir, onStep = () => {} }) {
   let flashSilent = false;
   if (cam.flashControl || flashUp) {
     let retried = false;
+    let up = flashUp; // flash parti sur la photo d'avant : il est levé (il ne se rabat qu'à la main), inutile de le relever
     for (const s of FLASH_SERIES) {
-      // Avant chaque photo : le flash a pu être rabattu entre deux photos, ou l'ordre arriver trop tôt
-      await cam.raiseFlash();
-      const shot = await shoot(`Avec flash, ISO ${s.iso}`, s, true);
+      // Levé avant la première photo, puis seulement s'il n'est pas parti (rabattu entre deux photos)
+      if (!up) await cam.raiseFlash();
+      let shot = await shoot(`Avec flash, ISO ${s.iso}`, s, true);
       if (!shot.flashFired && !retried) {
         // Pas parti : on laisse le boîtier finir, on relève le flash et on refait cette photo (une fois par série)
         retried = true;
@@ -229,8 +239,9 @@ export async function calibrate(cam, { dir, onStep = () => {} }) {
         await cam.raiseFlash();
         await new Promise((r) => setTimeout(r, 600)); // charge du flash
         shots.splice(shots.indexOf(shot), 1);
-        await shoot(`Avec flash, ISO ${s.iso} (flash relevé)`, s, true);
+        shot = await shoot(`Avec flash, ISO ${s.iso} (flash relevé)`, s, true);
       }
+      up = !!shot.flashFired;
     }
     // Aucune photo de la série n'a flashé (EXIF) : flash rabattu, ou émission de l'éclair coupée dans le menu
     flashSilent = shots.filter((sh) => sh.flash && !sh.flashFired).length === FLASH_SERIES.length;

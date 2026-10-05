@@ -107,6 +107,10 @@ export class GoveeLan {
 
   /** Lance une recherche ; les réponses arrivent par onScan pendant `ms`. */
   async scan(ms = 2500) {
+    // Réseau absent au démarrage, revenu ou changé depuis : le socket est rouvert sur la bonne interface
+    const now = lanAddress();
+    if (this.socket && now?.address !== this.local?.address) await this.stop();
+    if (!this.socket) await this.start();
     if (!this.socket) return;
     this.send(MCAST, SCAN_PORT, SCAN_MSG);
     for (const ip of subnetHosts(this.local)) this.send(ip, SCAN_PORT, SCAN_MSG);
