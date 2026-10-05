@@ -14,6 +14,37 @@ const EMPTY = () => ({
   cutoutPerf: null     // { machine, preciseSec, measuredAt } : vitesse du détourage précis, mesurée une fois sur cette machine
 });
 
+// Chemins d'une fiche (photos, images d'un boomerang, montage, vignette) : écrits relatifs au dossier de la session,
+// pour que le projet ou output/ puisse être déplacé, ou copié sur une autre machine, sans perdre les photos. En
+// mémoire ils restent absolus. Fiches d'avant (chemins absolus) : recalées sur le dossier actuel s'il a changé.
+const PATH_KEYS = new Set(['file', 'thumb', 'clipDir']);
+const PATH_LISTS = new Set(['frames']);
+const isAbsolute = (p) => /^([a-zA-Z]:[\\/]|[\\/])/.test(p); // Mac, Linux ou Windows, quelle que soit la machine qui lit
+
+/** Copie d'une session où chaque chemin est passé par fn ; le reste est gardé tel quel. */
+function mapPaths(value, fn, key = null) {
+  if (Array.isArray(value)) return value.map((v) => (PATH_LISTS.has(key) && typeof v === 'string' ? fn(v) : mapPaths(v, fn)));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, PATH_KEYS.has(k) && typeof v === 'string' ? fn(v) : mapPaths(v, fn, k)]));
+  }
+  return value;
+}
+
+/** Chemin tel qu'il est écrit dans la fiche : relatif au dossier de la session (séparateur « / »). */
+const toStored = (dir) => (p) => {
+  const rel = isAbsolute(p) ? path.relative(dir, p) : p;
+  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel.split(path.sep).join('/') : p;
+};
+
+/** Chemin lu dans une fiche → absolu, dans le dossier où la fiche se trouve aujourd'hui. */
+const fromStored = (dir, id) => (p) => {
+  if (!isAbsolute(p)) return path.join(dir, ...p.split('/'));
+  if (p.startsWith(dir + path.sep)) return p;
+  const parts = p.split(/[\\/]/);
+  const i = parts.lastIndexOf(String(id)); // écrit ailleurs : ce qui suit le dossier de la session, repris ici
+  return i < 0 || i === parts.length - 1 ? p : path.join(dir, ...parts.slice(i + 1));
+};
+
 const slug = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'evenement';
 
 /**
@@ -24,7 +55,7 @@ const slug = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').t
  *   - une fiche session.json par session, dans son dossier output/sessions/<id>/ à côté de ses photos :
  *     enregistrer une session n'écrit qu'un Ko, quel que soit l'historique. Toutes les fiches sont lues au
  *     démarrage (20 000 fiches : moins d'une seconde) et gardées en mémoire. Une session est autonome : son
- *     dossier suffit à la retrouver, même si db.json est perdu.
+ *     dossier suffit à la retrouver, même si db.json est perdu, et où qu'il soit (chemins relatifs dans la fiche).
  * Les sessions encore rangées dans db.json (versions précédentes) sont déplacées dans leurs dossiers au premier
  * démarrage, après la sauvegarde du fichier d'origine.
  */
@@ -41,8 +72,9 @@ export class Store {
     this.data.sessions = this.loadSessions();
     // Sessions d'une version précédente, encore dans db.json : déplacées dans leurs dossiers
     let moved = 0;
-    for (const s of legacy) {
-      if (!s?.id || this.data.sessions[s.id]) continue;
+    for (const old of legacy) {
+      if (!old?.id || this.data.sessions[old.id]) continue;
+      const s = mapPaths(old, fromStored(this.sessionDir(old.id), old.id));
       this.writeSession(s);
       this.data.sessions[s.id] = s;
       moved++;
@@ -57,12 +89,16 @@ export class Store {
 
   // ---------- Fiches de session (une par dossier) ----------
 
+  sessionDir(id) {
+    return path.join(this.sessionsDir, String(id));
+  }
+
   sessionFile(id) {
-    return path.join(this.sessionsDir, String(id), SESSION_FILE);
+    return path.join(this.sessionDir(id), SESSION_FILE);
   }
 
   writeSession(session) {
-    writeJsonAtomic(this.sessionFile(session.id), session);
+    writeJsonAtomic(this.sessionFile(session.id), mapPaths(session, toStored(this.sessionDir(session.id))));
   }
 
   /** Toutes les fiches des dossiers de sessions. Dossier sans fiche (photos orphelines) ou fiche illisible : ignoré. */
@@ -75,7 +111,7 @@ export class Store {
       if (!fs.existsSync(f)) continue;
       try {
         const s = JSON.parse(fs.readFileSync(f, 'utf8'));
-        if (s?.id === id) out[id] = s; else bad++;
+        if (s?.id === id) out[id] = mapPaths(s, fromStored(this.sessionDir(id), id)); else bad++;
       } catch { bad++; }
     }
     this.sessionWarning = bad ? `${bad} fiche(s) de session illisible(s) dans ${this.sessionsDir} : session(s) ignorée(s), photos laissées en place.` : null;

@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { CONFIG_FILE } from './paths.js';
-import { clone, deepMerge, loadJsonSafe, writeJsonAtomic, backupJson } from './util.js';
+import { clone, deepMerge, isPlainObject, loadJsonSafe, writeJsonAtomic, backupJson } from './util.js';
 
 /**
  * Configuration par défaut. Le fichier data/config.json ne contient que ce que
@@ -200,6 +200,27 @@ export const DEFAULTS = {
     hue: { ip: '', username: '', name: '' } // pont Philips Hue associé (admin → Lumières)
   }
 };
+
+/**
+ * Réglages numériques reçus de l'admin ou d'un import (délais, quotas, luminosités…) : un nombre, rien d'autre.
+ * Un nombre reçu en texte (« 5 ») est converti. Enregistré tel quel, « abc » comme décompte faisait partir la photo
+ * sans décompte. Sont concernés les réglages dont la valeur par défaut est un nombre. Modifie patch sur place ;
+ * rend le nom du premier réglage refusé (« limits.countdownSec »), ou null.
+ */
+export function coerceNumbers(patch, defaults = DEFAULTS, trail = []) {
+  for (const [k, v] of Object.entries(patch)) {
+    const d = defaults?.[k];
+    if (typeof d === 'number') {
+      const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
+      if (typeof n !== 'number' || !Number.isFinite(n)) return [...trail, k].join('.');
+      patch[k] = n;
+    } else if (isPlainObject(v) && isPlainObject(d)) {
+      const bad = coerceNumbers(v, d, [...trail, k]);
+      if (bad) return bad;
+    }
+  }
+  return null;
+}
 
 export class Config extends EventEmitter {
   constructor(file = CONFIG_FILE) {

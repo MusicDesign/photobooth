@@ -151,7 +151,14 @@ try {
   await waitFor(`!document.querySelector('#shell').classList.contains('hidden') && document.querySelector('.stat')`);
   await sleep(400);
   await shot('12-admin-tableau-de-bord');
-  for (const [hash, name] of [['limits', '13-admin-limites'], ['theme', '14-admin-theme'], ['templates', '15-admin-templates'], ['editor=strip-3', '16-admin-editeur-template'], ['hardware', '17-admin-materiel'], ['sessions', '18-admin-sessions']]) {
+  // Toutes les pages du menu de l'admin (public/admin.html), dans l'ordre, plus l'éditeur d'un cadre
+  const ADMIN_PAGES = [
+    ['events', '13-admin-evenements'], ['sessions', '14-admin-photos'], ['templates', '15-admin-templates'], ['editor=strip-3', '16-admin-editeur-template'],
+    ['flow', '17-admin-parcours-invite'], ['printing', '18-admin-impression'], ['sharing', '19-admin-galerie-partage'], ['theme', '20-admin-apparence'],
+    ['texts', '21-admin-textes'], ['camera', '22-admin-appareil-photo'], ['control', '23-admin-ecran-controle'], ['lights', '24-admin-lumieres'],
+    ['security', '25-admin-securite'], ['backup', '26-admin-sauvegarde'], ['install', '27-admin-installation']
+  ];
+  for (const [hash, name] of ADMIN_PAGES) {
     await evaluate(`location.hash = ${JSON.stringify(hash)}, true`);
     await sleep(hash.startsWith('editor') ? 1200 : 600);
     if (hash.startsWith('editor')) await evaluate(`document.querySelectorAll('#edLayers li')[1]?.click(), true`); // sélectionne un calque pour montrer les poignées
@@ -172,35 +179,35 @@ try {
     }
     return true;
   })()`);
-  await evaluate(`location.hash = "security", true`);
-  await sleep(600);
+  await evaluate(`location.hash = "sharing", true`);
+  await waitFor(`!!document.querySelector('#formGallery')`); // réglages de la galerie : page « Galerie & partage »
   await evaluate(`document.querySelector('#formGallery').scrollIntoView(), true`);
   await sleep(200);
-  await shot('20-admin-galerie');
+  await shot('28-admin-galerie');
 
   await page('Page.navigate', { url: `${base}/` });
   await waitFor(`document.querySelector('#screen-idle.active') && !document.querySelector('#btnGallery').classList.contains('hidden')`);
   await sleep(800);
-  await shot('21-accueil-bouton-galerie');
+  await shot('29-accueil-bouton-galerie');
   await click('#btnGallery');
   await waitFor(`document.querySelector('#screen-gallery.active') && document.querySelectorAll('.gallery-thumb img').length >= 6 && [...document.querySelectorAll('.gallery-thumb img')].every((i) => i.complete)`);
   await sleep(600);
-  await shot('22-galerie-borne');
+  await shot('30-galerie-borne');
   for (const [w, h, cols] of [[1280, 900, 3], [900, 1000, 2], [500, 900, 1]]) { // la grille passe à 3, 2 puis 1 colonne
     await page('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
     await sleep(400);
-    await shot(`22-galerie-borne-${cols}-colonne${cols > 1 ? 's' : ''}`);
+    await shot(`30-galerie-borne-${cols}-colonne${cols > 1 ? 's' : ''}`);
   }
   await page('Emulation.setDeviceMetricsOverride', { width: 1920, height: 1200, deviceScaleFactor: 1, mobile: false });
   await sleep(300);
   await evaluate(`document.querySelectorAll('.gallery-thumb')[1].click(), true`);
   await waitFor(`document.querySelector('#screen-photo.active') && document.querySelector('#photoImg').complete`);
   await sleep(600);
-  await shot('23-galerie-borne-photo');
+  await shot('31-galerie-borne-photo');
   for (const [w, h] of [[1366, 768], [800, 1280]]) { // petit écran paysage, écran portrait : rien sous le QR Wi-Fi
     await page('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
     await sleep(400);
-    await shot(`23-galerie-borne-photo-${w}x${h}`);
+    await shot(`31-galerie-borne-photo-${w}x${h}`);
   }
   await page('Emulation.setDeviceMetricsOverride', { width: 1920, height: 1200, deviceScaleFactor: 1, mobile: false });
   await sleep(300);
@@ -215,7 +222,7 @@ try {
   await evaluate(`document.querySelectorAll('.gallery-thumb')[1].click(), true`);
   await waitFor(`document.querySelector('#screen-photo.active') && document.querySelector('#photoImg').complete`);
   await sleep(600);
-  await shot('23-galerie-borne-photo-sans-qr');
+  await shot('31-galerie-borne-photo-sans-qr');
   app.config.update({ gallery: { qr: true } });
 
   // QR code de fin désactivé : retour direct à l'accueil après l'impression, remerciement en bandeau
@@ -241,10 +248,10 @@ try {
   await page('Emulation.setDeviceMetricsOverride', { width: 430, height: 932, deviceScaleFactor: 2, mobile: true });
   await page('Page.navigate', { url: `${base}/g/${sid}` });
   await sleep(1000);
-  await shot('19-photo-invite-mobile'); // page unique des QR codes, navigation incluse quand la galerie téléphone est ouverte
+  await shot('32-photo-invite-mobile'); // page unique des QR codes, navigation incluse quand la galerie téléphone est ouverte
   await page('Page.navigate', { url: `${base}/galerie` });
   await sleep(1000);
-  await shot('24-galerie-evenement-mobile');
+  await shot('33-galerie-evenement-mobile');
   console.log(`\nCaptures dans ${OUT}`);
 } catch (e) {
   console.error(`\nÉchec : ${e.message}`);

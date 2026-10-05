@@ -88,6 +88,13 @@ export function galleryHtml({ session, theme, boothName, texts, nav = null }) {
   ${nav ? `<a class="link" href="/galerie">← ${esc(texts.galleryTitle)}</a>` : ''}` });
 }
 
+/** QR code d'une photo qui n'existe plus (supprimée, événement vidé) : même habillage, retour à la galerie si elle est ouverte. */
+export function missingHtml({ theme, boothName, texts, gallery = false }) {
+  return page({ theme, boothName, body: `
+  <p>Cette photo n'est plus disponible.</p>
+  ${gallery ? `<a class="link" href="/galerie">← ${esc(texts.galleryTitle)}</a>` : ''}` });
+}
+
 /** Galerie de l'événement en cours : grille de miniatures (items = null : galerie fermée). */
 export function eventGalleryHtml({ items, theme, boothName, texts }) {
   if (!items) return page({ theme, boothName, body: `<p>La galerie n'est pas ouverte pour le moment.</p>` });

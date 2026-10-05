@@ -3,7 +3,7 @@ import path from 'node:path';
 import archiver from 'archiver';
 import AdmZip from 'adm-zip';
 import { UPLOADS_DIR } from './paths.js';
-import { DEFAULTS } from './config.js';
+import { DEFAULTS, coerceNumbers } from './config.js';
 import { clone, HttpError } from './util.js';
 
 /**
@@ -152,6 +152,18 @@ export function describeBundle(bundle, { templates }) {
     sections: Object.entries(SECTION_LABELS).filter(([k]) => bundle.settings?.[k] && Object.keys(bundle.settings[k]).length).map(([key, label]) => ({ key, label })),
     templates: [...bundle.templates].map(([id, t]) => ({ id, name: t.name, exists: haveTemplates.has(id) }))
   };
+}
+
+/**
+ * Fichier retouché à la main : les réglages numériques des sections choisies doivent être des nombres (texte
+ * numérique converti). Vérifié avant la sauvegarde et avant d'écrire quoi que ce soit.
+ */
+export function checkBundle(bundle, sel) {
+  for (const key of sel.sections || []) {
+    if (!SECTION_LABELS[key] || !bundle.settings?.[key]) continue;
+    const notNumber = coerceNumbers({ [key]: bundle.settings[key] });
+    if (notNumber) throw new HttpError(400, 'IMPORT_NUMBER', `Réglage invalide dans le fichier : nombre attendu pour « ${notNumber} »`);
+  }
 }
 
 /** Copie un fichier de l'archive vers dir/rel, sans jamais sortir de dir. */

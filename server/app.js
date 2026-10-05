@@ -21,7 +21,7 @@ import { Usb } from './usb.js';
 import { setCutoutAuto, measurePrecise, restoreCutoutPerf, onCutoutPerf } from './cutout-ai.js';
 import { apiRouter } from './routes/api.js';
 import { adminRouter } from './routes/admin.js';
-import { galleryHtml, eventGalleryHtml } from './gallery.js';
+import { galleryHtml, missingHtml, eventGalleryHtml } from './gallery.js';
 import { HttpError, isLocalRequest } from './util.js';
 import { pruneUploads, missingUploadRefs } from './uploads.js';
 import { ROOT, OUTPUT_DIR, PUBLIC_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, UPLOADS_DIR, SAMPLES_DIR } from './paths.js';
@@ -206,6 +206,11 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   // Page d'une photo (tous les QR codes y mènent). Galerie téléphone ouverte : navigation entre les photos.
   app.get('/g/:id', (req, res) => {
     const cfg = config.get();
+    // Photo supprimée depuis (ou lien mal recopié) : page aux couleurs de la borne, pas l'erreur brute
+    if (!store.getSession(req.params.id)) {
+      res.status(404).type('html').send(missingHtml({ theme: themes.resolve(cfg), boothName: cfg.booth.name, texts: cfg.texts, gallery: cfg.gallery.web }));
+      return;
+    }
     const session = booth.view(booth.load(req.params.id));
     const items = cfg.gallery.web ? booth.gallery() : [];
     const index = items.findIndex((it) => it.id === session.id);

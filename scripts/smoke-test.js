@@ -196,6 +196,11 @@ async function runSteps(app, camera) {
     const page = await fetch(`${base}/g/${s.id}`);
     assert.equal(page.status, 200);
     assert.ok(!(await page.text()).includes('Télécharger la photo'));
+    // Photo supprimée depuis : page aux couleurs de la borne (logo), pas l'erreur brute
+    const gone = await fetch(`${base}/g/inconnue`);
+    const html = await gone.text();
+    assert.equal(gone.status, 404);
+    assert.ok(/text\/html/.test(gone.headers.get('content-type')) && html.includes('class="logo"') && html.includes('plus disponible'), html.slice(0, 120));
   });
 
   await step('sessions paginées : pages de taille fixe, la plus récente d\'abord', async () => {
@@ -241,6 +246,32 @@ async function runSteps(app, camera) {
     assert.ok(db.events && db.counters, 'db.json garde événements et compteurs');
     const onDisk = fs.readdirSync(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions')).filter((d) => fs.existsSync(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', d, 'session.json')));
     assert.equal(app.store.counters().sessionsCount, onDisk.length, 'compteur de sessions = fiches sur disque');
+  });
+
+  await step('sessions : chemins relatifs dans la fiche, dossier déplacé et fiche à chemins absolus retrouvés', async () => {
+    const { Store } = await import('../server/store.js');
+    const dir = path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s.id);
+    const fiche = JSON.parse(fs.readFileSync(path.join(dir, 'session.json'), 'utf8'));
+    assert.equal(fiche.final.file, 'final.jpg', 'montage : chemin relatif au dossier de la session');
+    assert.equal(fiche.final.thumb, 'thumb.jpg');
+    assert.ok(fiche.shots.every((sh) => /^shot-\d+-\d+\.jpg$/.test(sh.file)), JSON.stringify(fiche.shots.map((sh) => sh.file)));
+    assert.equal(app.store.getSession(s.id).final.file, path.join(dir, 'final.jpg'), 'en mémoire : chemin absolu');
+    // Dossier des sessions copié ailleurs (projet déplacé, autre machine) : les photos suivent
+    const moved = path.join(tmp, 'sessions-deplacees');
+    fs.cpSync(dir, path.join(moved, s.id), { recursive: true });
+    const open = () => { const st = new Store(path.join(tmp, 'db-deplacee.json'), moved); clearInterval(st.backupTimer); return st.getSession(s.id); };
+    let got = open();
+    assert.equal(got.final.file, path.join(moved, s.id, 'final.jpg'));
+    assert.ok(fs.existsSync(got.final.file) && got.shots.every((sh) => fs.existsSync(sh.file)), 'photos retrouvées dans le dossier déplacé');
+    // Fiche d'une version précédente : chemins absolus d'un autre endroit (Mac, Linux ou Windows)
+    fs.writeFileSync(path.join(moved, s.id, 'session.json'), JSON.stringify({ ...fiche,
+      shots: fiche.shots.map((sh) => ({ ...sh, file: `/ancien/projet/output/sessions/${s.id}/${sh.file}` })),
+      final: { ...fiche.final, file: `/ancien/projet/output/sessions/${s.id}/final.jpg`, thumb: `C:\\borne\\output\\sessions\\${s.id}\\thumb.jpg` } }));
+    got = open();
+    assert.equal(got.final.file, path.join(moved, s.id, 'final.jpg'));
+    assert.equal(got.final.thumb, path.join(moved, s.id, 'thumb.jpg'));
+    assert.ok(got.shots.every((sh) => fs.existsSync(sh.file)), 'photos d\'une fiche à chemins absolus retrouvées');
+    fs.rmSync(moved, { recursive: true, force: true });
   });
 
   await step('sessions : dossier sans fiche supprimé au démarrage, dossier à fiche illisible laissé', async () => {
@@ -1002,6 +1033,38 @@ async function runSteps(app, camera) {
     await L.stop();
     assert.equal(e4.state['10.0.0.21'].on, 0, 'arrêt : ring light éteinte par le réglage des lumières blanches');
     ws.close();
+  });
+
+  await step('réglages : nombre attendu (texte numérique converti, autre valeur refusée), à l\'enregistrement comme à l\'import', async () => {
+    const { default: AdmZip } = await import('adm-zip');
+    const before = app.config.get().limits.countdownSec;
+    for (const bad of ['abc', '', null, true, [3]]) {
+      const r = await put('/api/admin/config', { limits: { countdownSec: bad } }, ADMIN);
+      assert.equal(r.status, 400, `${JSON.stringify(bad)} accepté`);
+      assert.equal(r.data.error, 'NUMBER');
+      assert.ok(r.data.message.includes('limits.countdownSec'), r.data.message);
+    }
+    assert.equal((await put('/api/admin/config', { lights: { idle: { brightness: 'fort' } } }, ADMIN)).status, 400, 'réglage imbriqué');
+    assert.equal(app.config.get().limits.countdownSec, before, 'valeur refusée : réglage inchangé');
+    assert.equal((await put('/api/admin/config', { limits: { countdownSec: ' 4 ', maxRetakesPerSession: -1 } }, ADMIN)).status, 200);
+    assert.strictEqual(app.config.get().limits.countdownSec, 4, 'texte numérique enregistré comme nombre');
+    await put('/api/admin/config', { limits: { countdownSec: before, maxRetakesPerSession: 2 } }, ADMIN);
+    // Import d'un export retouché à la main : refusé en entier, rien d'appliqué, pas de sauvegarde créée
+    const res = await fetch(`${base}/api/admin/config/export?settings=1&templates=0&secrets=0`, { headers: ADMIN });
+    const zip = new AdmZip(Buffer.from(await res.arrayBuffer()));
+    const settings = JSON.parse(zip.readAsText('settings.json'));
+    zip.updateFile('settings.json', Buffer.from(JSON.stringify({ ...settings, booth: { ...settings.booth, name: 'Import refusé' }, limits: { ...settings.limits, countdownSec: 'abc' } })));
+    const form = new FormData();
+    form.append('file', new Blob([zip.toBuffer()]), 'config.zip');
+    const pv = await j('/api/admin/config/import/preview', { method: 'POST', headers: ADMIN, body: form });
+    assert.equal(pv.status, 200, JSON.stringify(pv.data));
+    const backupsBefore = (await j('/api/admin/config/import/backup', { headers: ADMIN })).data;
+    const ap = await post('/api/admin/config/import/apply', { id: pv.data.import.id, sections: ['booth', 'limits'] }, ADMIN);
+    assert.equal(ap.status, 400, JSON.stringify(ap.data));
+    assert.equal(ap.data.error, 'IMPORT_NUMBER');
+    assert.notEqual(app.config.get().booth.name, 'Import refusé', 'aucune section appliquée');
+    assert.equal(app.config.get().limits.countdownSec, before);
+    assert.deepEqual((await j('/api/admin/config/import/backup', { headers: ADMIN })).data, backupsBefore, 'pas de sauvegarde pour un import refusé');
   });
 
   await step('export et import de la configuration : secrets exclus, choix par section, templates, annulation', async () => {

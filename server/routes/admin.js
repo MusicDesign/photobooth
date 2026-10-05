@@ -7,6 +7,7 @@ import archiver from 'archiver';
 import { UPLOADS_DIR, OUTPUT_DIR } from '../paths.js';
 import { samplePhotos } from '../samples.js';
 import { HttpError, parseCookies } from '../util.js';
+import { coerceNumbers } from '../config.js';
 import { CAMERA_DRIVERS, CAMERA_FALLBACKS } from '../camera/index.js';
 import { MANUAL_SETTINGS, MAX_SHOTS } from '../camera/control.js';
 import { PRINTER_DRIVERS, PRINTER_FALLBACKS } from '../printer/index.js';
@@ -15,7 +16,7 @@ import { compose } from '../compositor.js';
 import { modelStatus, downloadModel } from '../models.js';
 import { cutoutPerf } from '../cutout-ai.js';
 import { buildPreviews } from '../template-previews.js';
-import { buildBundle, readBundle, describeBundle, applyBundle, backupBeforeImport, revertLastImport, lastImportBackup } from '../config-bundle.js';
+import { buildBundle, readBundle, describeBundle, checkBundle, applyBundle, backupBeforeImport, revertLastImport, lastImportBackup } from '../config-bundle.js';
 import { MjpegBroadcaster } from '../camera/mjpeg.js';
 import { OUTPUT_DIR as OUT } from '../paths.js';
 
@@ -239,6 +240,8 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     if (patch.printer?.driver && !PRINTER_DRIVERS.includes(patch.printer.driver)) throw new HttpError(400, 'DRIVER', 'Pilote imprimante inconnu');
     if (patch.printer?.fallback && !PRINTER_FALLBACKS.includes(patch.printer.fallback)) throw new HttpError(400, 'DRIVER', 'Repli imprimante inconnu');
     if (patch.templates?.defaultFormat && !FORMATS[patch.templates.defaultFormat]) throw new HttpError(400, 'FORMAT', 'Format inconnu');
+    const notNumber = coerceNumbers(patch);
+    if (notNumber) throw new HttpError(400, 'NUMBER', `Nombre attendu pour « ${notNumber} »`);
     res.json({ config: config.update(patch) });
   });
 
@@ -553,6 +556,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     if (!pendingImport || pendingImport.id !== b.id || Date.now() - pendingImport.at > 30 * 60 * 1000) throw new HttpError(409, 'IMPORT_EXPIRED', 'Fichier à relire : l\'import a expiré');
     const sel = { sections: [].concat(b.sections || []), templates: [].concat(b.templates || []), secrets: !!b.secrets };
     if (!sel.sections.length && !sel.templates.length) throw new HttpError(400, 'IMPORT_EMPTY', 'Rien de coché');
+    checkBundle(pendingImport.bundle, sel);
     const backup = await backupBeforeImport({ ...bundleCtx(), ...bundleInfo() });
     const done = applyBundle(pendingImport.bundle, sel, bundleCtx());
     pendingImport = null;
