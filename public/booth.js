@@ -1281,7 +1281,7 @@ const GALLERY_SCREENS = ['gallery', 'photo'];
 // Choix du cadre et galerie : retour à l'accueil sans interaction (booth.menuIdleSec, réglable dans l'admin).
 const MENU_SCREENS = ['template', ...GALLERY_SCREENS];
 
-/** Un geste (écran, clavier, Stream Deck) sur ces écrans repousse le retour automatique à l'accueil. */
+/** Un geste (écran, clavier, Stream Deck) ou un défilement sur ces écrans repousse le retour automatique à l'accueil. */
 function menuActivity() {
   if (!MENU_SCREENS.includes(state.screen)) return;
   const sec = state.boot?.booth?.menuIdleSec ?? 30;
@@ -1784,7 +1784,8 @@ function bind() {
   $('#btnPhotoPlus').addEventListener('click', () => { state.gallery.copies += 1; renderReprint(); });
   $('#btnReprint').addEventListener('click', galleryReprint);
   bindPhotoSwipe();
-  for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, menuActivity, true);
+  // Capture : « scroll » ne remonte pas, on le reçoit ainsi pour toute grille qui défile (galerie, cadres).
+  for (const ev of ['pointerdown', 'keydown', 'scroll']) window.addEventListener(ev, menuActivity, true);
 
   // Zone invisible en haut à droite : 5 appuis en 3 s ouvrent l'admin.
   let taps = [];
