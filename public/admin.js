@@ -3177,6 +3177,15 @@ $('#btnRestart').onclick = async () => {
   }
   document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>Redémarrage…</h1>
     <p class="sub">La borne revient dans quelques secondes.</p></div></div>`;
+  // Lanceur Chromium : la fenêtre reste ouverte, on revient à l'accueil dès que le serveur relancé répond
+  // (l'app Electron, elle, se relance entièrement).
+  let down = false;
+  for (let i = 0; i < 90; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    const up = await fetch('/', { cache: 'no-store' }).then((r) => r.ok, () => false);
+    if (!up) down = true;
+    else if (down || i >= 30) { location.href = '/'; return; }
+  }
 };
 /** Confirmation dans la page : se valide à la souris, au clavier ou depuis le Stream Deck. */
 function askConfirm(text, okLabel, deckIcon = 'power') {

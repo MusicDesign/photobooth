@@ -7,7 +7,10 @@ installFileLog();
 import { lanIp } from './util.js';
 
 // Code de sortie 0 : le lanceur de la borne comprend « arrêt volontaire » et ne relance pas.
-const { app, server, port, config, close } = await createApp({ onShutdown: () => process.exit(0) });
+// Code RESTART_CODE : « redémarrage » demandé depuis l'admin, le lanceur Linux (BOOTH_LAUNCHER) relance aussitôt.
+const RESTART_CODE = 75;
+const onRestart = process.env.BOOTH_LAUNCHER ? () => process.exit(RESTART_CODE) : null;
+const { app, server, port, config, close } = await createApp({ onShutdown: () => process.exit(0), onRestart });
 
 server.listen(port, () => {
   const cfg = config.get();

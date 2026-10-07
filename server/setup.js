@@ -40,12 +40,17 @@ export function packageManager() {
   if (WIN) return which('winget') ? 'winget' : null;
   return null;
 }
+/** Ubuntu (et dérivées) : Chromium y est le paquet « chromium-browser » ; Debian : « chromium », avec « chromium-l10n »
+ * sans lequel Chromium reste en anglais et propose de traduire la borne. */
+function isUbuntu() {
+  try { return /^(ID|ID_LIKE)=.*\bubuntu\b/m.test(fs.readFileSync('/etc/os-release', 'utf8')); } catch { return false; }
+}
 const PKGS = { // paquet(s) par gestionnaire
   gphoto2: { brew: 'gphoto2', apt: 'gphoto2', dnf: 'gphoto2', pacman: 'gphoto2' },
   ddc: { brew: 'm1ddc', apt: 'ddcutil', dnf: 'ddcutil', pacman: 'ddcutil' },
   cups: { apt: 'cups printer-driver-gutenprint', dnf: 'cups gutenprint-cups', pacman: 'cups gutenprint' },
   nmcli: { apt: 'network-manager', dnf: 'NetworkManager', pacman: 'networkmanager' },
-  chromium: { apt: 'chromium-browser', dnf: 'chromium', pacman: 'chromium' }
+  chromium: { apt: isUbuntu() ? 'chromium-browser' : 'chromium chromium-l10n', dnf: 'chromium', pacman: 'chromium' }
 };
 export const installCommand = (pm, pkgs) => ({ brew: `brew install ${pkgs}`, apt: `sudo apt-get install -y ${pkgs}`, dnf: `sudo dnf install -y ${pkgs}`, pacman: `sudo pacman -S --noconfirm --needed ${pkgs}`, winget: `winget install ${pkgs}` })[pm] || null;
 const DEPS = ['express', 'ws', 'sharp', 'onnxruntime-node', 'qrcode', 'archiver', 'multer', 'ffmpeg-static', '@elgato-stream-deck/node', '@mediapipe/tasks-vision'];

@@ -93,6 +93,10 @@ if [ "$KIOSK" = 1 ]; then
     osascript -e "tell application \"System Events\" to if not (exists login item \"Cheeesy\") then make login item at end with properties {path:\"$PWD/Cheeesy.app\", hidden:false}" >/dev/null
     echo "Élément d'ouverture ajouté"
   else
+    # Icône Cheeesy visible sur le bureau GNOME (pour relancer la borne) : extension Desktop Icons NG.
+    if [ "$PM" = apt ] && have gnome-shell && [ ! -d /usr/share/gnome-shell/extensions/ding@rastersoft.com ]; then
+      sudo apt-get install -y gnome-shell-extension-desktop-icons-ng || echo "Desktop Icons NG non installée : pas d'icônes sur le bureau"
+    fi
     scripts/kiosk/install-linux.sh --electron --no-sleep
   fi
 fi

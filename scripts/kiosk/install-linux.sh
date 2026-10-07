@@ -6,7 +6,7 @@
 #   scripts/kiosk/install-linux.sh --electron         app Electron du dépôt (npm run app)
 #   scripts/kiosk/install-linux.sh --exec CHEMIN      autre exécutable, ex. l'AppImage construite
 #   scripts/kiosk/install-linux.sh --no-autostart     sans lancement automatique
-#   scripts/kiosk/install-linux.sh --no-sleep         écran jamais éteint ni verrouillé (borne dédiée)
+#   scripts/kiosk/install-linux.sh --no-sleep         écran jamais éteint ni verrouillé, pas de vue Activités au démarrage (borne dédiée)
 #   scripts/kiosk/install-linux.sh --uninstall        retire icônes et lancement automatique
 set -eu
 
@@ -29,9 +29,12 @@ APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 AUTO="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
 DESK="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
 FILES=("$APPS/photobooth.desktop" "$AUTO/photobooth.desktop" "$DESK/photobooth.desktop")
+EXT_UUID="no-overview@cheeesy"
+EXT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/$EXT_UUID"
 
 if [ $UNINSTALL -eq 1 ]; then
   rm -f "${FILES[@]}"
+  rm -rf "$EXT_DIR"
   echo "Icônes et lancement automatique retirés."
   exit 0
 fi
@@ -67,12 +70,42 @@ else
   rm -f "$AUTO/photobooth.desktop"
 fi
 
+# Ajoute une valeur à une liste gsettings (extensions actives, favoris du dock) si elle n'y est pas déjà.
+gnome_list_add() {
+  local cur; cur="$(gsettings get "$1" "$2")"
+  case "$cur" in
+    *"'$3'"*) ;;
+    "@as []"|"[]") gsettings set "$1" "$2" "['$3']" ;;
+    *) gsettings set "$1" "$2" "${cur%]}, '$3']" ;;
+  esac
+}
+
+# GNOME n'affiche pas d'icônes sur le bureau : extension Desktop Icons NG si elle est installée
+# (scripts/install.sh --kiosk l'installe sous Debian/Ubuntu), et Cheeesy épinglé au dock dans tous les cas.
+if command -v gsettings >/dev/null && gsettings list-schemas | grep -qx org.gnome.shell; then
+  DING=ding@rastersoft.com
+  if [ -d "/usr/share/gnome-shell/extensions/$DING" ] || [ -d "${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/$DING" ]; then
+    gnome_list_add org.gnome.shell enabled-extensions "$DING"
+    echo "Icônes du bureau activées (Desktop Icons NG)."
+  else
+    echo "Icônes du bureau : installez l'extension Desktop Icons NG (Debian/Ubuntu : sudo apt install gnome-shell-extension-desktop-icons-ng)."
+  fi
+  gnome_list_add org.gnome.shell favorite-apps photobooth.desktop
+  echo "Cheeesy épinglé au dock."
+fi
+
 if [ $NOSLEEP -eq 1 ] && command -v gsettings >/dev/null; then
   gsettings set org.gnome.desktop.session idle-delay 0
   gsettings set org.gnome.desktop.screensaver lock-enabled false
   gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
   gsettings set org.gnome.settings-daemon.plugins.power idle-dim false
   echo "Mise en veille et verrouillage désactivés."
+  # GNOME ouvre la session sur la vue Activités, devant la borne : petite extension qui la saute au démarrage.
+  mkdir -p "$EXT_DIR"
+  cp "$DIR/scripts/kiosk/gnome/$EXT_UUID/"* "$EXT_DIR/"
+  gnome_list_add org.gnome.shell enabled-extensions "$EXT_UUID"
+  gsettings set org.gnome.shell disable-user-extensions false
+  echo "Vue Activités sautée à l'ouverture de session (effet à la prochaine connexion)."
 fi
 
 echo "Installé : $EXEC"

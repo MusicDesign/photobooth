@@ -407,6 +407,7 @@ répond pas. Redémarre et vérifie que le tactile marche avant d'aller plus loi
 ```bash
 sudo dnf install -y nodejs git gphoto2 cups gutenprint-cups chromium liberation-fonts
 # Ubuntu : sudo apt install -y nodejs npm git gphoto2 cups printer-driver-gutenprint chromium-browser fonts-liberation
+# Debian : sudo apt install -y git gphoto2 cups printer-driver-gutenprint chromium chromium-l10n fonts-liberation (Node.js 22 : scripts/install.sh)
 node -v      # v20 ou plus
 scripts/install.sh --kiosk   # ou, depuis le projet : Node.js, les mêmes paquets (sudo) + ddcutil, NetworkManager, modèle IA, icône et lancement auto (10.5)
 ```
@@ -484,10 +485,21 @@ Pour que la borne démarre **seule à l'allumage**, active la connexion
 automatique : Paramètres → Système → Utilisateurs → **Connexion
 automatique**. Sans elle, l'écran de connexion attend un mot de passe.
 
-L'icône du bureau : GNOME n'affiche pas d'icônes sur le bureau par défaut.
-Installe l'extension **Desktop Icons NG (DING)** avec le Gestionnaire
-d'extensions, ou épingle Cheeesy au dock (Activités → clic droit →
-Épingler). Retirer le tout : `install-linux.sh --uninstall`.
+Le menu de démarrage (GRUB) s'affiche aussi quelques secondes à chaque allumage. Pour
+démarrer directement (le menu reste accessible en maintenant Échap ou Maj) :
+
+```bash
+sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/; /^GRUB_TIMEOUT_STYLE=/d' /etc/default/grub
+echo GRUB_TIMEOUT_STYLE=hidden | sudo tee -a /etc/default/grub
+sudo update-grub      # Fedora : sudo grub2-mkconfig -o /boot/grub2/grub.cfg
+```
+
+L'icône du bureau : GNOME n'affiche pas d'icônes sur le bureau par défaut. Sous
+Debian/Ubuntu, `scripts/install.sh --kiosk` installe l'extension **Desktop Icons NG (DING)**
+et `install-linux.sh` l'active ; ailleurs, installe-la avec le Gestionnaire d'extensions puis
+relance `install-linux.sh`. Cheeesy est aussi épinglé au dock. Avec `--no-sleep`, une petite
+extension (`scripts/kiosk/gnome/`) saute la vue Activités à l'ouverture de session, pour que
+la borne passe en plein écran tout de suite. Retirer le tout : `install-linux.sh --uninstall`.
 
 **Vérification.** Redémarre le PC : la borne s'affiche seule, plein écran.
 Admin → Éteindre la borne : retour au bureau. Icône Cheeesy : la borne
