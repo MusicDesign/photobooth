@@ -58,11 +58,15 @@ if want node; then
     say "Node.js"
     case "$PM" in
       brew) brew install node ;;
-      apt) curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs ;;
+      apt) # curl n'est pas installé d'office sur une Debian neuve
+        have curl || sudo apt-get install -y curl ca-certificates
+        curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs ;;
       dnf) sudo dnf install -y nodejs npm ;;
       pacman) sudo pacman -S --noconfirm --needed nodejs npm ;;
       *) echo "Node.js 20 ou plus requis (nodejs.org)"; exit 1 ;;
     esac
+    # Une commande en échec dans « a && b » n'arrête pas le script (set -e) : on vérifie le résultat.
+    { have node && [ "$(node_major)" -ge 20 ]; } || { echo "Node.js n'a pas pu être installé (réseau ?). Relancez ce script."; exit 1; }
   fi
   echo "Node.js $(node -v) · npm $(npm -v)"
 fi

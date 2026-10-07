@@ -419,6 +419,7 @@ embarque le sien.
 
 ```bash
 cd ~
+sudo apt install -y git   # Debian/Ubuntu neuves : git absent (Fedora : sudo dnf install -y git)
 git clone https://github.com/MusicDesign/photobooth.git
 cd photobooth
 npm install
