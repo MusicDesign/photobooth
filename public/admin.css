@@ -5,7 +5,7 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ro
 .login { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
 .login-card { width: 340px; display: flex; flex-direction: column; gap: 14px; }
 .shell { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
-.nav { background: var(--s); color: #fff; padding: 20px 0; display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; }
+.nav { background: var(--s); color: #fff; padding: 20px 0; display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; } /* défile sur un écran bas : les boutons du pied (Éteindre…) restent joignables */
 .nav-title { font-weight: 800; font-size: 20px; padding: 0 22px 18px; }
 .nav a { color: #fff; text-decoration: none; padding: 12px 22px; opacity: 0.8; }
 .nav a.active, .nav a:hover { opacity: 1; background: rgba(255,255,255,0.1); }
