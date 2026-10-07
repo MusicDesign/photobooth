@@ -488,8 +488,9 @@ Utilisateurs → **Connexion automatique**. Sans elle, l'écran de connexion att
 Redémarre ensuite le PC : les icônes du bureau et la suppression de la vue Activités ne
 prennent effet qu'à l'ouverture de session suivante.
 
-Le menu de démarrage (GRUB) s'affiche aussi quelques secondes à chaque allumage. Pour
-démarrer directement (le menu reste accessible en maintenant Échap ou Maj) :
+Le menu de démarrage (GRUB) s'affiche aussi quelques secondes à chaque allumage :
+`scripts/install.sh --kiosk` le masque (le menu reste accessible en maintenant Échap ou Maj).
+À la main :
 
 ```bash
 sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/; /^GRUB_TIMEOUT_STYLE=/d' /etc/default/grub

@@ -113,6 +113,14 @@ if [ "$KIOSK" = 1 ]; then
       echo "Connexion automatique de $USER ($f)"
       break
     done
+    # Menu de démarrage (GRUB) masqué : démarrage direct, menu toujours joignable en maintenant Échap ou Maj.
+    if [ -f /etc/default/grub ] && ! grep -q '^GRUB_TIMEOUT_STYLE=hidden' /etc/default/grub; then
+      sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/; /^GRUB_TIMEOUT_STYLE=/d' /etc/default/grub
+      echo 'GRUB_TIMEOUT_STYLE=hidden' | sudo tee -a /etc/default/grub >/dev/null
+      if have update-grub; then sudo update-grub >/dev/null 2>&1
+      elif have grub2-mkconfig; then sudo grub2-mkconfig -o /boot/grub2/grub.cfg >/dev/null 2>&1; fi
+      echo "Menu de démarrage masqué (Échap ou Maj au démarrage pour l'afficher)"
+    fi
     echo
     echo "Redémarrez le PC pour terminer : connexion automatique, icône Cheeesy sur le bureau, borne en plein écran."
   fi
