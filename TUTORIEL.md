@@ -430,7 +430,17 @@ Le fichier `data/config.json` et le dossier `data/templates` peuvent être
 copiés depuis le Mac pour garder le thème, les templates et les limites. Le
 fichier `data/db.json` (événements, compteurs) et le dossier `output/sessions/` (une fiche
 `session.json` par session, avec ses photos) forment la base : repars de zéro sur la borne.
-Mise à jour plus tard : `git pull && npm install`, puis relancer la borne.
+Mise à jour plus tard : admin → **Installation** → Mettre à jour, ou `git pull && npm install`,
+puis relancer la borne. Si la page Installation affiche ensuite **Réglages système de la borne**
+à relancer, c'est que la mise à jour apporte des réglages qui demandent le mot de passe (connexion
+automatique, menu de démarrage, gestes GNOME…) : lance une fois `scripts/install.sh --kiosk`
+dans le Terminal de la borne.
+
+Le dépôt est **privé** (il contient Font Awesome Pro, sous licence commerciale) : le `git clone`
+demande un identifiant GitHub et un **jeton d'accès** en lecture seule (GitHub → Settings →
+Developer settings → Fine-grained tokens, dépôt `photobooth`, droit *Contents : read*).
+Pour que la mise à jour depuis l'admin y accède aussi, enregistre-le une fois sur la borne :
+`git config --global credential.helper store`, puis un `git pull` qui demande le jeton.
 
 ### 10.4 Libérer l'appareil photo
 

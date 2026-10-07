@@ -121,6 +121,9 @@ if [ "$KIOSK" = 1 ]; then
       elif have grub2-mkconfig; then sudo grub2-mkconfig -o /boot/grub2/grub.cfg >/dev/null 2>&1; fi
       echo "Menu de démarrage masqué (Échap ou Maj au démarrage pour l'afficher)"
     fi
+    # Version des réglages système appliqués : l'admin (page Installation) demande de relancer ce script quand une
+    # mise à jour en apporte de nouveaux (server/setup.js, scripts/kiosk/SETUP_VERSION).
+    mkdir -p "$HOME/.config/photobooth" && cp scripts/kiosk/SETUP_VERSION "$HOME/.config/photobooth/kiosk-setup-version"
     echo
     echo "Redémarrez le PC pour terminer : connexion automatique, icône Cheeesy sur le bureau, borne en plein écran."
   fi

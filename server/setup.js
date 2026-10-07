@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -45,6 +46,24 @@ export function packageManager() {
 function isUbuntu() {
   try { return /^(ID|ID_LIKE)=.*\bubuntu\b/m.test(fs.readFileSync('/etc/os-release', 'utf8')); } catch { return false; }
 }
+const debInstalled = (pkg) => version('dpkg-query', ['-W', '-f=${Status}', pkg]).endsWith('installed');
+
+/**
+ * Borne Linux dédiée (installée par `scripts/install.sh --kiosk`) : réglages système hors de portée de la mise à
+ * jour depuis l'admin (sudo, session graphique : connexion automatique, GRUB, extensions et gestes GNOME…).
+ * install.sh note la version appliquée ; si le dépôt en apporte une plus récente, il faut le relancer une fois.
+ */
+export const KIOSK_MARKER = path.join(os.homedir(), '.config', 'photobooth', 'kiosk-setup-version');
+function kioskSetup(add) {
+  if (!fs.existsSync(path.join(os.homedir(), '.config', 'autostart', 'photobooth.desktop'))) return; // pas une borne dédiée
+  const read = (f) => { try { return Number(fs.readFileSync(f, 'utf8').trim()) || 0; } catch { return 0; } };
+  const want = read(path.join(ROOT, 'scripts', 'kiosk', 'SETUP_VERSION')), have = read(KIOSK_MARKER);
+  const ok = have >= want;
+  add({ id: 'kiosk', label: 'Réglages système de la borne', state: ok ? 'ok' : 'missing',
+    detail: ok ? `à jour (version ${have})` : 'nouveaux réglages après la mise à jour : à relancer une fois dans le Terminal (mot de passe demandé)',
+    fix: ok ? null : `cd ${ROOT} && scripts/install.sh --kiosk` });
+}
+
 const PKGS = { // paquet(s) par gestionnaire
   gphoto2: { brew: 'gphoto2', apt: 'gphoto2', dnf: 'gphoto2', pacman: 'gphoto2' },
   ddc: { brew: 'm1ddc', apt: 'ddcutil', dnf: 'ddcutil', pacman: 'ddcutil' },
@@ -94,6 +113,11 @@ export function checkInstall() {
   if (!WIN) tool('ddc', 'Écran (DDC/CI)', mac ? 'm1ddc' : 'ddcutil', { missing: 'absent : luminosité et volume de l\'écran non réglables', args: mac ? null : ['--version'] });
   if (linux) tool('nmcli', 'Hotspot Wi-Fi (NetworkManager)', 'nmcli', { missing: 'absent : pas de hotspot', args: ['--version'] });
   if (linux) tool('chromium', 'Chromium (lanceur kiosque)', which('chromium') ? 'chromium' : 'chromium-browser', { missing: electron ? 'absent : l\'app Electron suffit' : 'absent', args: ['--version'] });
+  // Debian : Chromium présent sans sa traduction (« chromium-l10n ») reste en anglais et propose de traduire la borne
+  if (linux && pm === 'apt' && !isUbuntu() && which('chromium') && !debInstalled('chromium-l10n')) {
+    Object.assign(items.at(-1), { state: 'missing', detail: 'sans traduction française : Chromium propose de traduire la borne', fix: installCommand(pm, 'chromium-l10n'), pkg: 'chromium-l10n' });
+  }
+  if (linux) kioskSetup(add);
   if (mac && !pm) add({ id: 'brew', label: 'Homebrew', state: 'missing', detail: 'absent : la borne ne peut rien installer seule', fix: '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"' });
   return { platform: process.platform, pkg: pm, items };
 }
