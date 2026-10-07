@@ -1,0 +1,19 @@
+{
+  "id": "graphite",
+  "name": "Graphite",
+  "order": 20,
+  "colors": {
+    "primary": "#f1f3f5",
+    "secondary": "#adb5bd",
+    "background": "#1a1b1e",
+    "surface": "#26282c",
+    "text": "#f1f3f5",
+    "onPrimary": "#1a1b1e"
+  },
+  "font": "system",
+  "pattern": {
+    "id": "checkerboard",
+    "color": "text",
+    "opacity": 0.04
+  }
+}

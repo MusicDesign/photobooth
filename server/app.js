@@ -7,7 +7,7 @@ import { Config } from './config.js';
 import { Store } from './store.js';
 import { Templates } from './templates.js';
 import { buildAllPreviews } from './template-previews.js';
-import { Themes, DEFAULT_LOGO, defaultLogoSvg } from './themes.js';
+import { Themes, DEFAULT_LOGO, defaultLogoSvg, patternSvg } from './themes.js';
 import { Booth } from './booth.js';
 import { Devices } from './devices.js';
 import { DeviceWatch, deviceSources } from './device-watch.js';
@@ -165,6 +165,12 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
     const stable = pick(req.query.c, null) && pick(req.query.t, null);
     res.type('image/svg+xml').set('Cache-Control', stable ? 'public, max-age=31536000, immutable' : 'no-cache');
     res.send(defaultLogoSvg({ primary: pick(req.query.c, active.primary), onPrimary: pick(req.query.t, active.onPrimary) }));
+  });
+  // Motif de fond d'un thème (themes.js, patternUrl) : couleur et opacité dans l'URL, chaque variante en cache un jour
+  app.get('/pattern.svg', (req, res) => {
+    const svg = /^[0-9a-f]{6}$/i.test(String(req.query.c || '')) && Number.isInteger(+req.query.o) && patternSvg(String(req.query.p || ''), `#${req.query.c}`, +req.query.o / 100);
+    if (!svg) return res.status(404).end();
+    res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(svg);
   });
   app.use(express.static(PUBLIC_DIR, { index: 'index.html' }));
   app.use('/output', express.static(OUTPUT_DIR, { maxAge: '1h' }));

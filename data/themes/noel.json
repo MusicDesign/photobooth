@@ -3,12 +3,17 @@
   "name": "Noël",
   "order": 12,
   "colors": {
-    "primary": "#e63946",
-    "secondary": "#f4d35e",
-    "background": "#0f2a1f",
-    "surface": "#1c3b2d",
-    "text": "#f7f7f2",
+    "primary": "#d62f3c",
+    "secondary": "#f2c14e",
+    "background": "#0b2419",
+    "surface": "#14382a",
+    "text": "#fbf5e6",
     "onPrimary": "#ffffff"
   },
-  "font": "rounded"
+  "font": "rounded",
+  "pattern": {
+    "id": "snowflakes",
+    "color": "#ffffff",
+    "opacity": 0.2
+  }
 }

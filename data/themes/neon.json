@@ -10,5 +10,10 @@
     "text": "#eef0ff",
     "onPrimary": "#ffffff"
   },
-  "font": "system"
+  "font": "system",
+  "pattern": {
+    "id": "diagonal-stripes",
+    "color": "secondary",
+    "opacity": 0.06
+  }
 }

@@ -1,0 +1,14 @@
+{
+  "id": "boheme",
+  "name": "Bohème",
+  "order": 14,
+  "colors": {
+    "primary": "#b5562f",
+    "secondary": "#7a8450",
+    "background": "#f6efe6",
+    "surface": "#fffaf4",
+    "text": "#3b2a20",
+    "onPrimary": "#ffffff"
+  },
+  "font": "serif"
+}

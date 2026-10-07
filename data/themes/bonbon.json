@@ -10,5 +10,10 @@
     "text": "#343a40",
     "onPrimary": "#ffffff"
   },
-  "font": "rounded"
+  "font": "rounded",
+  "pattern": {
+    "id": "vertical-stripes",
+    "color": "primary",
+    "opacity": 0.06
+  }
 }

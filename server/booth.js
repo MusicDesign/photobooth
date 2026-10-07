@@ -412,7 +412,7 @@ export class Booth {
       copies: s.copies,
       unlocked: s.unlocked,
       maxCopies: s.unlocked ? cfg.limits.operatorMaxCopies : cfg.limits.maxCopiesPerSession,
-      final: s.final ? { url: urlFor(s.final.file), thumbUrl: urlFor(s.final.thumb), gif: isAnimatedKind(s.kind), video: s.final.file.endsWith('.mp4') } : null,
+      final: s.final ? { url: urlFor(s.final.file), thumbUrl: urlFor(s.final.thumb), plainUrl: s.final.plain ? urlFor(s.final.plain) : null, gif: isAnimatedKind(s.kind), video: s.final.file.endsWith('.mp4') } : null,
       printJobs: s.printJobs,
       error: s.error || null
     };
@@ -492,7 +492,7 @@ export class Booth {
     return { session: v, shot: v.shots[index] };
   }
 
-  /** GIF : « Refaire » reprend toutes les poses (compté comme une reprise). */
+  /** « Refaire » (GIF, plusieurs photos) : toutes les poses sont reprises, depuis la 1re (compté comme une reprise). */
   restartShots(id) {
     const s = this.load(id);
     const cfg = this.cfg();
@@ -585,6 +585,10 @@ export class Booth {
     const boomerang = s.kind === 'boomerang' && template.kind === 'boomerang';
     let finalFile = path.join(dir, gif ? 'final.gif' : 'final.jpg'); // boomerang : .mp4, ou .gif sans ffmpeg
     const thumbFile = path.join(dir, 'thumb.jpg');
+    // Montage sans filtre, pour les vignettes des filtres : les poses ne changent pas quand seul le filtre change
+    const plainFile = path.join(dir, 'plain.jpg');
+    const keepPlain = filter !== undefined && s.final?.plain && fs.existsSync(s.final.plain);
+    if (offered.list.length > 1 && !keepPlain) opts.plainFile = plainFile;
     const t0 = Date.now();
     if (boomerang) {
       const poster = path.join(dir, 'poster.jpg');
@@ -600,7 +604,7 @@ export class Booth {
       await thumbnail(finalFile, thumbFile);
     }
     console.log(`[booth] session ${s.id} : montage ${boomerang ? 'boomerang' : gif ? 'GIF' : 'photo'} en ${((Date.now() - t0) / 1000).toFixed(1)} s`);
-    s.final = { file: finalFile, thumb: thumbFile, composedAt: new Date().toISOString() };
+    s.final = { file: finalFile, thumb: thumbFile, plain: opts.plainFile || (keepPlain ? s.final.plain : null), composedAt: new Date().toISOString() };
     s.status = 'review';
     this.store.saveSession(s);
     return this.view(s);

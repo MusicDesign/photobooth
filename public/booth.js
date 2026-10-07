@@ -966,7 +966,6 @@ function showReview() {
   $('#txtReview').textContent = (s.gif && texts.reviewGif) || texts.review || '';
   $('#btnKeep').textContent = (s.gif && texts.keepGif) || texts.keep || '';
   $('#btnRetake').classList.toggle('hidden', s.retakesLeft !== null && s.retakesLeft <= 0); // null = reprises illimitées
-  $('#retakeChooser').classList.add('hidden');
   renderFilterBar();
   showScreen('review');
   startReviewTimeout();
@@ -992,28 +991,13 @@ function startReviewTimeout() {
 
 function onRetakeClick() {
   const s = state.session;
-  if (s.gif) return retakeGif();
-  if (s.shotsExpected === 1) return retakeShot(0);
-  const ch = $('#retakeChooser');
-  ch.innerHTML = '';
-  s.shots.forEach((sh, i) => {
-    const b = document.createElement('button');
-    b.className = 'retake-thumb';
-    const img = document.createElement('img');
-    img.src = `${sh.url}?t=${Date.now()}`;
-    if (state.session.mirror) img.style.transform = 'scaleX(-1)'; // comme dans l'aperçu et la photo finale
-    const lbl = document.createElement('span');
-    lbl.textContent = `Refaire la ${i + 1}`;
-    b.append(img, lbl);
-    b.addEventListener('click', () => retakeShot(i));
-    ch.appendChild(b);
-  });
-  ch.classList.remove('hidden');
+  if (s.gif || s.shotsExpected > 1) return retakeAll();
+  return retakeShot(0);
 }
 
 /**
- * Filtres sur « On la garde ? » (option de l'admin) : une vignette par filtre (la 1re photo, filtre CSS
- * approché) ; au choix, le serveur refait le montage avec le vrai filtre, sur tout le montage.
+ * Filtres sur « On la garde ? » (option de l'admin) : une vignette par filtre (le montage sans filtre, filtre
+ * CSS approché) ; au choix, le serveur refait le montage avec le vrai filtre, sur tout le montage.
  */
 function renderFilterBar() {
   const bar = $('#filterBar');
@@ -1022,10 +1006,10 @@ function renderFilterBar() {
   bar.classList.toggle('hidden', list.length < 2);
   if (list.length < 2) { bar.innerHTML = ''; return; }
   const s = state.session;
-  const src = s.shots.find(Boolean)?.url;
+  const src = `${s.final.plainUrl || s.final.thumbUrl}?t=${Date.now()}`; // montage déjà en miroir
   const current = s.filter || 'none';
   bar.innerHTML = list.map((x) => `<button class="filter-chip${x.id === current ? ' active' : ''}" data-filter="${x.id}">
-      <img src="${src}" alt="" style="filter:${x.css};${s.mirror ? 'transform:scaleX(-1);' : ''}"><span>${x.name}</span></button>`).join('');
+      <img src="${src}" alt="" style="filter:${x.css}"><span>${x.name}</span></button>`).join('');
   bar.querySelectorAll('.filter-chip').forEach((b) => b.addEventListener('click', () => chooseFilter(b.dataset.filter)));
 }
 
@@ -1050,8 +1034,8 @@ async function chooseFilter(id) {
   }
 }
 
-/** GIF : toutes les poses sont reprises. */
-async function retakeGif() {
+/** GIF, plusieurs photos : toutes les poses sont reprises, depuis la 1re. */
+async function retakeAll() {
   clearTimer('reviewTimeout');
   try {
     state.session = await api(`/api/session/${state.session.id}/restart`, { method: 'POST' });
@@ -1466,7 +1450,7 @@ function bindPhotoSwipe() {
 // La borne décrit ses actions visibles au serveur (qui les dessine), et exécute les appuis reçus
 // comme des clics. Même chemin que le tactile : aucune logique propre au Stream Deck.
 
-const CHOICE_CLASSES = ['template-card', 'retake-thumb', 'gallery-thumb', 'filter-chip'];
+const CHOICE_CLASSES = ['template-card', 'gallery-thumb', 'filter-chip'];
 
 function deckKind(el) {
   if (CHOICE_CLASSES.some((c) => el.classList.contains(c))) return 'choice';
@@ -1653,7 +1637,7 @@ function onKeyDown(e) {
       e.preventDefault();
       return;
     }
-    const choices = [...root.querySelectorAll('.template-card, .retake-thumb, .gallery-thumb, .filter-chip')].filter(visible);
+    const choices = [...root.querySelectorAll('.template-card, .gallery-thumb, .filter-chip')].filter(visible);
     if (e.key === ' ' || e.key === 'Enter') {
       if (root.id === 'screen-idle') { onIdleTap(); done = true; }
       else if (choices.includes(document.activeElement)) done = act(document.activeElement);

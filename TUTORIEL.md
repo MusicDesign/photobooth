@@ -328,10 +328,15 @@ template dans l'éditeur (étape 8) plutôt que les options lp.
 
 - **Identité** : nom de la borne, délai de retour à l'accueil après l'écran final.
 - **Thème actif** : une carte par thème livré (clair, sombre, festif, mariage, noir & or,
-  néon, océan, forêt, corail, bonbon, entreprise, Noël), l'accueil de la borne en miniature
+  néon, océan, forêt, corail, bonbon, entreprise, Noël, lavande, bohème, minuit, tropical,
+  rétro, Halloween, givre, graphite), l'accueil de la borne en miniature
   dans ses couleurs, ou Personnalisé avec tes couleurs. Les trois écrans d'aperçu dessous
   montrent toujours le thème choisi.
   L'admin signale un contraste insuffisant entre le texte et le fond.
+  Certains thèmes ont un **motif de fond** discret à leurs couleurs (spirale, rayures, damier, vagues,
+  flocons, citrouilles, ondes) ; le thème Personnalisé en propose le choix. Une image de fond importée le remplace.
+  Les motifs sont dans `public/assets/backgrounds` : un SVG 1920×1080 en noir (ou en
+  `currentColor`) y ajoute un motif, à déclarer dans `PATTERNS` (`server/themes.js`).
 - **Logo** (PNG transparent ou SVG) et **image de fond** : valables pour tous
   les thèmes. Sans logo importé, le logo Cheeesy prend les couleurs du thème
   (aplat en couleur d'accent, lettres en « texte des boutons »).

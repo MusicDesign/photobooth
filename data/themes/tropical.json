@@ -1,0 +1,14 @@
+{
+  "id": "tropical",
+  "name": "Tropical",
+  "order": 16,
+  "colors": {
+    "primary": "#00806b",
+    "secondary": "#d9482b",
+    "background": "#effbf6",
+    "surface": "#ffffff",
+    "text": "#123c35",
+    "onPrimary": "#ffffff"
+  },
+  "font": "rounded"
+}

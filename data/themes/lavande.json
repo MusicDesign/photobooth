@@ -1,0 +1,14 @@
+{
+  "id": "lavande",
+  "name": "Lavande",
+  "order": 13,
+  "colors": {
+    "primary": "#7048e8",
+    "secondary": "#5c7cfa",
+    "background": "#f5f2ff",
+    "surface": "#ffffff",
+    "text": "#2d2640",
+    "onPrimary": "#ffffff"
+  },
+  "font": "rounded"
+}

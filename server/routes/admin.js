@@ -13,6 +13,7 @@ import { MANUAL_SETTINGS, MAX_SHOTS } from '../camera/control.js';
 import { PRINTER_DRIVERS, PRINTER_FALLBACKS } from '../printer/index.js';
 import { FORMATS, FONTS, DEFAULT_FORMAT, normalizeLayers } from '../templates.js';
 import { compose } from '../compositor.js';
+import { PATTERNS } from '../themes.js';
 import { modelStatus, downloadModel } from '../models.js';
 import { cutoutPerf } from '../cutout-ai.js';
 import { buildPreviews } from '../template-previews.js';
@@ -200,6 +201,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       samples,
       sampleCutouts, // même photo détourée (.png), pour les calques avec détourage
       themes: themes.all(),
+      patterns: Object.entries(PATTERNS).map(([id, name]) => ({ id, name })), // motifs de fond, au choix du thème personnalisé
       theme: themes.resolve(config.get()),
       drivers: { camera: CAMERA_DRIVERS, printer: PRINTER_DRIVERS, cameraFallbacks: CAMERA_FALLBACKS, printerFallbacks: PRINTER_FALLBACKS },
       camera: await booth.cameraStatus(),

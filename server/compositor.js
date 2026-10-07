@@ -14,6 +14,7 @@ import { applyFilter } from '../public/filters.js';
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const svgDoc = (w, h, inner) => Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${inner}</svg>`);
 const TRANSPARENT = { r: 0, g: 0, b: 0, alpha: 0 };
+const PLAIN_SIDE = 360; // vignette sans filtre : 4 à 8 vignettes de filtre côte à côte
 const rotateAttr = (l) => (l.rotation ? ` transform="rotate(${l.rotation} ${l.x + l.width / 2} ${l.y + l.height / 2})"` : '');
 
 async function withOpacity(buf, opacity) {
@@ -135,8 +136,9 @@ async function renderLayer(l, { template, shotFiles, mirror, fastCutout }) {
 /**
  * Tous les calques assemblés sur le fond (sharp prêt à écrire), puis le filtre de l'invité (public/filters.js)
  * sur tout le montage : photos, cadre, textes et logo. Le détourage se fait avant, sur les couleurs d'origine.
+ * plainFile : vignette du montage sans filtre (vignettes des filtres sur « On la garde ? »).
  */
-async function render(template, shotFiles, mirror, filter = 'none', { fastCutout = false } = {}) {
+async function render(template, shotFiles, mirror, filter = 'none', { fastCutout = false, plainFile = null } = {}) {
   const layers = [];
   for (const l of template.layers) {
     if (l.visible === false) continue;
@@ -145,14 +147,15 @@ async function render(template, shotFiles, mirror, filter = 'none', { fastCutout
   }
   const montage = sharp({ create: { width: template.width, height: template.height, channels: 3, background: template.background || '#ffffff' } })
     .composite(layers);
+  if (plainFile) await sharp(await montage.clone().jpeg({ quality: 90 }).toBuffer()).resize(PLAIN_SIDE, PLAIN_SIDE, { fit: 'inside' }).jpeg({ quality: 80 }).toFile(plainFile);
   if (!filter || filter === 'none') return montage;
   const { data, info } = await montage.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   applyFilter(data, filter);
   return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).removeAlpha();
 }
 
-export async function compose(template, shotFiles, outFile, { mirror = false, filter = 'none' } = {}) {
-  await (await render(template, shotFiles, mirror, filter)).jpeg({ quality: 92, chromaSubsampling: '4:4:4' }).toFile(outFile);
+export async function compose(template, shotFiles, outFile, { mirror = false, filter = 'none', plainFile = null } = {}) {
+  await (await render(template, shotFiles, mirror, filter, { plainFile })).jpeg({ quality: 92, chromaSubsampling: '4:4:4' }).toFile(outFile);
   return outFile;
 }
 
@@ -161,12 +164,12 @@ export async function compose(template, shotFiles, outFile, { mirror = false, fi
  * à GIF_MAX_SIDE, puis assemblée en animation qui boucle. Aller-retour : 1 2 3 2, puis on recommence.
  * posterFile : première image en JPEG (miniatures de la galerie).
  */
-export async function composeGif(template, frameFiles, outFile, { mirror = false, posterFile = null, filter = 'none' } = {}) {
+export async function composeGif(template, frameFiles, outFile, { mirror = false, posterFile = null, filter = 'none', plainFile = null } = {}) {
   const k = Math.min(1, GIF_MAX_SIDE / Math.max(template.width, template.height));
   const w = Math.round(template.width * k), h = Math.round(template.height * k);
   const frames = [];
-  for (const file of frameFiles) {
-    const full = await (await render(template, [file], mirror, filter)).jpeg({ quality: 95 }).toBuffer();
+  for (const [i, file] of frameFiles.entries()) {
+    const full = await (await render(template, [file], mirror, filter, { plainFile: i === 0 ? plainFile : null })).jpeg({ quality: 95 }).toBuffer();
     frames.push(await sharp(full).resize(w, h).jpeg({ quality: 95 }).toBuffer());
   }
   if (posterFile) await sharp(frames[0]).toFile(posterFile);
@@ -195,13 +198,14 @@ export async function normalizeShot(inputBuffer, outFile) {
  * Détourage IA : modèle rapide, en taille réduite, quel que soit le réglage du calque. Le modèle précis prend
  * ~5 s par image, soit plus de 2 minutes pour les ~25 images filmées ; le rapide ~0,1 s, à la taille de la vidéo.
  */
-export async function composeBoomerang(template, frameFiles, outBase, { mirror = false, posterFile = null, filter = 'none' } = {}) {
+export async function composeBoomerang(template, frameFiles, outBase, { mirror = false, posterFile = null, filter = 'none', plainFile = null } = {}) {
   const video = !!ffmpegPath();
   const side = video ? BOOMERANG_MAX_SIDE : 480;
   const small = scaleTemplate(template, Math.min(1, side / Math.max(template.width, template.height)));
   const frames = [];
-  for (const file of frameFiles) {
-    let img = await (await render(small, [file], mirror, filter, { fastCutout: true })).jpeg({ quality: 92 }).toBuffer();
+  const mid = Math.floor(frameFiles.length / 2); // image du poster
+  for (const [i, file] of frameFiles.entries()) {
+    let img = await (await render(small, [file], mirror, filter, { fastCutout: true, plainFile: i === mid ? plainFile : null })).jpeg({ quality: 92 }).toBuffer();
     if (!video) img = await sharp(img).median(3).jpeg({ quality: 92 }).toBuffer(); // bruit du capteur : le GIF le compresse mal
     frames.push(img);
   }

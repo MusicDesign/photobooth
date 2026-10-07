@@ -117,10 +117,7 @@ try {
   await sleep(800);
   await shot('05-relecture');
 
-  await click('#btnRetake');
-  await sleep(500);
-  await shot('06-choix-photo-a-refaire');
-  await click('#retakeChooser .retake-thumb');
+  await click('#btnRetake'); // toutes les poses reprises, depuis la 1re
   await waitFor(`document.querySelector('#screen-capture.active')`);
   await sleep(1000);
   await shot('07-reprise-photo-1');

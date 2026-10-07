@@ -1,0 +1,19 @@
+{
+  "id": "halloween",
+  "name": "Halloween",
+  "order": 18,
+  "colors": {
+    "primary": "#ff7518",
+    "secondary": "#b18cff",
+    "background": "#141018",
+    "surface": "#231b2b",
+    "text": "#f5ecdf",
+    "onPrimary": "#1a0f08"
+  },
+  "font": "rounded",
+  "pattern": {
+    "id": "pumpkins",
+    "color": "primary",
+    "opacity": 0.2
+  }
+}

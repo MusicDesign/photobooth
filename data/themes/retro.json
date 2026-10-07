@@ -1,0 +1,19 @@
+{
+  "id": "retro",
+  "name": "Rétro",
+  "order": 17,
+  "colors": {
+    "primary": "#b5601c",
+    "secondary": "#9a4a1a",
+    "background": "#fbf1dc",
+    "surface": "#fffaf0",
+    "text": "#3d2b1f",
+    "onPrimary": "#ffffff"
+  },
+  "font": "rounded",
+  "pattern": {
+    "id": "spiral",
+    "color": "primary",
+    "opacity": 0.08
+  }
+}

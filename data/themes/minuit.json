@@ -1,0 +1,19 @@
+{
+  "id": "minuit",
+  "name": "Minuit",
+  "order": 15,
+  "colors": {
+    "primary": "#8fb3ff",
+    "secondary": "#c9d6ff",
+    "background": "#0d1326",
+    "surface": "#18213d",
+    "text": "#e8edff",
+    "onPrimary": "#0d1326"
+  },
+  "font": "system",
+  "pattern": {
+    "id": "ripples",
+    "color": "primary",
+    "opacity": 0.08
+  }
+}

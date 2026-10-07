@@ -358,7 +358,7 @@ function settingsSummary() {
   const apparence = tile({
     title: 'Apparence', href: '#theme',
     big: esc(theme), extra: swatches,
-    chips: [chip(S.theme.defaultLogo ? 'logo Cheeesy' : 'logo importé'), on(!!S.theme.backgroundImage, 'image de fond', 'sans image de fond')]
+    chips: [chip(S.theme.defaultLogo ? 'logo Cheeesy' : 'logo importé'), on(!!S.theme.backgroundImage, S.theme.backgroundImage.startsWith('/pattern.svg') ? 'motif de fond' : 'image de fond', 'sans image de fond')]
   });
 
   // Tirages : quota avec jauge
@@ -665,13 +665,17 @@ function printing() {
 
 /** Polices de la borne (booth.css, body[data-font]) pour les aperçus de l'admin. */
 const TP_FONTS = { system: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', rounded: '"Arial Rounded MT Bold", "Nunito", "Quicksand", -apple-system, sans-serif', serif: 'Georgia, "Times New Roman", serif' };
-/** Variables CSS (--tp-*) d'un aperçu de la borne, pour un jeu de couleurs et une police. */
-function tpVars(colors, font) {
+/** Variables CSS (--tp-*) d'un aperçu de la borne, pour un jeu de couleurs, une police et une image de fond. */
+function tpVars(colors, font, bgImage = '') {
   const c = colors;
   // Texte des cartes : la couleur la plus lisible sur « Cartes », même règle que la borne (booth.js, readableOn)
   const onSurface = [c.text, c.background, c.secondary, '#ffffff', '#000000'].reduce((best, x) => (contrast(c.surface, x) > contrast(c.surface, best) ? x : best));
-  return `${['primary', 'secondary', 'background', 'surface', 'text', 'onPrimary'].map((k) => `--tp-${k}:${c[k]}`).join(';')};--tp-on-surface:${onSurface};--tp-font:${TP_FONTS[font] || TP_FONTS.system}`;
+  return `${['primary', 'secondary', 'background', 'surface', 'text', 'onPrimary'].map((k) => `--tp-${k}:${c[k]}`).join(';')};--tp-on-surface:${onSurface};--tp-font:${TP_FONTS[font] || TP_FONTS.system}${bgImage ? `;--tp-bg-image:url('${bgImage}')` : ''}`;
 }
+/** Image de fond d'un aperçu : celle importée pour la borne passe avant celle du thème (themes.js, resolve). */
+const tpBgImage = (theme) => S.config.booth.backgroundImage || S.config.theme.custom.backgroundImage || theme?.backgroundImage || '';
+/** Thème personnalisé : son motif de fond, à la couleur des titres (même URL que themes.js, patternUrl). */
+const customPattern = (id, colors) => ({ backgroundImage: S.patterns.some((p) => p.id === id) ? `/pattern.svg?p=${id}&c=${String(colors.secondary).replace('#', '')}&o=8` : '' });
 /** Logo pour un jeu de couleurs : le logo Cheeesy par défaut suit l'accent et le texte des boutons, un logo importé reste tel quel. */
 const logoFor = (colors) => (S.theme.defaultLogo ? `/logo.svg?c=${String(colors.primary).replace('#', '')}&t=${String(colors.onPrimary).replace('#', '')}` : S.theme.logo);
 /** Accueil de la borne en miniature : carte d'un thème, et premier écran de l'aperçu. */
@@ -697,8 +701,8 @@ function themeSection() {
   // Une carte par thème livré, puis « Personnalisé » : l'accueil de la borne dans les couleurs du thème
   const themeCard = (id, name, style, checked, cardLogo) => `<label class="theme-pick"${id === 'custom' ? ' id="themePickCustom"' : ''} style="${esc(style)}">
       <input type="radio" name="active" value="${esc(id)}" ${checked ? 'checked' : ''}>${tpIdleScreen(t, cardLogo, sample)}<span class="theme-name">${esc(name)}</span></label>`;
-  const cards = S.themes.map((th) => themeCard(th.id, th.name, tpVars(th.colors, th.font), cfg.theme.active === th.id, logoFor(th.colors))).join('')
-    + themeCard('custom', 'Personnalisé : mes couleurs', tpVars(colors, custom.font), isCustom, logoFor(colors));
+  const cards = S.themes.map((th) => themeCard(th.id, th.name, tpVars(th.colors, th.font, tpBgImage(th)), cfg.theme.active === th.id, logoFor(th.colors))).join('')
+    + themeCard('custom', 'Personnalisé : mes couleurs', tpVars(colors, custom.font, tpBgImage(customPattern(custom.pattern, colors))), isCustom, logoFor(colors));
   return `
   <h2>Apparence</h2>
   <p class="sub">Le nom, le logo et l'image de fond s'appliquent quel que soit le thème. Chaque changement arrive sur la borne en direct. Les textes affichés à l'invité sont dans <a href="#texts">Textes des écrans</a>.</p>
@@ -721,6 +725,7 @@ function themeSection() {
           ${colorField('text', 'Texte courant', 'Consignes, boutons secondaires')}
         </div>
         <label>Police <select name="font">${[['system', 'Standard'], ['rounded', 'Arrondie'], ['serif', 'Avec empattements']].map(([v, l]) => `<option value="${v}" ${custom.font === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label>Motif de fond <select name="pattern">${[{ id: '', name: 'Aucun' }, ...S.patterns].map((p) => `<option value="${esc(p.id)}" ${(custom.pattern || '') === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
       </div>
       <div id="contrastWarn" class="alert hidden"></div>
       <h3 class="h3-gap">Aperçu sur la borne</h3>
@@ -747,7 +752,7 @@ function themeSection() {
     </form>
     <form id="formBg" class="card upload-card">
       <h3>Image de fond (optionnelle)</h3>
-      <div class="upload-current">${bg ? `<img class="logo-prev" src="${esc(bg)}" alt="">` : ''}<small>Actuelle : <code>${esc(bg || 'aucune')}</code></small></div>
+      <div class="upload-current">${bg ? `<img class="logo-prev" src="${esc(bg)}" alt="">` : ''}<small>Actuelle : ${bg.startsWith('/pattern.svg') ? 'motif du thème, remplacé par l\'image choisie' : `<code>${esc(bg || 'aucune')}</code>`}</small></div>
       <label class="file-pick btn secondary">Choisir une image…<input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>
       ${cfg.booth.backgroundImage ? '<button class="btn" type="button" id="btnBgReset">Retirer</button>' : ''}
     </form>
@@ -2885,9 +2890,9 @@ function bindSection(sec) {
       const isCustom = active === 'custom';
       $('#customTheme').classList.toggle('hidden', !isCustom);
       const customColors = Object.fromEntries(['primary', 'secondary', 'background', 'surface', 'text', 'onPrimary'].map((k) => [k, fd.get(`color_${k}`)]));
-      const theme = isCustom ? { colors: customColors, font: fd.get('font') } : S.themes.find((x) => x.id === active) || S.themes[0];
-      $('#themePreview').style.cssText = tpVars(theme.colors, theme.font);
-      $('#themePickCustom').style.cssText = tpVars(customColors, fd.get('font'));
+      const theme = isCustom ? { colors: customColors, font: fd.get('font'), ...customPattern(fd.get('pattern'), customColors) } : S.themes.find((x) => x.id === active) || S.themes[0];
+      $('#themePreview').style.cssText = tpVars(theme.colors, theme.font, tpBgImage(theme));
+      $('#themePickCustom').style.cssText = tpVars(customColors, fd.get('font'), tpBgImage(customPattern(fd.get('pattern'), customColors)));
       // Logo Cheeesy aux couleurs du thème coché (et de la carte « Personnalisé ») ; URL inchangée : pas de rechargement
       const setLogo = (img, url) => { if (img && img.getAttribute('src') !== url) img.src = url; };
       setLogo($('#themePreview .tp-logo'), logoFor(theme.colors));
@@ -2909,6 +2914,7 @@ function bindSection(sec) {
         booth: { name: fd.get('boothName'), showName: fd.get('showName') === 'on' },
         theme: { active: fd.get('active'), custom: {
           font: fd.get('font'),
+          pattern: fd.get('pattern') || '',
           colors: { primary: fd.get('color_primary'), secondary: fd.get('color_secondary'), background: fd.get('color_background'), surface: fd.get('color_surface'), text: fd.get('color_text'), onPrimary: fd.get('color_onPrimary') }
         } }
       }, 'Thème enregistré, la borne est à jour');

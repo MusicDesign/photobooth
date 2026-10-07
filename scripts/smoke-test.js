@@ -313,6 +313,23 @@ async function runSteps(app, camera) {
     assert.ok((await bad.text()).includes(`fill="${st.theme.colors.primary}"`));
   });
 
+  await step('motifs de fond : thème livré, thème personnalisé, image importée prioritaire', async () => {
+    const st = (await j('/api/admin/state', { headers: ADMIN })).data;
+    assert.ok(st.patterns.some((p) => p.id === 'snowflakes'));
+    assert.match(st.themes.find((t) => t.id === 'noel').backgroundImage, /^\/pattern\.svg\?p=snowflakes&c=ffffff&o=\d+$/);
+    const r = await fetch(`${base}/pattern.svg?p=checkerboard&c=1d3557&o=8`);
+    assert.equal(r.status, 200);
+    const svg = await r.text();
+    assert.ok(svg.includes('fill="#1d3557"') && svg.includes('opacity="0.08"') && !svg.includes('<?xml'), 'motif recoloré');
+    for (const q of ['p=../config&c=1d3557&o=8', 'p=checkerboard&c=rouge&o=8', 'p=inconnu&c=1d3557&o=8']) assert.equal((await fetch(`${base}/pattern.svg?${q}`)).status, 404, q);
+    await put('/api/admin/config', { theme: { active: 'custom', custom: { pattern: 'spiral' } } }, ADMIN);
+    const custom = (await j('/api/admin/state', { headers: ADMIN })).data.theme;
+    assert.equal(custom.backgroundImage, `/pattern.svg?p=spiral&c=${custom.colors.secondary.slice(1)}&o=8`);
+    await put('/api/admin/config', { booth: { backgroundImage: '/uploads/fond.jpg' } }, ADMIN);
+    assert.equal((await j('/api/admin/state', { headers: ADMIN })).data.theme.backgroundImage, '/uploads/fond.jpg', 'image importée avant le motif');
+    await put('/api/admin/config', { booth: { backgroundImage: '' }, theme: { active: st.config.theme.active, custom: { pattern: '' } } }, ADMIN);
+  });
+
   await step('écran tactile et fenêtre : modes forcés depuis l\'admin, valeurs inconnues refusées', async () => {
     assert.equal((await j('/api/bootstrap')).data.booth.touch, 'auto');
     assert.equal((await put('/api/admin/config', { booth: { touch: 'touch' } }, ADMIN)).status, 200);
@@ -686,6 +703,13 @@ async function runSteps(app, camera) {
     const px = async (x, y) => [...await sharp(file).extract({ left: x, top: y, width: 1, height: 1 }).raw().toBuffer()];
     const photo = await px(900, 500); assert.ok(Math.max(...photo) - Math.min(...photo) <= 3, `photo en gris : ${photo}`);
     const band = await px(50, 1100); assert.ok(Math.max(...band) - Math.min(...band) <= 3, `cadre en gris lui aussi (bande rouge) : ${band}`);
+    // Vignettes des filtres : le montage sans filtre (bande rouge du cadre), plus petit
+    assert.ok(c.final.plainUrl, 'vignette sans filtre');
+    const plain = path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s.id, 'plain.jpg');
+    const pm = await sharp(plain).metadata(); assert.ok(Math.max(pm.width, pm.height) <= 360, `vignette réduite : ${pm.width}×${pm.height}`);
+    const k = pm.width / (await sharp(file).metadata()).width;
+    const plainBand = [...await sharp(plain).extract({ left: Math.round(50 * k), top: Math.round(1100 * k), width: 1, height: 1 }).raw().toBuffer()];
+    assert.ok(plainBand[0] > 200 && plainBand[1] < 60, `vignette sans filtre : bande rouge : ${plainBand}`);
     const back = (await post(`/api/session/${s.id}/compose`, { filter: 'none' })).data;
     assert.equal(back.filter, 'none');
     const bandBack = await px(50, 1100); assert.ok(bandBack[0] > 200 && bandBack[1] < 60, `« Couleur » : bande rouge revenue : ${bandBack}`);

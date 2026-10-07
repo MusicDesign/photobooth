@@ -7,7 +7,7 @@ backend Node.js.
 
 État : **borne fonctionnelle**, mise au point sur Mac avec le vrai matériel : Canon EOS 2000D
 piloté et calibré par gphoto2 (aperçu en direct, flash, détourage IA), Stream Deck, lumières
-Govee et Elgato, écran externe en DDC/CI, 12 thèmes et éditeur de templates. Le flux invité
+Govee et Elgato, écran externe en DDC/CI, 20 thèmes et éditeur de templates. Le flux invité
 complet se teste aussi sans matériel (caméra et imprimante simulées). Reste à valider :
 l'impression sur l'imprimante retenue et l'installation sur le mini PC Linux de la borne
 (voir « Prochaines étapes »).
@@ -59,7 +59,7 @@ Détails, connexion automatique, pare-feu et hotspot : [TUTORIEL.md, étape 10](
 ## Ce que fait la borne
 
 Flux invité : accueil → choix du cadre (optionnel) → aperçu live **dans le template**
-→ décompte → photos (1 ou plusieurs) → relecture avec **reprise photo par photo** →
+→ décompte → photos (1 ou plusieurs) → relecture avec **reprise** →
 **choix du nombre de copies** → impression → écran final avec **QR code** vers une galerie
 locale.
 
@@ -71,8 +71,8 @@ Admin (`/admin.html`, ou 5 appuis en haut à droite de la borne, ou G D G D sur 
   code opérateur pour lever la limite ponctuellement.
 - **Thème** : nom de la borne, **logo** et image de fond valables pour tous les thèmes ; sans logo
   importé, le logo Cheeesy prend les couleurs du thème (aplat en accent, lettres en texte des boutons) ;
-  12 thèmes livrés (clair, sombre, festif, mariage, noir & or, néon, océan, forêt, corail, bonbon, entreprise,
-  Noël), une carte par thème avec l'accueil en miniature et l'aperçu de trois écrans toujours affiché,
+  20 thèmes livrés (clair, sombre, festif, mariage, noir & or, néon, océan, forêt, corail, bonbon, entreprise,
+  Noël, lavande, bohème, minuit, tropical, rétro, Halloween, givre, graphite), une carte par thème avec l'accueil en miniature et l'aperçu de trois écrans toujours affiché,
   + couleurs personnalisées avec alerte de contraste ;
   tous les textes modifiables. Appliqué sur la borne en direct via WebSocket.
 - **Templates** : création par simple nom, **éditeur visuel de calques** (photos, textes,

@@ -10,5 +10,10 @@
     "text": "#0d1b2a",
     "onPrimary": "#ffffff"
   },
-  "font": "system"
+  "font": "system",
+  "pattern": {
+    "id": "waves",
+    "color": "primary",
+    "opacity": 0.06
+  }
 }

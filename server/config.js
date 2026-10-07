@@ -107,7 +107,8 @@ export const DEFAULTS = {
       },
       font: 'system',
       logo: '',
-      backgroundImage: ''
+      backgroundImage: '',
+      pattern: ''             // motif de fond (themes.js, PATTERNS), à la couleur des titres ; '' : aucun
     }
   },
   texts: {

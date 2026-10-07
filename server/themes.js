@@ -27,6 +27,52 @@ export function defaultLogoSvg(colors = {}) {
   return logoTemplate.replace(/__FILL__/g, hex6(colors.primary) || FALLBACK.colors.primary).replace(/__TEXT__/g, hex6(colors.onPrimary) || FALLBACK.colors.onPrimary);
 }
 
+/**
+ * Motifs de fond (public/assets/backgrounds, 1920×1080, formes sans couleur ou traits en currentColor) : recolorés à
+ * une couleur du thème, en transparence, par la route /pattern.svg (app.js). Le nom du fichier est l'identifiant du motif.
+ */
+const PATTERNS_DIR = path.join(PUBLIC_DIR, 'assets', 'backgrounds');
+export const PATTERNS = {
+  'diagonal-stripes': 'Rayures diagonales',
+  'horizontal-stripes': 'Rayures horizontales',
+  'vertical-stripes': 'Rayures verticales',
+  checkerboard: 'Damier',
+  spiral: 'Spirale',
+  waves: 'Vagues',
+  snowflakes: 'Flocons',
+  pumpkins: 'Citrouilles',
+  ripples: 'Ondes'
+};
+export const PATTERN_OPACITY = 0.08; // assez pour se voir, sans gêner la lecture des textes posés dessus
+
+const patternSources = new Map();
+/** Le SVG d'un motif, d'une couleur et d'une opacité données (null : motif inconnu). */
+export function patternSvg(id, color, opacity = PATTERN_OPACITY) {
+  if (!Object.hasOwn(PATTERNS, id)) return null;
+  if (!patternSources.has(id)) {
+    const src = fs.readFileSync(path.join(PATTERNS_DIR, `${id}.svg`), 'utf8');
+    const viewBox = /viewBox="([^"]+)"/.exec(src)?.[1] || '0 0 1920 1080';
+    const body = src.replace(/<\?xml[^>]*>\s*/, '').replace(/^[\s\S]*?<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '');
+    patternSources.set(id, { viewBox, body });
+  }
+  const { viewBox, body } = patternSources.get(id);
+  const o = Math.min(1, Math.max(0, Number(opacity) || 0));
+  const c = hex6(color) || '#000000';
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" preserveAspectRatio="xMidYMid slice"><g fill="${c}" color="${c}" opacity="${o}">${body}</g></svg>`;
+}
+
+/**
+ * Image de fond d'un motif de thème. pattern : identifiant, ou { id, color, opacity } ; color est une couleur du
+ * thème (primary, secondary, text…) ou un « #rrggbb » ; par défaut la couleur des titres.
+ */
+export function patternUrl(pattern, colors = {}) {
+  const p = typeof pattern === 'string' ? { id: pattern } : pattern || {};
+  if (!Object.hasOwn(PATTERNS, p.id)) return '';
+  const color = hex6(colors[p.color || 'secondary']) || hex6(p.color) || FALLBACK.colors.secondary;
+  const o = Math.round((p.opacity ?? PATTERN_OPACITY) * 100);
+  return `/pattern.svg?p=${p.id}&c=${color.slice(1)}&o=${o}`;
+}
+
 const FALLBACK = {
   id: 'default-light',
   name: 'Clair',
@@ -40,7 +86,8 @@ const FALLBACK = {
   },
   font: 'system',
   logo: '',
-  backgroundImage: ''
+  backgroundImage: '',
+  pattern: ''
 };
 
 export class Themes {
@@ -62,8 +109,9 @@ export class Themes {
     if (this.items.size === 0) this.items.set(FALLBACK.id, FALLBACK);
   }
 
+  /** Thèmes livrés ; backgroundImage : l'image du thème, ou son motif aux couleurs du thème. */
   all() {
-    return [...this.items.values()];
+    return [...this.items.values()].map((t) => ({ ...t, backgroundImage: t.backgroundImage || patternUrl(t.pattern, t.colors) }));
   }
 
   /** Thème actif : un thème livré, ou le thème personnalisé de la config. */
@@ -80,7 +128,7 @@ export class Themes {
     // Sans logo importé : le logo Cheeesy aux couleurs du thème (defaultLogo = true, l'admin le sait).
     const ownLogo = config.booth?.logo || config.theme?.custom?.logo || theme.logo || '';
     const logo = ownLogo || defaultLogoUrl(theme.colors);
-    const backgroundImage = config.booth?.backgroundImage || config.theme?.custom?.backgroundImage || theme.backgroundImage || '';
+    const backgroundImage = config.booth?.backgroundImage || config.theme?.custom?.backgroundImage || theme.backgroundImage || patternUrl(theme.pattern, theme.colors);
     return { ...theme, logo, defaultLogo: !ownLogo, backgroundImage };
   }
 }

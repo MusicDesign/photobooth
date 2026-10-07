@@ -1,0 +1,14 @@
+{
+  "id": "givre",
+  "name": "Givre",
+  "order": 19,
+  "colors": {
+    "primary": "#4a5a6e",
+    "secondary": "#6b7f94",
+    "background": "#eef1f4",
+    "surface": "#fbfcfd",
+    "text": "#1f2933",
+    "onPrimary": "#ffffff"
+  },
+  "font": "serif"
+}

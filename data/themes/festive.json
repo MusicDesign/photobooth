@@ -10,5 +10,10 @@
     "text": "#2b2d42",
     "onPrimary": "#ffffff"
   },
-  "font": "rounded"
+  "font": "rounded",
+  "pattern": {
+    "id": "spiral",
+    "color": "primary",
+    "opacity": 0.06
+  }
 }
