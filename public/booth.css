@@ -54,7 +54,7 @@ body[data-screen="idle"] .brand { display: none; } /* accueil : le logo est déj
 
 /* Accueil sans tactile : flèche vers le Stream Deck, collée au bord où il est posé (data-pos) */
 .button-hint { --rot: 180deg; position: absolute; left: 50%; bottom: 3vh; transform: translateX(-50%); color: var(--secondary); pointer-events: none; } /* couleur du titre d'accueil */
-.button-hint .look-up-arrow { width: clamp(64px, 9vmin, 120px); height: clamp(64px, 9vmin, 120px); animation-name: hint-bounce; }
+.button-hint .look-up-arrow { font-size: clamp(64px, 9vmin, 120px); animation-name: hint-bounce; }
 @keyframes hint-bounce { from { transform: rotate(var(--rot)) translateY(10px); } to { transform: rotate(var(--rot)) translateY(-14px); } }
 .button-hint[data-pos="top"] { --rot: 0deg; bottom: auto; top: 3vh; }
 .button-hint[data-pos="left"], .button-hint[data-pos="right"] { bottom: auto; top: 50%; transform: translateY(-50%); }
@@ -170,7 +170,7 @@ body[data-screen="idle"] .brand { display: none; } /* accueil : le logo est déj
 .look-up[data-pos="left"], .look-up[data-pos="right"] { flex-direction: row; gap: 14px; padding: 14px 24px; transform: none; --dy: 0px; }
 .look-up[data-pos="left"] { left: 18px; --dx: -12px; --rot: -90deg; }
 .look-up[data-pos="right"] { left: auto; right: 18px; flex-direction: row-reverse; --dx: 12px; --rot: 90deg; }
-.look-up-arrow { flex: none; width: 1.6em; height: 1.6em; fill: currentColor; animation: look-bounce 0.7s ease-in-out infinite alternate; }
+.look-up-arrow { flex: none; font-size: 1.6em; line-height: 1; animation: look-bounce 0.7s ease-in-out infinite alternate; } /* icône Font Awesome (fa-arrow-up), orientée par --rot */
 @keyframes look-in { from { opacity: 0; translate: var(--dx) var(--dy); } to { opacity: 1; translate: 0 0; } }
 /* La flèche est dessinée vers le haut : on la tourne vers le boîtier, puis elle rebondit dans cette direction */
 @keyframes look-bounce { from { transform: rotate(var(--rot)) translateY(6px); } to { transform: rotate(var(--rot)) translateY(-6px); } }

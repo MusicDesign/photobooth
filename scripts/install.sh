@@ -58,11 +58,15 @@ if want node; then
     say "Node.js"
     case "$PM" in
       brew) brew install node ;;
-      apt) curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs ;;
+      apt) # curl n'est pas installé d'office sur une Debian neuve
+        have curl || sudo apt-get install -y curl ca-certificates
+        curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs ;;
       dnf) sudo dnf install -y nodejs npm ;;
       pacman) sudo pacman -S --noconfirm --needed nodejs npm ;;
       *) echo "Node.js 20 ou plus requis (nodejs.org)"; exit 1 ;;
     esac
+    # Une commande en échec dans « a && b » n'arrête pas le script (set -e) : on vérifie le résultat.
+    { have node && [ "$(node_major)" -ge 20 ]; } || { echo "Node.js n'a pas pu être installé (réseau ?). Relancez ce script."; exit 1; }
   fi
   echo "Node.js $(node -v) · npm $(npm -v)"
 fi
@@ -93,7 +97,35 @@ if [ "$KIOSK" = 1 ]; then
     osascript -e "tell application \"System Events\" to if not (exists login item \"Cheeesy\") then make login item at end with properties {path:\"$PWD/Cheeesy.app\", hidden:false}" >/dev/null
     echo "Élément d'ouverture ajouté"
   else
+    # Icône Cheeesy visible sur le bureau GNOME (pour relancer la borne) : extension Desktop Icons NG.
+    if [ "$PM" = apt ] && have gnome-shell && [ ! -d /usr/share/gnome-shell/extensions/ding@rastersoft.com ]; then
+      sudo apt-get install -y gnome-shell-extension-desktop-icons-ng || echo "Desktop Icons NG non installée : pas d'icônes sur le bureau"
+    fi
     scripts/kiosk/install-linux.sh --electron --no-sleep
+    # Connexion automatique (GDM) : à l'allumage, la borne démarre seule au lieu d'attendre un mot de passe.
+    for f in /etc/gdm3/daemon.conf /etc/gdm3/custom.conf /etc/gdm/custom.conf; do
+      [ -f "$f" ] || continue
+      if ! grep -qx "AutomaticLogin=$USER" "$f"; then
+        sudo sed -i '/^AutomaticLoginEnable=/d; /^AutomaticLogin=/d' "$f"
+        grep -q '^\[daemon\]' "$f" || echo '[daemon]' | sudo tee -a "$f" >/dev/null
+        sudo sed -i "/^\[daemon\]/a AutomaticLoginEnable=true\nAutomaticLogin=$USER" "$f"
+      fi
+      echo "Connexion automatique de $USER ($f)"
+      break
+    done
+    # Menu de démarrage (GRUB) masqué : démarrage direct, menu toujours joignable en maintenant Échap ou Maj.
+    if [ -f /etc/default/grub ] && ! grep -q '^GRUB_TIMEOUT_STYLE=hidden' /etc/default/grub; then
+      sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/; /^GRUB_TIMEOUT_STYLE=/d' /etc/default/grub
+      echo 'GRUB_TIMEOUT_STYLE=hidden' | sudo tee -a /etc/default/grub >/dev/null
+      if have update-grub; then sudo update-grub >/dev/null 2>&1
+      elif have grub2-mkconfig; then sudo grub2-mkconfig -o /boot/grub2/grub.cfg >/dev/null 2>&1; fi
+      echo "Menu de démarrage masqué (Échap ou Maj au démarrage pour l'afficher)"
+    fi
+    # Version des réglages système appliqués : l'admin (page Installation) demande de relancer ce script quand une
+    # mise à jour en apporte de nouveaux (server/setup.js, scripts/kiosk/SETUP_VERSION).
+    mkdir -p "$HOME/.config/photobooth" && cp scripts/kiosk/SETUP_VERSION "$HOME/.config/photobooth/kiosk-setup-version"
+    echo
+    echo "Redémarrez le PC pour terminer : connexion automatique, icône Cheeesy sur le bureau, borne en plein écran."
   fi
 fi
 

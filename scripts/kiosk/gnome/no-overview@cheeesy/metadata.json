@@ -1,0 +1,13 @@
+{
+  "uuid": "no-overview@cheeesy",
+  "name": "Cheeesy : borne dédiée",
+  "description": "Borne dédiée : pas de vue Activités à l'ouverture de session, et gestes tactiles de GNOME coupés, pour qu'un invité ne sorte pas de la borne.",
+  "shell-version": [
+    "45",
+    "46",
+    "47",
+    "48",
+    "49",
+    "50"
+  ]
+}

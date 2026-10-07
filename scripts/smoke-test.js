@@ -839,7 +839,8 @@ async function runSteps(app, camera) {
     await post(`/api/session/${newer}/keep`, {});
     const pending = await make(); // en relecture, pas validée : jamais dans la galerie
 
-    await put('/api/admin/config', { gallery: { booth: true } }, ADMIN);
+    // requireWifi à false : les QR ne dépendent plus du Wi-Fi de la machine de test (PC en Ethernet, VM)
+    await put('/api/admin/config', { gallery: { booth: true }, share: { requireWifi: false } }, ADMIN);
     const gboot = (await j('/api/bootstrap')).data;
     assert.equal(gboot.gallery.enabled, true);
     assert.equal(gboot.gallery.qr, true, 'QR de la galerie actif par défaut');

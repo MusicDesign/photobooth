@@ -127,9 +127,17 @@ function openWindow() {
   splash = new WebContentsView({ webPreferences: { sandbox: true } });
   splash.setBackgroundColor('#f8f9fa');
   win.contentView.addChildView(splash);
-  const fit = () => { const { width, height } = win.getContentBounds(); splash?.setBounds({ x: 0, y: 0, width, height }); };
+  const fit = () => {
+    if (!splash || win.isDestroyed()) return;
+    const { width, height } = win.getContentBounds();
+    const b = splash.getBounds();
+    if (b.width !== width || b.height !== height) splash.setBounds({ x: 0, y: 0, width, height });
+  };
   fit();
-  win.on('resize', fit);
+  for (const ev of ['resize', 'resized', 'show', 'enter-full-screen', 'maximize']) win.on(ev, fit);
+  // Linux (Wayland) : le passage en plein écran n'émet pas toujours « resize », et l'écran de lancement resterait
+  // à la taille de la fenêtre cachée, en haut à gauche, devant la borne. Revérifié tant qu'il est affiché.
+  const refit = setInterval(() => (splash ? fit() : clearInterval(refit)), 200);
   splashLoaded = splash.webContents.loadFile(fileURLToPath(new URL('./splash.html', import.meta.url))).catch(() => {});
   splashLoaded.then(() => { win?.show(); setTimeout(enforceWindowMode, 200); });
 }

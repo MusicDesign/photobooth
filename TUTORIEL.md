@@ -407,6 +407,7 @@ répond pas. Redémarre et vérifie que le tactile marche avant d'aller plus loi
 ```bash
 sudo dnf install -y nodejs git gphoto2 cups gutenprint-cups chromium liberation-fonts
 # Ubuntu : sudo apt install -y nodejs npm git gphoto2 cups printer-driver-gutenprint chromium-browser fonts-liberation
+# Debian : sudo apt install -y git gphoto2 cups printer-driver-gutenprint chromium chromium-l10n fonts-liberation (Node.js 22 : scripts/install.sh)
 node -v      # v20 ou plus
 scripts/install.sh --kiosk   # ou, depuis le projet : Node.js, les mêmes paquets (sudo) + ddcutil, NetworkManager, modèle IA, icône et lancement auto (10.5)
 ```
@@ -418,6 +419,7 @@ embarque le sien.
 
 ```bash
 cd ~
+sudo apt install -y git   # Debian/Ubuntu neuves : git absent (Fedora : sudo dnf install -y git)
 git clone https://github.com/MusicDesign/photobooth.git
 cd photobooth
 npm install
@@ -428,7 +430,17 @@ Le fichier `data/config.json` et le dossier `data/templates` peuvent être
 copiés depuis le Mac pour garder le thème, les templates et les limites. Le
 fichier `data/db.json` (événements, compteurs) et le dossier `output/sessions/` (une fiche
 `session.json` par session, avec ses photos) forment la base : repars de zéro sur la borne.
-Mise à jour plus tard : `git pull && npm install`, puis relancer la borne.
+Mise à jour plus tard : admin → **Installation** → Mettre à jour, ou `git pull && npm install`,
+puis relancer la borne. Si la page Installation affiche ensuite **Réglages système de la borne**
+à relancer, c'est que la mise à jour apporte des réglages qui demandent le mot de passe (connexion
+automatique, menu de démarrage, gestes GNOME…) : lance une fois `scripts/install.sh --kiosk`
+dans le Terminal de la borne.
+
+Le dépôt est **privé** (il contient Font Awesome Pro, sous licence commerciale) : le `git clone`
+demande un identifiant GitHub et un **jeton d'accès** en lecture seule (GitHub → Settings →
+Developer settings → Fine-grained tokens, dépôt `photobooth`, droit *Contents : read*).
+Pour que la mise à jour depuis l'admin y accède aussi, enregistre-le une fois sur la borne :
+`git config --global credential.helper store`, puis un `git pull` qui demande le jeton.
 
 ### 10.4 Libérer l'appareil photo
 
@@ -480,14 +492,29 @@ Comportement :
 - **Clavier branché** : Alt+F4 ferme la borne (serveur compris) ; dans l'app
   Electron, Ctrl+Maj+Q aussi.
 
-Pour que la borne démarre **seule à l'allumage**, active la connexion
-automatique : Paramètres → Système → Utilisateurs → **Connexion
-automatique**. Sans elle, l'écran de connexion attend un mot de passe.
+Pour que la borne démarre **seule à l'allumage**, il faut la connexion
+automatique : `scripts/install.sh --kiosk` l'active (GDM), sinon Paramètres → Système →
+Utilisateurs → **Connexion automatique**. Sans elle, l'écran de connexion attend un mot de passe.
+Redémarre ensuite le PC : les icônes du bureau et la suppression de la vue Activités ne
+prennent effet qu'à l'ouverture de session suivante.
 
-L'icône du bureau : GNOME n'affiche pas d'icônes sur le bureau par défaut.
-Installe l'extension **Desktop Icons NG (DING)** avec le Gestionnaire
-d'extensions, ou épingle Cheeesy au dock (Activités → clic droit →
-Épingler). Retirer le tout : `install-linux.sh --uninstall`.
+Le menu de démarrage (GRUB) s'affiche aussi quelques secondes à chaque allumage :
+`scripts/install.sh --kiosk` le masque (le menu reste accessible en maintenant Échap ou Maj).
+À la main :
+
+```bash
+sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/; /^GRUB_TIMEOUT_STYLE=/d' /etc/default/grub
+echo GRUB_TIMEOUT_STYLE=hidden | sudo tee -a /etc/default/grub
+sudo update-grub      # Fedora : sudo grub2-mkconfig -o /boot/grub2/grub.cfg
+```
+
+L'icône du bureau : GNOME n'affiche pas d'icônes sur le bureau par défaut. Sous
+Debian/Ubuntu, `scripts/install.sh --kiosk` installe l'extension **Desktop Icons NG (DING)**
+et `install-linux.sh` l'active ; ailleurs, installe-la avec le Gestionnaire d'extensions puis
+relance `install-linux.sh`. Cheeesy est aussi épinglé au dock. Avec `--no-sleep` (borne dédiée), une petite
+extension (`scripts/kiosk/gnome/`) saute la vue Activités à l'ouverture de session et coupe les
+gestes de GNOME (balayage à 3 doigts) ; la touche Super, le coin actif et les bannières de
+notification sont aussi coupés. L'opérateur garde Alt+Tab et Ctrl+Maj+Q au clavier. Retirer le tout : `install-linux.sh --uninstall`.
 
 **Vérification.** Redémarre le PC : la borne s'affiche seule, plein écran.
 Admin → Éteindre la borne : retour au bureau. Icône Cheeesy : la borne

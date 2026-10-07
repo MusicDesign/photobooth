@@ -1908,7 +1908,7 @@ function editorSection() {
   <div class="editor">
     <p class="editor-mobile-note">Le concepteur se manipule mieux sur un grand écran (ordinateur, ou tablette en paysage) : placer et redimensionner les calques au doigt reste possible, mais peu précis.</p>
     <div class="editor-top">
-      <button class="btn" id="edBack">← Templates</button>
+      <button class="btn" id="edBack"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Templates</button>
       <input id="edName" class="ed-name" value="${esc(E.tpl.name)}" title="Nom du template">
       <span class="badge">${KIND_LABEL[t.kind] ? `${KIND_LABEL[t.kind]} · ` : ''}${esc(fmt)} · ${t.width}×${t.height} px</span>
       <label class="inline">Fond <input type="color" id="edBg" value="${esc(E.tpl.background)}"></label>
@@ -2069,8 +2069,8 @@ function renderLayerList() {
       <span class="ltype ${l.type}">${LAYER_LABEL[l.type]}</span>
       <span class="lname">${esc(layerTitle(l))}</span>
       <span class="lbtns">
-        <button data-up="${esc(l.id)}" title="Monter">↑</button>
-        <button data-down="${esc(l.id)}" title="Descendre">↓</button>
+        <button data-up="${esc(l.id)}" title="Monter"><i class="fa-solid fa-arrow-up" aria-hidden="true"></i></button>
+        <button data-down="${esc(l.id)}" title="Descendre"><i class="fa-solid fa-arrow-down" aria-hidden="true"></i></button>
         <button data-dup="${esc(l.id)}" title="Dupliquer">⧉</button>
         <button data-rm="${esc(l.id)}" title="Supprimer">✕</button>
       </span>
@@ -3177,6 +3177,15 @@ $('#btnRestart').onclick = async () => {
   }
   document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>Redémarrage…</h1>
     <p class="sub">La borne revient dans quelques secondes.</p></div></div>`;
+  // Lanceur Chromium : la fenêtre reste ouverte, on revient à l'accueil dès que le serveur relancé répond
+  // (l'app Electron, elle, se relance entièrement).
+  let down = false;
+  for (let i = 0; i < 90; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    const up = await fetch('/', { cache: 'no-store' }).then((r) => r.ok, () => false);
+    if (!up) down = true;
+    else if (down || i >= 30) { location.href = '/'; return; }
+  }
 };
 /** Confirmation dans la page : se valide à la souris, au clavier ou depuis le Stream Deck. */
 function askConfirm(text, okLabel, deckIcon = 'power') {

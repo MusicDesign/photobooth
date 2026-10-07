@@ -41,11 +41,13 @@ if [ ${#BROWSER[@]} -eq 0 ]; then log "Chromium introuvable"; notify-send "Cheee
 run_server() {
   cd "$DIR" || exit 1
   while :; do
-    "$NODE" server/index.js >>"$LOG" 2>&1 &
+    BOOTH_LAUNCHER=1 "$NODE" server/index.js >>"$LOG" 2>&1 &
     echo $! >"$RUN_DIR/server.pid"
     wait $!
     code=$?
     if [ $code -eq 0 ] || [ -f "$RUN_DIR/stop" ]; then log "serveur arrêté"; break; fi
+    # 75 : « Redémarrer la borne » dans l'admin (server/index.js), relance immédiate ; la page se reconnecte seule.
+    if [ $code -eq 75 ]; then log "redémarrage demandé depuis l'admin"; continue; fi
     log "serveur tombé (code $code), relance dans 3 s"
     sleep 3
   done
@@ -74,12 +76,26 @@ done
 # Chromium coupé net la dernière fois : sans ça, il afficherait « Restaurer les pages ? ».
 PREFS="$PROFILE/Default/Preferences"
 [ -f "$PREFS" ] && sed -i 's/"exited_cleanly":false/"exited_cleanly":true/; s/"exit_type":"[^"]*"/"exit_type":"Normal"/' "$PREFS"
+# Traduction coupée et langue française dans le profil : l'option --disable-features=Translate ne suffit plus
+# sur les Chromium récents, qui proposeraient encore de traduire la borne.
+mkdir -p "$(dirname "$PREFS")"
+"$NODE" -e '
+  const fs = require("fs"), f = process.argv[1];
+  let p = {}; try { p = JSON.parse(fs.readFileSync(f, "utf8")); } catch {}
+  p.translate = { ...p.translate, enabled: false };
+  p.intl = { ...p.intl, accept_languages: "fr-FR,fr", selected_languages: "fr-FR,fr" };
+  fs.writeFileSync(f, JSON.stringify(p));
+' "$PREFS" || log "préférences Chromium non modifiées"
 
+# --password-store=basic : avec la connexion automatique, le trousseau GNOME reste verrouillé et Chromium
+# demanderait son mot de passe au démarrage de la borne.
 "${BROWSER[@]}" \
   --user-data-dir="$PROFILE" \
   --kiosk "$URL" \
   --ozone-platform-hint=auto \
   --no-first-run --no-default-browser-check \
+  --lang=fr-FR \
+  --password-store=basic \
   --noerrdialogs --disable-infobars --disable-session-crashed-bubble \
   --disable-features=Translate,TranslateUI \
   --overscroll-history-navigation=0 --disable-pinch \

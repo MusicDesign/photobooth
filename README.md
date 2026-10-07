@@ -41,6 +41,7 @@ BOOTH_CAMERA=mock npm start   # caméra simulée côté serveur (flux MJPEG), ut
 ## Sur la borne (PC Linux)
 
 ```bash
+sudo apt install -y git                     # Debian/Ubuntu neuves (Fedora : sudo dnf install -y git)
 git clone https://github.com/MusicDesign/photobooth.git && cd photobooth
 scripts/install.sh --kiosk                  # Node.js, dépendances npm, gphoto2, CUPS, ddcutil, NetworkManager, Chromium (sudo), modèle IA,
                                             # icône bureau + lancement auto en plein écran (écran jamais éteint), puis lance la borne

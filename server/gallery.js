@@ -43,6 +43,8 @@ function page({ theme, boothName, title = boothName, css = '', body }) {
 <html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
+<link rel="stylesheet" href="/fonts/font-awesome/css/fontawesome.min.css">
+<link rel="stylesheet" href="/fonts/font-awesome/css/solid.min.css">
 <style>
   :root{--primary:${c.primary};--secondary:${c.secondary};--bg:${c.background};--surface:${c.surface};--text:${c.text};--on-primary:${c.onPrimary};--on-surface:${readableOn(c.surface, c.secondary, c.text, c.background, '#ffffff', '#000000')}}
   *{box-sizing:border-box}body{margin:0;font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column;align-items:center;padding:24px 16px;gap:20px;min-height:100vh}
@@ -85,14 +87,14 @@ export function galleryHtml({ session, theme, boothName, texts, nav = null }) {
   <div class="card"><img src="${esc(session.final.url)}" alt="${session.final.gif ? 'Votre GIF' : 'Votre photo'}"></div>
   <p>${SAVE_TIP}</p>` : `
   <p>La photo n'est pas encore prête, réessayez dans quelques secondes.</p>`}
-  ${nav ? `<a class="link" href="/galerie">← ${esc(texts.galleryTitle)}</a>` : ''}` });
+  ${nav ? `<a class="link" href="/galerie"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> ${esc(texts.galleryTitle)}</a>` : ''}` });
 }
 
 /** QR code d'une photo qui n'existe plus (supprimée, événement vidé) : même habillage, retour à la galerie si elle est ouverte. */
 export function missingHtml({ theme, boothName, texts, gallery = false }) {
   return page({ theme, boothName, body: `
   <p>Cette photo n'est plus disponible.</p>
-  ${gallery ? `<a class="link" href="/galerie">← ${esc(texts.galleryTitle)}</a>` : ''}` });
+  ${gallery ? `<a class="link" href="/galerie"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> ${esc(texts.galleryTitle)}</a>` : ''}` });
 }
 
 /** Galerie de l'événement en cours : grille de miniatures (items = null : galerie fermée). */
