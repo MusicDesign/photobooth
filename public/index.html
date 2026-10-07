@@ -7,6 +7,8 @@
 <title>Cheeesy</title>
 <link id="favicon" rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="/booth.css">
+<link rel="stylesheet" href="/fonts/font-awesome/css/fontawesome.min.css">
+<link rel="stylesheet" href="/fonts/font-awesome/css/solid.min.css">
 </head>
 <body data-font="system">
 <div id="app" class="app">
@@ -21,7 +23,7 @@
     </div>
     <!-- Écran non tactile : flèche vers le Stream Deck, sur le bord de l'écran où il est posé -->
     <div id="buttonHint" class="button-hint hidden" aria-hidden="true">
-      <svg class="look-up-arrow" viewBox="0 0 24 24"><path d="M12 3l-8 8h5v10h6V11h5z"/></svg>
+      <i class="fa-solid fa-arrow-up look-up-arrow" aria-hidden="true"></i>
     </div>
     <!-- Galerie de l'événement (réglage admin) -->
     <!-- Galerie : les 3 dernières photos en éventail, le nom et le nombre (renderIdleGallery) -->
@@ -39,7 +41,7 @@
       <button id="btnGalleryNext" class="btn btn-ghost btn-nav" aria-label="Photos suivantes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
     </div>
     <p id="txtGalleryEmpty" class="hint hidden"></p>
-    <button id="btnGalleryBack" class="btn btn-ghost back">← Accueil</button>
+    <button id="btnGalleryBack" class="btn btn-ghost back"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Accueil</button>
   </section>
 
   <!-- Galerie : une photo, précédente / suivante, réimpression -->
@@ -67,7 +69,7 @@
         </div>
       </div>
     </div>
-    <button id="btnPhotoBack" class="btn btn-ghost back">← Toutes les photos</button>
+    <button id="btnPhotoBack" class="btn btn-ghost back"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Toutes les photos</button>
   </section>
 
   <!-- Choix du template -->
@@ -80,7 +82,7 @@
       <span id="templatePage" class="shot-label"></span>
       <button id="btnTemplateNext" class="btn btn-ghost btn-nav" aria-label="Cadres suivants"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
     </div>
-    <button id="btnTemplateBack" class="btn btn-ghost back">← Retour</button>
+    <button id="btnTemplateBack" class="btn btn-ghost back"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Retour</button>
   </section>
 
   <!-- Prise de vue : aperçu live DANS le template -->
@@ -90,7 +92,7 @@
         <canvas id="preview"></canvas>
         <div id="countdown" class="countdown hidden"></div>
         <div id="lookUp" class="look-up hidden" aria-live="polite">
-          <svg class="look-up-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l-8 8h5v10h6V11h5z"/></svg>
+          <i class="fa-solid fa-arrow-up look-up-arrow" aria-hidden="true"></i>
           <span id="txtLookUp"></span>
         </div>
         <div id="flash" class="flash"></div>
@@ -103,7 +105,7 @@
       </div>
     </div>
     <!-- Plusieurs cadres au choix, aucune photo prise : retour au choix du cadre -->
-    <button id="btnCaptureBack" class="btn btn-ghost back hidden">← Changer de cadre</button>
+    <button id="btnCaptureBack" class="btn btn-ghost back hidden"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Changer de cadre</button>
   </section>
 
   <!-- Relecture : refaire ou garder -->

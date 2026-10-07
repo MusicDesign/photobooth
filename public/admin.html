@@ -6,6 +6,8 @@
 <title>Administration · Cheeesy</title>
 <link id="favicon" rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="/admin.css">
+<link rel="stylesheet" href="/fonts/font-awesome/css/fontawesome.min.css">
+<link rel="stylesheet" href="/fonts/font-awesome/css/solid.min.css">
 </head>
 <body>
 <div id="login" class="login hidden">
@@ -14,7 +16,7 @@
     <label>Code PIN <input id="loginPin" type="password" inputmode="numeric" autocomplete="off" autofocus></label>
     <button class="btn primary" type="submit">Entrer</button>
     <p id="loginError" class="error"></p>
-    <a href="/" class="back-link">← Retour à la borne</a>
+    <a href="/" class="back-link"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Retour à la borne</a>
   </form>
 </div>
 
@@ -43,7 +45,7 @@
     <a href="#backup">Sauvegarde</a>
     <a href="#install">Installation</a>
     <div class="nav-foot">
-      <button id="btnBooth" class="btn primary small">← Retour à la borne</button>
+      <button id="btnBooth" class="btn primary small"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Retour à la borne</button>
       <button id="btnLogout" class="btn ghost small">Déconnexion</button>
       <button id="btnRestart" class="btn ghost small hidden">Redémarrer la borne</button>
       <button id="btnShutdown" class="btn danger small hidden">Éteindre la borne</button>
