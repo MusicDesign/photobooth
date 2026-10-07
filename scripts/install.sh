@@ -102,6 +102,19 @@ if [ "$KIOSK" = 1 ]; then
       sudo apt-get install -y gnome-shell-extension-desktop-icons-ng || echo "Desktop Icons NG non installée : pas d'icônes sur le bureau"
     fi
     scripts/kiosk/install-linux.sh --electron --no-sleep
+    # Connexion automatique (GDM) : à l'allumage, la borne démarre seule au lieu d'attendre un mot de passe.
+    for f in /etc/gdm3/daemon.conf /etc/gdm3/custom.conf /etc/gdm/custom.conf; do
+      [ -f "$f" ] || continue
+      if ! grep -qx "AutomaticLogin=$USER" "$f"; then
+        sudo sed -i '/^AutomaticLoginEnable=/d; /^AutomaticLogin=/d' "$f"
+        grep -q '^\[daemon\]' "$f" || echo '[daemon]' | sudo tee -a "$f" >/dev/null
+        sudo sed -i "/^\[daemon\]/a AutomaticLoginEnable=true\nAutomaticLogin=$USER" "$f"
+      fi
+      echo "Connexion automatique de $USER ($f)"
+      break
+    done
+    echo
+    echo "Redémarrez le PC pour terminer : connexion automatique, icône Cheeesy sur le bureau, borne en plein écran."
   fi
 fi
 

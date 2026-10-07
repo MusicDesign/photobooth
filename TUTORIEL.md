@@ -482,9 +482,11 @@ Comportement :
 - **Clavier branché** : Alt+F4 ferme la borne (serveur compris) ; dans l'app
   Electron, Ctrl+Maj+Q aussi.
 
-Pour que la borne démarre **seule à l'allumage**, active la connexion
-automatique : Paramètres → Système → Utilisateurs → **Connexion
-automatique**. Sans elle, l'écran de connexion attend un mot de passe.
+Pour que la borne démarre **seule à l'allumage**, il faut la connexion
+automatique : `scripts/install.sh --kiosk` l'active (GDM), sinon Paramètres → Système →
+Utilisateurs → **Connexion automatique**. Sans elle, l'écran de connexion attend un mot de passe.
+Redémarre ensuite le PC : les icônes du bureau et la suppression de la vue Activités ne
+prennent effet qu'à l'ouverture de session suivante.
 
 Le menu de démarrage (GRUB) s'affiche aussi quelques secondes à chaque allumage. Pour
 démarrer directement (le menu reste accessible en maintenant Échap ou Maj) :
