@@ -500,9 +500,10 @@ sudo update-grub      # Fedora : sudo grub2-mkconfig -o /boot/grub2/grub.cfg
 L'icône du bureau : GNOME n'affiche pas d'icônes sur le bureau par défaut. Sous
 Debian/Ubuntu, `scripts/install.sh --kiosk` installe l'extension **Desktop Icons NG (DING)**
 et `install-linux.sh` l'active ; ailleurs, installe-la avec le Gestionnaire d'extensions puis
-relance `install-linux.sh`. Cheeesy est aussi épinglé au dock. Avec `--no-sleep`, une petite
-extension (`scripts/kiosk/gnome/`) saute la vue Activités à l'ouverture de session, pour que
-la borne passe en plein écran tout de suite. Retirer le tout : `install-linux.sh --uninstall`.
+relance `install-linux.sh`. Cheeesy est aussi épinglé au dock. Avec `--no-sleep` (borne dédiée), une petite
+extension (`scripts/kiosk/gnome/`) saute la vue Activités à l'ouverture de session et coupe les
+gestes de GNOME (balayage à 3 doigts) ; la touche Super, le coin actif et les bannières de
+notification sont aussi coupés. L'opérateur garde Alt+Tab et Ctrl+Maj+Q au clavier. Retirer le tout : `install-linux.sh --uninstall`.
 
 **Vérification.** Redémarre le PC : la borne s'affiche seule, plein écran.
 Admin → Éteindre la borne : retour au bureau. Icône Cheeesy : la borne

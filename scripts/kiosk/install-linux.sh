@@ -6,7 +6,7 @@
 #   scripts/kiosk/install-linux.sh --electron         app Electron du dépôt (npm run app)
 #   scripts/kiosk/install-linux.sh --exec CHEMIN      autre exécutable, ex. l'AppImage construite
 #   scripts/kiosk/install-linux.sh --no-autostart     sans lancement automatique
-#   scripts/kiosk/install-linux.sh --no-sleep         écran jamais éteint ni verrouillé, pas de vue Activités au démarrage (borne dédiée)
+#   scripts/kiosk/install-linux.sh --no-sleep         écran jamais éteint ni verrouillé, pas de vue Activités ni de gestes GNOME (borne dédiée)
 #   scripts/kiosk/install-linux.sh --uninstall        retire icônes et lancement automatique
 set -eu
 
@@ -35,6 +35,12 @@ EXT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/$EXT_UUID"
 if [ $UNINSTALL -eq 1 ]; then
   rm -f "${FILES[@]}"
   rm -rf "$EXT_DIR"
+  if command -v gsettings >/dev/null; then # réglages de borne dédiée (--no-sleep) rendus au bureau
+    gsettings reset org.gnome.desktop.interface enable-hot-corners
+    gsettings reset org.gnome.mutter overlay-key
+    for k in toggle-overview toggle-application-view toggle-message-tray toggle-quick-settings; do gsettings reset org.gnome.shell.keybindings "$k" 2>/dev/null || true; done
+    gsettings reset org.gnome.desktop.notifications show-banners
+  fi
   echo "Icônes et lancement automatique retirés."
   exit 0
 fi
@@ -105,7 +111,15 @@ if [ $NOSLEEP -eq 1 ] && command -v gsettings >/dev/null; then
   cp "$DIR/scripts/kiosk/gnome/$EXT_UUID/"* "$EXT_DIR/"
   gnome_list_add org.gnome.shell enabled-extensions "$EXT_UUID"
   gsettings set org.gnome.shell disable-user-extensions false
-  echo "Vue Activités sautée à l'ouverture de session (effet à la prochaine connexion)."
+  # Sorties de la borne vers le bureau coupées : coin actif, touche Super (⌘ dans une VM), raccourcis de la vue
+  # Activités, bannières de notification par-dessus la borne. Alt+Tab et Ctrl+Maj+Q restent à l'opérateur.
+  gsettings set org.gnome.desktop.interface enable-hot-corners false
+  gsettings set org.gnome.mutter overlay-key ''
+  for k in toggle-overview toggle-application-view toggle-message-tray toggle-quick-settings; do
+    gsettings set org.gnome.shell.keybindings "$k" "[]" 2>/dev/null || true
+  done
+  gsettings set org.gnome.desktop.notifications show-banners false
+  echo "Vue Activités sautée à l'ouverture de session, gestes et raccourcis de GNOME coupés (effet à la prochaine connexion)."
 fi
 
 echo "Installé : $EXEC"

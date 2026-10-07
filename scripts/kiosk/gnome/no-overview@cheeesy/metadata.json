@@ -1,6 +1,13 @@
 {
   "uuid": "no-overview@cheeesy",
-  "name": "Cheeesy : pas de vue Activités au démarrage",
-  "description": "Borne dédiée : la session s'ouvre sur le bureau, pas sur la vue Activités, pour que la borne passe en plein écran tout de suite.",
-  "shell-version": ["45", "46", "47", "48", "49", "50"]
+  "name": "Cheeesy : borne dédiée",
+  "description": "Borne dédiée : pas de vue Activités à l'ouverture de session, et gestes tactiles de GNOME coupés, pour qu'un invité ne sorte pas de la borne.",
+  "shell-version": [
+    "45",
+    "46",
+    "47",
+    "48",
+    "49",
+    "50"
+  ]
 }
