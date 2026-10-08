@@ -7,9 +7,8 @@ data/uploads/*
 .DS_Store
 # Réglages locaux : codes PIN admin et opérateur (recréés avec les valeurs par défaut au premier démarrage)
 data/config.json
-# Templates propres à un événement (le template « default » reste versionné)
+# Templates : créés à la borne (« Photo seule » au premier lancement, server/templates.js)
 data/templates/*
-!data/templates/default/
 dist/
 # Modèles d'IA téléchargés (npm run models ou admin), trop lourds pour git
 data/models/

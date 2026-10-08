@@ -220,6 +220,16 @@ export class Templates {
     this.dir = dir;
     this.items = new Map();
     this.reload();
+    if (!this.items.size) this.seed();
+  }
+
+  /** Premier lancement (aucun template) : « Photo seule », la photo en plein cadre. Créé ici, pas suivi par git :
+   * le modifier dans l'admin ne bloque pas les mises à jour. */
+  seed() {
+    const f = FORMATS[DEFAULT_FORMAT];
+    const layers = [{ type: 'photo', shot: 0, name: 'Photo 1', x: 0, y: 0, width: f.width, height: f.height, radius: 0 }];
+    this.write(normalize({ id: 'default', name: 'Photo seule', kind: 'photo', gif: GIF_DEFAULTS, boomerang: BOOMERANG_DEFAULTS, format: DEFAULT_FORMAT, width: f.width, height: f.height, background: '#ffffff', layers }, path.join(this.dir, 'default')));
+    this.reload();
   }
 
   reload() {
