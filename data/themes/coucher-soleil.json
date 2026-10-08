@@ -1,0 +1,19 @@
+{
+  "id": "coucher-soleil",
+  "name": "Coucher de soleil",
+  "order": 21,
+  "colors": {
+    "primary": "#e8590c",
+    "secondary": "#c2255c",
+    "background": "#fff4e6",
+    "surface": "#ffffff",
+    "text": "#3b1f2b",
+    "onPrimary": "#ffffff"
+  },
+  "font": "rounded",
+  "pattern": {
+    "id": "ripples",
+    "color": "primary",
+    "opacity": 0.07
+  }
+}
