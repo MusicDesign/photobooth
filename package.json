@@ -1,13 +1,13 @@
 {
   "name": "photo-booth",
   "productName": "Cheeesy",
-  "version": "0.8.11",
+  "version": "0.8.12",
   "description": "Photo booth tactile pour PC Linux : Canon EOS via gphoto2, impression CUPS, templates et thèmes personnalisables.",
   "type": "module",
   "main": "electron/main.js",
   "private": true,
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   },
   "scripts": {
     "start": "node server/index.js",
@@ -20,7 +20,8 @@
     "bench": "node scripts/bench.js",
     "remote": "node scripts/build-remote.js",
     "app": "env -u ELECTRON_RUN_AS_NODE electron .",
-    "app:build": "electron-builder"
+    "app:build": "electron-builder",
+    "postinstall": "install-electron"
   },
   "dependencies": {
     "@elgato-stream-deck/node": "^7.7.0",

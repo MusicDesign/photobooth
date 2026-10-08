@@ -72,6 +72,11 @@ const PKGS = { // paquet(s) par gestionnaire
   chromium: { apt: isUbuntu() ? 'chromium-browser' : 'chromium chromium-l10n', dnf: 'chromium', pacman: 'chromium' }
 };
 export const installCommand = (pm, pkgs) => ({ brew: `brew install ${pkgs}`, apt: `sudo apt-get install -y ${pkgs}`, dnf: `sudo dnf install -y ${pkgs}`, pacman: `sudo pacman -S --noconfirm --needed ${pkgs}`, winget: `winget install ${pkgs}` })[pm] || null;
+/** Binaire Electron téléchargé ? Depuis Electron 44.7, npm install ne le fait plus seul (postinstall du projet). */
+export function electronBinary() {
+  const dir = path.join(ROOT, 'node_modules', 'electron');
+  try { return fs.existsSync(path.join(dir, 'dist', fs.readFileSync(path.join(dir, 'path.txt'), 'utf8'))); } catch { return false; }
+}
 const DEPS = ['express', 'ws', 'sharp', 'onnxruntime-node', 'qrcode', 'archiver', 'multer', 'ffmpeg-static', '@elgato-stream-deck/node', '@mediapipe/tasks-vision'];
 
 /**
@@ -91,11 +96,12 @@ export function checkInstall() {
       pkg: p ? null : names, auto: !p && !!names && pm === 'brew' });
   };
 
-  const major = Number(process.versions.node.split('.')[0]);
-  add({ id: 'node', label: 'Node.js', required: true, state: major >= 20 ? 'ok' : 'missing', detail: `v${process.versions.node}`, fix: major >= 20 ? null : 'installer Node.js 20 ou plus (nodejs.org)' });
+  const [major, minor] = process.versions.node.split('.').map(Number);
+  const nodeOk = major > 22 || (major === 22 && minor >= 12); // binaire Electron téléchargé par npm install
+  add({ id: 'node', label: 'Node.js', required: true, state: nodeOk ? 'ok' : 'missing', detail: `v${process.versions.node}`, fix: nodeOk ? null : 'installer Node.js 22.12 ou plus (nodejs.org)' });
   const missingDeps = DEPS.filter((d) => !resolvable(d));
   add({ id: 'deps', label: 'Dépendances npm', required: true, state: missingDeps.length ? 'missing' : 'ok', detail: missingDeps.length ? `manquantes : ${missingDeps.join(', ')}` : `${DEPS.length} paquets présents`, fix: missingDeps.length ? 'npm install' : null });
-  const electron = fs.existsSync(path.join(ROOT, 'node_modules', 'electron', 'dist'));
+  const electron = electronBinary();
   add({ id: 'electron', label: 'App de bureau (Electron)', state: electron ? 'ok' : 'missing', detail: electron ? 'présente' : 'absente : la borne s\'ouvre dans un navigateur', fix: electron ? null : 'npm install' });
   if (WIN) add({ id: 'gphoto2', label: 'Boîtier Canon (gphoto2)', state: 'missing', detail: 'pas de gphoto2 sous Windows : webcam du navigateur seulement' });
   else tool('gphoto2', 'Boîtier Canon (gphoto2)', 'gphoto2', { required: true, missing: 'absent : webcam seulement', args: ['--version'] });

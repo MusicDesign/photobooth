@@ -9,7 +9,7 @@
 #   scripts/install.sh --step=node|deps|modules   une seule étape, sans lancement (utilisé par l'icône Cheeesy.app)
 # Systèmes : macOS (Homebrew installé au besoin), Linux Debian/Ubuntu (apt), Fedora (dnf), Arch (pacman), le mot de
 # passe sudo étant demandé pour les paquets ; Windows via Git Bash délègue à scripts/install.ps1.
-# Le script fait lui-même le gestionnaire de paquets, Node.js 20+ et npm install (binaire Electron compris) ; le
+# Le script fait lui-même le gestionnaire de paquets, Node.js 22.12+ et npm install (binaire Electron compris) ; le
 # reste (gphoto2, CUPS, ddcutil ou m1ddc, NetworkManager, Chromium, modèle IA, cadres de démo) passe par
 # `npm run setup`, qui n'installe que ce qui manque. Relançable à volonté : ce qui est déjà là est sauté.
 set -euo pipefail
@@ -50,11 +50,11 @@ case "$OS" in
   *) echo "Système non géré : $OS"; exit 1 ;;
 esac
 
-# 2. Node.js 20 ou plus
-node_major() { node -v 2>/dev/null | sed 's/^v//' | cut -d. -f1; }
+# 2. Node.js 22.12 ou plus (le binaire Electron se télécharge avec, depuis Electron 44.7)
+node_ok() { have node && node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 12) ? 0 : 1)'; }
 if want node; then
-  if ! have node || [ "$(node_major)" -lt 20 ]; then
-    if [ "$CHECK" = 1 ]; then echo "✗ Node.js 20 ou plus absent"; exit 1; fi
+  if ! node_ok; then
+    if [ "$CHECK" = 1 ]; then echo "✗ Node.js 22.12 ou plus absent"; exit 1; fi
     say "Node.js"
     case "$PM" in
       brew) brew install node ;;
@@ -63,10 +63,10 @@ if want node; then
         curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs ;;
       dnf) sudo dnf install -y nodejs npm ;;
       pacman) sudo pacman -S --noconfirm --needed nodejs npm ;;
-      *) echo "Node.js 20 ou plus requis (nodejs.org)"; exit 1 ;;
+      *) echo "Node.js 22.12 ou plus requis (nodejs.org)"; exit 1 ;;
     esac
     # Une commande en échec dans « a && b » n'arrête pas le script (set -e) : on vérifie le résultat.
-    { have node && [ "$(node_major)" -ge 20 ]; } || { echo "Node.js n'a pas pu être installé (réseau ?). Relancez ce script."; exit 1; }
+    node_ok || { echo "Node.js n'a pas pu être installé (réseau ?). Relancez ce script."; exit 1; }
   fi
   echo "Node.js $(node -v) · npm $(npm -v)"
 fi

@@ -14,8 +14,8 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = new Set(process.argv.slice(2));
-const major = Number(process.versions.node.split('.')[0]);
-if (major < 20) { console.error(`Node.js ${process.versions.node} : il faut la version 20 ou plus (nodejs.org).`); process.exit(1); }
+const [major, minor] = process.versions.node.split('.').map(Number);
+if (major < 22 || (major === 22 && minor < 12)) { console.error(`Node.js ${process.versions.node} : il faut la version 22.12 ou plus (nodejs.org).`); process.exit(1); }
 
 // Dépendances npm d'abord : sans elles, rien d'autre ne se charge
 const depsOk = ['express', 'sharp', 'onnxruntime-node'].every((d) => fs.existsSync(path.join(root, 'node_modules', d)));
