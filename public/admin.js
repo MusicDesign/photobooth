@@ -476,19 +476,29 @@ const HW_ICONS = {
   usb: '<path d="M9 3h6v6H9z"/><path d="M7 9h10v9a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3z"/><path d="M11 5h.01M13 5h.01"/>',
   disk: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 14h18M7 16.5h.01M11 16.5h.01"/>'
 };
+const go = (n) => `${(n / 1e9).toFixed(n < 10e9 ? 1 : 0).replace('.', ',')} Go`;
+/** Barre de remplissage (couleur de l'état : ok, warn, err). */
+const hwBar = (part, whole, state) => `<span class="hw-bar ${state}"><span style="width:${Math.min(100, Math.max(0, whole ? (part / whole) * 100 : 0)).toFixed(1)}%"></span></span>`;
+/** Place disque : utilisé sur le total, barre de remplissage, place libre. */
+const usage = (free, total, state) => (total ? { status: `${go(total - free)} utilisés sur ${go(total)}`, detail: `${hwBar(total - free, total, state)}${gb(free)}` } : { status: gb(free), detail: '' });
+
 /** Place libre pour les photos : alerte sous 5 Go, erreur sous 1 Go. */
 function diskRow() {
   const d = S.disk;
   if (!d) return '';
   const state = d.free < 1e9 ? 'err' : d.low ? 'warn' : 'ok';
-  return hwRow('disk', 'Stockage', state, gb(d.free), `${Math.round(d.total / 1e9)} Go au total`, '#events');
+  const u = usage(d.free, d.total, state);
+  return hwRow('disk', 'Stockage', state, u.status, u.detail, '#events');
 }
 /** Clé USB au tableau de bord : seulement quand une clé est branchée ou qu'une copie tourne. */
 function usbRow() {
   const u = S.usb;
   if (!u?.available || (!u.volume && !u.exporting)) return '';
   const x = u.exporting;
-  return hwRow('usb', 'Clé USB', x ? 'warn' : u.error ? 'err' : 'ok', x ? `copie ${x.done} / ${x.total}` : `${esc(u.volume.name)} · ${gb(u.volume.free)}`, x ? esc(x.eventName) : u.error ? `<b class="hw-err">${esc(u.error)}</b>` : '', '#events');
+  if (x) return hwRow('usb', 'Clé USB', 'warn', `copie ${x.done} / ${x.total}`, `${hwBar(x.done, x.total, 'ok')}${esc(x.eventName)}`, '#events');
+  const v = u.volume;
+  const full = v.total ? usage(v.free, v.total, v.free < 0.1 * v.total ? 'warn' : 'ok') : { status: gb(v.free), detail: '' };
+  return hwRow('usb', 'Clé USB', u.error ? 'err' : 'ok', `${esc(v.name)} · ${full.status}`, u.error ? `<b class="hw-err">${esc(u.error)}</b>` : full.detail, '#events');
 }
 
 /** Une ligne d'appareil : icône, pastille d'état (ok, warn, err, off), nom, état, détail, lien vers ses réglages. */

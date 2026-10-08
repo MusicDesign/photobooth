@@ -58,7 +58,7 @@ export class Usb extends EventEmitter {
 
   cfg() { return this.config.get().usb || {}; }
 
-  /** Volumes amovibles montés et accessibles en écriture : { path, name, free }. */
+  /** Volumes amovibles montés et accessibles en écriture : { path, name, free, total }. */
   volumes() {
     if (this.driverName === 'off') return [];
     const dirs = [];
@@ -84,9 +84,9 @@ export class Usb extends EventEmitter {
     const out = [];
     for (const p of dirs) {
       try { fs.accessSync(p, fs.constants.W_OK); } catch { continue; } // lecture seule : pas pour nous
-      let free = null;
-      try { const st = fs.statfsSync(p); free = Number(st.bavail) * Number(st.bsize); } catch { /* inconnu */ }
-      out.push({ path: p, name: path.basename(p), free });
+      let free = null, total = null;
+      try { const st = fs.statfsSync(p); free = Number(st.bavail) * Number(st.bsize); total = Number(st.blocks) * Number(st.bsize); } catch { /* inconnu */ }
+      out.push({ path: p, name: path.basename(p), free, total });
     }
     return out;
   }
@@ -116,7 +116,7 @@ export class Usb extends EventEmitter {
       this.emit('change');
       if (cur && this.cfg().autoExport !== false && this.store.data.activeEventId) this.export(this.store.data.activeEventId).catch(() => {});
     } else if (cur) {
-      this.state.volume = { ...this.state.volume, free: cur.free };
+      this.state.volume = { ...this.state.volume, free: cur.free, total: cur.total };
     }
   }
 

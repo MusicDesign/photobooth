@@ -376,6 +376,10 @@ label.ctl-mode small { margin: 0 !important; color: var(--muted); }
 .hw-head b { font-size: 15px; }
 .hw-status { font-size: 14px; color: var(--text); }
 .hw-detail { font-size: 13px; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; }
+.hw-bar { display: block; height: 8px; border-radius: 999px; background: #e5e7eb; overflow: hidden; margin: 4px 0 6px; }
+.hw-bar span { display: block; height: 100%; border-radius: inherit; background: var(--ok); }
+.hw-bar.warn span { background: var(--warn); }
+.hw-bar.err span { background: var(--err); }
 .hw-err { color: var(--err); font-weight: 600; }
 .hw-go { color: #b6bcc6; font-size: 15px; line-height: 1; align-self: center; }
 .hw-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: #c3c8d0; }
