@@ -217,6 +217,15 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   // Mise à jour depuis l'admin (dépôt git) : version en cours lue au démarrage
   const updater = new Updater({ setup, restart, busy: () => booth.printing() });
   updater.version().catch(() => {});
+  // Au lancement : mise à jour en attente sur origin → notification sur tous les écrans (admin, borne), y compris
+  // ceux qui se connectent ensuite. Hors ligne, la vérification échoue sans bruit.
+  let updateNotice = null;
+  setTimeout(() => updater.check().then((u) => {
+    if (!u.behind || stopping) return;
+    updateNotice = { type: 'update', version: u.remoteVersion };
+    broadcast(updateNotice);
+  }).catch(() => {}), 5000);
+  wss.on('connection', (ws) => { if (updateNotice && !updater.status().updating) ws.send(JSON.stringify(updateNotice)); });
 
   app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, lights, screen, setup, updater, usb, shutdown, restart, powerOff, reboot, canMachine: (verb) => machineOk[verb], kioskScreen, remoteScreen }));
   // Écran déporté (iPad…) : l'écran de la borne et son toucher, avec le code admin (voir electron/remote-screen.js)

@@ -2,7 +2,7 @@
 import { renderTemplate, loadAssets } from './template-render.js';
 import { createCutter, preloadAi } from './cutout-live.js';
 import { FILTERS } from './filters.js';
-import { deviceNotice } from './device-toasts.js';
+import { deviceNotice, updateNotice } from './device-toasts.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -1693,6 +1693,7 @@ function connectWs() {
     try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'deck') { onDeckPress(msg.id); return; }
     if (msg.type === 'device') { deviceNotice(msg); return; }
+    if (msg.type === 'update') { updateNotice(msg); return; }
     if (msg.type === 'sessions' && state.screen === 'idle') renderIdleGallery(); // photo supprimée depuis l'admin
     if (msg.type === 'flashStray') { if (state.boot) { state.boot.camera.flashStray = msg.stray; $('#flashBadge').classList.toggle('hidden', !msg.stray); } return; }
     if (msg.type === 'deckInfo') { // Stream Deck branché ou débranché : la galerie se met à sa taille
