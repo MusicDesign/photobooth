@@ -233,7 +233,7 @@ function updateCard() {
     <div class="inst-head">
       <div>
         <div class="inst-kicker">Version</div>
-        <div class="inst-version">${esc(version)} ${badge}</div>
+        <div class="inst-version">${esc(version)} ${/^0\./.test(u.version || '') ? '<span class="badge">Bêta</span> ' : ''}${badge}</div>
         ${u.available ? `<div class="cell-sub">${when(u.date)} · <code>${esc(u.commit || '?')}</code>${u.branch && u.branch !== 'main' ? ` · branche ${esc(u.branch)}` : ''}${u.checkedAt ? ` · vérifié ${when(u.checkedAt)}` : ''}</div>` : ''}
       </div>
       ${u.available ? `<div class="cell-actions">

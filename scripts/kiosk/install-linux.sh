@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Installe la borne pour l'utilisateur courant (Fedora / Ubuntu, bureau GNOME) :
-# icône « Cheeesy » sur le bureau et dans les applications, lancement automatique à l'ouverture de session.
+# icône « Cheeesy » sur le bureau et dans les applications, lancement automatique à l'ouverture de session,
+# Terminal sur le bureau (mises à jour et dépannage de la borne).
 #
 #   scripts/kiosk/install-linux.sh                    lanceur script + Chromium (par défaut)
 #   scripts/kiosk/install-linux.sh --electron         app Electron du dépôt (npm run app)
@@ -28,7 +29,7 @@ done
 APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 AUTO="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
 DESK="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
-FILES=("$APPS/photobooth.desktop" "$AUTO/photobooth.desktop" "$DESK/photobooth.desktop")
+FILES=("$APPS/photobooth.desktop" "$AUTO/photobooth.desktop" "$DESK/photobooth.desktop" "$DESK/terminal.desktop")
 EXT_UUID="no-overview@cheeesy"
 EXT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/$EXT_UUID"
 
@@ -68,6 +69,15 @@ entry >"$DESK/photobooth.desktop"
 chmod +x "$DESK/photobooth.desktop"
 # GNOME n'exécute une icône du bureau que si elle est marquée « de confiance ».
 gio set "$DESK/photobooth.desktop" metadata::trusted true 2>/dev/null || true
+
+# Terminal sur le bureau : copie du lanceur du système (GNOME Console sur un GNOME récent, sinon GNOME Terminal…).
+for t in org.gnome.Console org.gnome.Terminal org.kde.konsole xfce4-terminal; do
+  [ -f "/usr/share/applications/$t.desktop" ] || continue
+  cp "/usr/share/applications/$t.desktop" "$DESK/terminal.desktop"
+  chmod +x "$DESK/terminal.desktop"
+  gio set "$DESK/terminal.desktop" metadata::trusted true 2>/dev/null || true
+  break
+done
 
 if [ $AUTOSTART -eq 1 ]; then
   mkdir -p "$AUTO"
@@ -124,6 +134,7 @@ fi
 
 echo "Installé : $EXEC"
 echo "  icône bureau     : $DESK/photobooth.desktop"
+[ -f "$DESK/terminal.desktop" ] && echo "  terminal bureau  : $DESK/terminal.desktop"
 echo "  applications     : $APPS/photobooth.desktop"
 [ $AUTOSTART -eq 1 ] && echo "  démarrage auto   : $AUTO/photobooth.desktop"
 echo

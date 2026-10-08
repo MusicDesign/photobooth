@@ -126,13 +126,15 @@ if [ "$KIOSK" = 1 ]; then
         if [ -x /usr/sbin/update-grub ]; then GRUB_MK=(/usr/sbin/update-grub)
         elif [ -x /usr/sbin/grub2-mkconfig ]; then GRUB_MK=(/usr/sbin/grub2-mkconfig -o "$GRUB_CFG")
         else GRUB_MK=(); fi
-        if [ ${#GRUB_MK[@]} = 0 ]; then echo "Menu de démarrage : update-grub introuvable, réglage non appliqué"
+        if [ ${#GRUB_MK[@]} = 0 ]; then echo "Menu de démarrage : update-grub introuvable, réglage non appliqué"; KIOSK_FAILED=1
         elif GRUB_ERR="$(sudo "${GRUB_MK[@]}" 2>&1 >/dev/null)"; then echo "Menu de démarrage masqué (Échap ou Maj au démarrage pour l'afficher)"
-        else echo "Menu de démarrage : échec de ${GRUB_MK[0]##*/}"; echo "$GRUB_ERR" | tail -5; fi
+        else echo "Menu de démarrage : échec de ${GRUB_MK[0]##*/}"; echo "$GRUB_ERR" | tail -5; KIOSK_FAILED=1; fi
       fi
     fi
     # Version des réglages système appliqués : l'admin (page Installation) demande de relancer ce script quand une
     # mise à jour en apporte de nouveaux (server/setup.js, scripts/kiosk/SETUP_VERSION).
+    # Seulement si tout est passé : sinon l'admin continue de demander de relancer ce script.
+    if [ "${KIOSK_FAILED:-0}" = 1 ]; then echo; echo "Réglages système incomplets : relancez scripts/install.sh --kiosk (mot de passe demandé)."; exit 1; fi
     mkdir -p "$HOME/.config/photobooth" && cp scripts/kiosk/SETUP_VERSION "$HOME/.config/photobooth/kiosk-setup-version"
     echo
     echo "Redémarrez le PC pour terminer : connexion automatique, icône Cheeesy sur le bureau, borne en plein écran."
