@@ -252,6 +252,7 @@ body[data-screen="idle"] .toast { bottom: calc(3vh + clamp(64px, 9vmin, 120px) +
 .gal-lbl { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.15; }
 .gal-lbl b { color: var(--secondary); font-size: calc(26 * var(--u)); font-weight: 800; }
 .gal-lbl span { color: var(--text); font-size: calc(17 * var(--u)); font-weight: 800; }
+.gal-lbl span i { font-size: 0.75em; }
 .gallery-grid {
   flex: 1 1 auto; min-height: 0; width: 100%; max-width: 1400px; overflow-y: auto; overscroll-behavior: contain;
   display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-content: start; align-items: start; justify-items: center; gap: 28px;

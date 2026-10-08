@@ -8,6 +8,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Borne">
 <title>Écran de la borne</title>
+<link rel="stylesheet" href="/fonts/font-awesome/css/fontawesome.min.css">
+<link rel="stylesheet" href="/fonts/font-awesome/css/solid.min.css">
 <style>
   /* Écrit pour les vieux navigateurs (Safari d'iOS 9) : pas de variables CSS, de grille ni de flex récent */
   html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #fff; overflow: hidden;
@@ -38,7 +40,7 @@
       <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
       <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
       <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
-      <button data-k="del" class="alt">⌫</button><button data-k="0">0</button><button data-k="ok" class="ok">OK</button>
+      <button data-k="del" class="alt" aria-label="Effacer"><i class="fa-solid fa-delete-left" aria-hidden="true"></i></button><button data-k="0">0</button><button data-k="ok" class="ok">OK</button>
     </div>
   </div>
 

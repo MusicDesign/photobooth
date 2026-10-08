@@ -155,7 +155,7 @@ async function renderIdleGallery() {
   const stack = btn.querySelector('.gal-stack');
   stack.style.setProperty('--n', latest.length);
   stack.innerHTML = latest.map((it) => `<img src="${it.thumbUrl}" alt="" decoding="async">`).join('');
-  $('#galleryCount').textContent = `${items.length} photo${items.length > 1 ? 's' : ''} ›`;
+  $('#galleryCount').innerHTML = `${items.length} photo${items.length > 1 ? 's' : ''} <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>`;
   delete btn.dataset.deckThumb;
 }
 
@@ -1215,7 +1215,7 @@ function askPin(title) {
     $('#pinTitle').textContent = title;
     const render = () => { display.textContent = '•'.repeat(value.length) || ' '; };
     const onKey = (ev) => {
-      const k = ev.target.dataset.k;
+      const k = ev.target.closest('[data-k]')?.dataset.k; // le clic peut tomber sur l'icône de ⌫
       if (!k) return;
       if (k === 'del') value = value.slice(0, -1);
       else if (k === 'ok') return finish(value);
