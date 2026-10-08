@@ -223,13 +223,25 @@ function installSection() {
   <h2>Installation</h2>
   <p class="sub">${esc(os)}${pm ? ` · ${esc(pm)}` : ''}</p>
   ${updateCard()}
-  ${setupCard()}
-  <div class="card">
-    <div class="inst-head">
-      <div><div class="inst-kicker">Journal</div></div>
-      <div class="cell-actions"><a class="btn small" href="#logs">Journal en direct</a><a class="btn small" href="/api/admin/logs" download>Télécharger le journal</a></div>
-    </div>
-  </div>`;
+  ${setupCard()}`;
+}
+
+/** Mise à jour en attente sur GitHub : pastille sur « Installation » dans le menu, bandeau du tableau de bord. */
+const updatePending = () => !!(S?.update?.available && S.update.behind && !S.update.updating && !S.update.needRestart);
+const pendingVersion = () => (S.update.remoteVersion && S.update.remoteVersion !== S.update.version ? S.update.remoteVersion : '');
+function syncUpdateNav() {
+  const a = document.querySelector('#nav a[href="#install"]');
+  let b = a?.querySelector('.nav-badge');
+  if (!updatePending()) { b?.remove(); return; }
+  if (!b) { b = document.createElement('span'); b.className = 'nav-badge'; a.append(b); }
+  b.textContent = pendingVersion() || 'MAJ';
+}
+
+async function installUpdate() {
+  if (!await askConfirm(`Mettre à jour la borne ?\n\n${S.update?.canRestart ? 'Elle redémarre toute seule à la fin.' : 'Elle devra ensuite redémarrer.'}`, 'Mettre à jour', 'retake')) return;
+  try { S.update = (await api('/api/admin/update/install', { method: 'POST' })).update; } catch (err) { toast(err.message, true); return; }
+  if (currentSection() === 'install') render(); else location.hash = 'install'; // progression sur la page Installation
+  pollUpdate();
 }
 
 /** Version en cours et mise à jour depuis GitHub (dépôt git). */
@@ -279,7 +291,7 @@ function pollUpdate() {
     // Serveur injoignable en pleine mise à jour : il est en train de se relancer.
     try { S.update = (await api('/api/admin/update')).update; } catch { if (S.update?.updating || S.update?.restarting) waitRelaunch(); return; }
     if (S.update?.restarting) return waitRelaunch();
-    if (currentSection() === 'install') render();
+    if (currentSection() === 'install') render(); else syncUpdateNav();
     if (S.update?.updating) pollUpdate();
   }, 1500);
 }
@@ -549,6 +561,7 @@ function dashboard() {
   return `
   <h2>Tableau de bord</h2>
   ${(S.dataWarnings || []).map((w) => `<div class="alert">${esc(w)}</div>`).join('')}
+  ${updatePending() ? `<div class="update-banner"><span><b>Mise à jour disponible</b>${pendingVersion() ? ` · ${esc(pendingVersion())}` : ''}</span><button class="btn small primary" id="btnDashUpdate">Mettre à jour</button></div>` : ''}
   <p class="sub">Événement en cours : <b>${esc(c.eventName)}</b> · <a href="#events">changer ou en créer un</a></p>
   <div class="grid stats4">
     ${stat(c.printed, 'tirages imprimés')}
@@ -2889,6 +2902,7 @@ function setNavOpen(open) {
 function render() {
   if (!S) return; // pas encore connecté
   syncFavicon();
+  syncUpdateNav();
   const sec = currentSection();
   if (prevSection === 'editor' && sec !== 'editor') unbindEditor();
   if (sec !== 'logs') closeLogStream(); // journal en direct : connexion fermée en quittant la page
@@ -2985,6 +2999,7 @@ async function renderTemplateCards() {
 function bindSection(sec) {
   if (sec === 'logs') return bindLogs();
   if (sec === 'dashboard') {
+    $('#btnDashUpdate')?.addEventListener('click', installUpdate);
     $('#btnPaper').onclick = async () => {
       const v = $('#paperInput').value;
       await api('/api/admin/counters', { method: 'POST', body: { paperRemaining: v === '' ? null : Number(v) } });
@@ -3007,10 +3022,7 @@ function bindSection(sec) {
     };
     if (S.update?.available && !S.update.checkedAt && !check.done) { check.done = true; check(); } // une fois en arrivant sur la page
     $('#btnUpdateCheck')?.addEventListener('click', (e) => check(e.currentTarget));
-    $('#btnUpdateInstall')?.addEventListener('click', async () => {
-      if (!await askConfirm(`Mettre à jour la borne ?\n\n${S.update?.canRestart ? 'Elle redémarre toute seule à la fin.' : 'Elle devra ensuite redémarrer.'}`, 'Mettre à jour', 'retake')) return;
-      try { S.update = (await api('/api/admin/update/install', { method: 'POST' })).update; render(); pollUpdate(); } catch (err) { toast(err.message, true); }
-    });
+    $('#btnUpdateInstall')?.addEventListener('click', installUpdate);
     $('#btnUpdateRestart')?.addEventListener('click', () => $('#btnRestart')?.click());
     if (S.update?.updating) pollUpdate();
     // Revérifier, installer ce qui manque (suivi tant que ça tourne)
@@ -3523,7 +3535,11 @@ function scheduleRefresh() {
     try { msg = JSON.parse(ev.data); } catch { /* ignoré */ }
     if (msg?.type === 'deck') return onDeckPress(msg.id);
     if (msg?.type === 'deckInfo') return;
-    if (msg?.type === 'update') return updateNotice(msg, () => { location.hash = 'install'; }); // page Installation, après le code si déconnecté
+    if (msg?.type === 'update') {
+      updateNotice(msg, () => { location.hash = 'install'; }); // page Installation, après le code si déconnecté
+      if (S) api('/api/admin/update').then((r) => { S.update = r.update; if (currentSection() === 'dashboard') render(); else syncUpdateNav(); }).catch(() => {});
+      return;
+    }
     if (msg?.type === 'device') { deviceNotice(msg); if (S && currentSection() !== 'editor') scheduleRefresh(); return; } // la page affichée suit l'état annoncé (lumières, boîtier, Wi-Fi…)
     if (msg?.type === 'config') refreshDevices(); // pilote de caméra changé (boîtier branché / débranché), entre autres
     if (S && ['dashboard', 'sessions', 'events'].includes(currentSection())) scheduleRefresh();

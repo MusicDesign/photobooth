@@ -9,6 +9,7 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ro
 .nav-title { font-weight: 800; font-size: 20px; padding: 0 22px 18px; }
 .nav a { color: #fff; text-decoration: none; padding: 12px 22px; opacity: 0.8; }
 .nav a.active, .nav a:hover { opacity: 1; background: rgba(255,255,255,0.1); }
+.nav-badge { margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: #4c8dff; color: #fff; font-size: 11px; font-weight: 700; vertical-align: 1px; }
 .nav-group { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.55; padding: 18px 22px 6px; }
 .nav-foot { margin-top: auto; padding: 18px 22px; display: flex; flex-direction: column; gap: 10px; }
 .main { padding: 28px 36px; } /* toute la largeur disponible, quel que soit l'écran */
@@ -52,6 +53,7 @@ textarea { min-height: 90px; font-family: ui-monospace, SFMono-Regular, Menlo, m
 .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: #e5e7eb; }
 .badge.ok { background: #d9f2ee; color: var(--ok); } .badge.warn { background: #fcefd6; color: #9a6700; } .badge.err { background: #fde2e2; color: var(--err); }
 .alert { background: #fff7e6; border: 1px solid #f5d38a; color: #7a4d00; padding: 12px 16px; border-radius: 12px; margin-bottom: 18px; }
+.update-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; background: #e8f0ff; border: 1px solid #b9cffc; color: #1d3f8a; padding: 10px 16px; border-radius: 12px; margin-bottom: 18px; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #eceff3; vertical-align: middle; }
 th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
