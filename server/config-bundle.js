@@ -5,6 +5,7 @@ import AdmZip from 'adm-zip';
 import { UPLOADS_DIR } from './paths.js';
 import { validateConfigPatch } from './config-validate.js';
 import { clone, HttpError, isPlainObject } from './util.js';
+import { slugify } from './templates.js';
 
 /**
  * Export et import de la configuration de la borne : un fichier .zip avec
@@ -92,7 +93,13 @@ export function buildBundle({ config, templates, parts = {}, secrets = false, bo
       if (fs.existsSync(file)) zip.file(file, { name: `uploads/${f}` });
     }
   }
-  if (parts.templates) for (const id of templateDirs(templates.dir).filter((id) => !templateIds || templateIds.includes(id))) zip.directory(path.join(templates.dir, id), `templates/${id}`);
+  // Sans les miniatures (preview-*.jpg, preview.json) : recalculées à l'import, et réécrites en tâche de fond juste
+  // après une modification (un fichier qui disparaît pendant l'archivage ferait échouer tout l'export)
+  if (parts.templates) {
+    for (const id of templateDirs(templates.dir).filter((id) => !templateIds || templateIds.includes(id))) {
+      zip.glob('**/*', { cwd: path.join(templates.dir, id), ignore: ['preview-*.jpg', 'preview.json'], nodir: true }, { prefix: `templates/${id}` });
+    }
+  }
   return zip;
 }
 
@@ -147,13 +154,14 @@ export function readBundle(buffer) {
 /** Ce que contient le fichier, pour que l'admin choisisse quoi appliquer. */
 export function describeBundle(bundle, { templates }) {
   const haveTemplates = new Set(templates.all().map((t) => t.id));
+  const haveNames = new Set(templates.all().map((t) => t.name.toLowerCase()));
   return {
     boothName: bundle.manifest.boothName || '',
     exportedAt: bundle.manifest.exportedAt || null,
     appVersion: bundle.manifest.appVersion || '',
     secrets: !!bundle.manifest.secrets,
     sections: Object.entries(SECTION_LABELS).filter(([k]) => bundle.settings?.[k] && Object.keys(bundle.settings[k]).length).map(([key, label]) => ({ key, label })),
-    templates: [...bundle.templates].map(([id, t]) => ({ id, name: t.name, exists: haveTemplates.has(id) }))
+    templates: [...bundle.templates].map(([id, t]) => ({ id, name: t.name, exists: haveTemplates.has(id), sameName: haveNames.has(String(t.name).toLowerCase()) }))
   };
 }
 
@@ -190,12 +198,33 @@ function extract(entry, dir, rel) {
  */
 export function applyBundle(bundle, sel, { config, templates }) {
   const done = { sections: 0, templates: 0 };
+  // Import depuis la page Templates, template déjà présent (même identifiant ou même nom) :
+  //   sel.mode = 'copy'    : rien n'est remplacé, « Nom (1) », « Nom (2) »…, identifiant neuf si le sien est pris
+  //   sel.mode = 'replace' : écrase le template présent (celui du même identifiant, sinon celui du même nom)
+  // Sans mode (page Sauvegarde) : remplacé par identifiant, comme une restauration.
+  const present = templates.all();
+  const names = new Set(present.map((x) => x.name.toLowerCase()));
+  const ids = new Set(fs.existsSync(templates.dir) ? fs.readdirSync(templates.dir) : []);
   for (const id of sel.templates || []) {
     const t = bundle.templates.get(id);
     if (!t || !/^[A-Za-z0-9][\w.-]*$/.test(id)) continue;
-    const dir = path.join(templates.dir, id);
+    let destId = id, name = t.name;
+    if (sel.mode === 'replace' && !ids.has(id)) destId = present.find((x) => x.name.toLowerCase() === t.name.toLowerCase())?.id || id;
+    if (sel.mode === 'copy') {
+      name = t.name;
+      for (let n = 1; names.has(name.toLowerCase()); n++) name = `${t.name} (${n})`;
+      destId = ids.has(id) ? slugify(name) : id;
+      for (let n = 2; ids.has(destId); n++) destId = `${slugify(name)}-${n}`;
+      names.add(name.toLowerCase());
+      ids.add(destId);
+    }
+    const dir = path.join(templates.dir, destId);
     fs.rmSync(dir, { recursive: true, force: true });
     for (const f of t.files) extract(f.entry, dir, f.rel);
+    if (destId !== id || name !== t.name) {
+      const file = path.join(dir, 'template.json');
+      fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), id: destId, name }, null, 2));
+    }
     done.templates++;
   }
   if (done.templates) templates.reload();

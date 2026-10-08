@@ -1443,6 +1443,30 @@ async function runSteps(app, camera) {
     oneForm.append('file', new Blob([oneZip.toBuffer()]), 'template.zip');
     const onePv = await j('/api/admin/config/import/preview', { method: 'POST', headers: ADMIN, body: oneForm });
     assert.deepEqual(onePv.data.import.templates.map((t) => t.id), [tplOne.id], JSON.stringify(onePv.data));
+    // Bouton Importer de la page Templates : les templates seuls, celui de même identifiant remplacé
+    // Bouton Importer de la page Templates : ajouté en copie, « Nom (1) » puis « Nom (2) », l'original intact
+    const countBefore = app.templates.all().length;
+    for (const n of [1, 2]) {
+      const fm = new FormData();
+      fm.append('file', new Blob([oneZip.toBuffer()]), 'template.zip');
+      const pvN = (await j('/api/admin/config/import/preview', { method: 'POST', headers: ADMIN, body: fm })).data.import;
+      const apN = await post('/api/admin/config/import/apply', { id: pvN.id, templates: [tplOne.id], mode: 'copy' }, ADMIN);
+      assert.equal(apN.data.done.templates, 1, JSON.stringify(apN.data));
+      assert.equal(apN.data.done.sections, 0, 'aucun réglage touché');
+      const copy = app.templates.all().find((t) => t.name === `${tplOne.name} (${n})`);
+      assert.ok(copy && copy.id !== tplOne.id, `copie « ${tplOne.name} (${n}) » : ${app.templates.all().map((t) => `${t.id}=${t.name}`).join(', ')}`);
+    }
+    assert.equal(app.templates.all().length, countBefore + 2);
+    assert.equal(app.templates.get(tplOne.id).name, tplOne.name, 'original intact');
+    // Écraser : remplace le présent, aucun ajout
+    const fr = new FormData();
+    fr.append('file', new Blob([oneZip.toBuffer()]), 'template.zip');
+    const pvR = (await j('/api/admin/config/import/preview', { method: 'POST', headers: ADMIN, body: fr })).data.import;
+    assert.ok(pvR.templates[0].exists && pvR.templates[0].sameName, 'déjà présent signalé');
+    await post('/api/admin/config/import/apply', { id: pvR.id, templates: [tplOne.id], mode: 'replace' }, ADMIN);
+    assert.equal(app.templates.all().length, countBefore + 2, 'écrasé, pas ajouté');
+    for (const t of app.templates.all().filter((x) => /\(\d\)$/.test(x.name))) assert.equal((await j(`/api/admin/templates/${t.id}`, { method: 'DELETE', headers: ADMIN })).status, 200);
+    assert.equal(app.templates.all().length, countBefore, 'copies de test retirées');
     assert.equal((await fetch(`${base}/api/admin/templates/inconnu/export`, { headers: ADMIN })).status, 404);
     // Import d'un export retouché à la main : refusé en entier, rien d'appliqué, pas de sauvegarde créée
     const res = await fetch(`${base}/api/admin/config/export?settings=1&templates=0&secrets=0`, { headers: ADMIN });

@@ -699,7 +699,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   r.post('/config/import/apply', async (req, res) => {
     const b = req.body || {};
     if (!pendingImport || pendingImport.id !== b.id || Date.now() - pendingImport.at > 30 * 60 * 1000) throw new HttpError(409, 'IMPORT_EXPIRED', 'Fichier à relire : l\'import a expiré');
-    const sel = { sections: [].concat(b.sections || []), templates: [].concat(b.templates || []), secrets: !!b.secrets };
+    const sel = { sections: [].concat(b.sections || []), templates: [].concat(b.templates || []), secrets: !!b.secrets, mode: ['copy', 'replace'].includes(b.mode) ? b.mode : null };
     if (!sel.sections.length && !sel.templates.length) throw new HttpError(400, 'IMPORT_EMPTY', 'Rien de coché');
     const pending = pendingImport; // un autre fichier peut être relu pendant la sauvegarde : on applique celui-ci
     checkBundle(pending.bundle, sel);

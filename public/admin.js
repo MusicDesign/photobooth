@@ -869,7 +869,11 @@ function templatesSection() {
   return `
   <div class="ev-page-head">
     <h2>Templates</h2>
-    <button class="btn primary" type="button" id="btnNewTemplate">+ Nouveau template</button>
+    <div class="row">
+      <button class="btn" type="button" id="btnImportTemplate">Importer</button>
+      <input type="file" id="importTemplateFile" accept=".zip,application/zip" hidden>
+      <button class="btn primary" type="button" id="btnNewTemplate">+ Nouveau template</button>
+    </div>
   </div>
   <dialog id="dlgNewTemplate" class="form-dialog">
     <form id="formNewTemplate">
@@ -896,6 +900,34 @@ function templatesSection() {
     <div class="opt-line"><b>Détourage précis</b> ${S.subjectModel?.installed ? `<span class="badge ok">installé</span> ${perfNotice()}` : modelNotice()}</div>
   </div>
   ${cards ? `<div id="tplList" class="tpl-list">${cards}</div>` : '<p class="sub">Aucun template.</p>'}`;
+}
+
+/**
+ * Import de templates (fichier exporté depuis le menu « … » d'un template, ou une sauvegarde) : seuls les templates
+ * du fichier sont importés, jamais les réglages. Déjà présent (même nom ou identifiant) : copie « Nom (1) » ou écrasement.
+ */
+async function importTemplates(input) {
+  const file = input.files?.[0];
+  input.value = ''; // le même fichier pourra être rechoisi
+  if (!file) return;
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const pv = (await api('/api/admin/config/import/preview', { method: 'POST', form })).import;
+    if (!pv.templates.length) { toast('Aucun template dans ce fichier', true); return; }
+    const one = pv.templates.length === 1;
+    const dup = pv.templates.filter((t) => t.exists || t.sameName);
+    let mode = 'copy';
+    if (dup.length) { // déjà présent : copie à côté ou remplacement
+      const title = one ? `« ${pv.templates[0].name} » existe déjà` : `${dup.length} template${dup.length > 1 ? 's' : ''} sur ${pv.templates.length} existe${dup.length > 1 ? 'nt' : ''} déjà`;
+      const choice = await askConfirm('', 'Ajouter une copie', 'retake', { title, list: one ? [] : dup.map((t) => esc(t.name)), tone: 'primary', alt: 'Écraser' });
+      if (!choice) return;
+      mode = choice === 'alt' ? 'replace' : 'copy';
+    } else if (!await askConfirm('', 'Importer', 'retake', { title: one ? `Importer « ${pv.templates[0].name} » ?` : `Importer ${pv.templates.length} templates ?`, list: one ? [] : pv.templates.map((t) => esc(t.name)), tone: 'primary' })) return;
+    const r = await api('/api/admin/config/import/apply', { method: 'POST', body: { id: pv.id, templates: pv.templates.map((t) => t.id), mode } });
+    toast(r.done.templates > 1 ? `${r.done.templates} templates importés` : 'Template importé');
+    refresh();
+  } catch (err) { toast(err.message, true); }
 }
 
 function camera() {
@@ -3142,6 +3174,8 @@ function bindSection(sec) {
     }));
     const dlg = $('#dlgNewTemplate');
     $('#btnNewTemplate').onclick = () => { dlg.showModal(); dlg.querySelector('input[name=name]').focus(); };
+    $('#btnImportTemplate').onclick = () => $('#importTemplateFile').click();
+    $('#importTemplateFile').onchange = (e) => importTemplates(e.target);
     $('#btnNewTemplateCancel').onclick = () => { dlg.close(); $('#formNewTemplate').reset(); };
     dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); }); // clic hors de la fenêtre
     $('#formNewTemplate').onsubmit = async (e) => {
@@ -3399,20 +3433,27 @@ async function waitRelaunch() {
   }
 }
 /** Confirmation dans la page : se valide à la souris, au clavier ou depuis le Stream Deck. */
-/** opts.title : titre au-dessus du texte ; opts.list : lignes sous le texte ; opts.tone : 'danger' (rouge, par défaut) ou 'primary' (noir). */
-function askConfirm(text, okLabel, deckIcon = 'power', { title = '', list = [], tone = 'danger' } = {}) {
+/**
+ * opts.title : titre au-dessus du texte ; opts.list : lignes sous le texte ; opts.tone : 'danger' (rouge, par défaut)
+ * ou 'primary' (noir) ; opts.alt : libellé d'un second choix, entre Annuler et le bouton principal (résultat 'alt').
+ */
+function askConfirm(text, okLabel, deckIcon = 'power', { title = '', list = [], tone = 'danger', alt = '' } = {}) {
   return new Promise((resolve) => {
     const dlg = $('#confirmDialog');
     $('#confirmTitle').textContent = title;
     $('#confirmTitle').classList.toggle('hidden', !title);
     $('#confirmText').textContent = text;
+    $('#confirmText').classList.toggle('hidden', !text);
     $('#confirmList').innerHTML = list.map((l) => `<li>${l}</li>`).join('');
     $('#confirmList').classList.toggle('hidden', !list.length);
     $('#cfOk').textContent = okLabel;
     $('#cfOk').className = `btn ${tone}`;
+    $('#cfAlt').textContent = alt;
+    $('#cfAlt').classList.toggle('hidden', !alt);
     $('#cfOk').dataset.icon = deckIcon; // pictogramme de la touche « valider » sur le Stream Deck
-    const done = (v) => { dlg.close(); $('#cfOk').onclick = $('#cfCancel').onclick = dlg.oncancel = null; sendDeckUi(); resolve(v); };
+    const done = (v) => { dlg.close(); $('#cfOk').onclick = $('#cfAlt').onclick = $('#cfCancel').onclick = dlg.oncancel = null; sendDeckUi(); resolve(v); };
     $('#cfOk').onclick = () => done(true);
+    $('#cfAlt').onclick = () => done('alt');
     $('#cfCancel').onclick = () => done(false);
     dlg.oncancel = (e) => { e.preventDefault(); done(false); }; // Échap
     dlg.showModal();
@@ -3492,7 +3533,7 @@ function sendDeckUi() {
       .map(([id]) => ({ id, label: pw[id][0], icon: pw[id][1], kind: pw[id][2], ...(id === 'btnShutdown' ? { style: DECK_DANGER } : {}) }));
     items.push({ id: 'pwCancel', label: 'Annuler', icon: 'x', kind: 'ghost' });
   } else if (dlg.open) {
-    items = [{ id: 'cfOk', label: $('#cfOk').textContent, icon: $('#cfOk').dataset.icon || 'power', kind: 'primary', style: $('#cfOk').classList.contains('danger') ? DECK_DANGER : undefined }, { id: 'cfCancel', label: 'Annuler', icon: 'x', kind: 'ghost' }];
+    items = [{ id: 'cfOk', label: $('#cfOk').textContent, icon: $('#cfOk').dataset.icon || 'power', kind: 'primary', style: $('#cfOk').classList.contains('danger') ? DECK_DANGER : undefined }, ...($('#cfAlt').classList.contains('hidden') ? [] : [{ id: 'cfAlt', label: $('#cfAlt').textContent, icon: 'retake', kind: 'ghost' }]), { id: 'cfCancel', label: 'Annuler', icon: 'x', kind: 'ghost' }];
   } else {
     items = [{ id: 'btnBooth', label: 'Retour à la borne', icon: 'back', kind: 'ghost' }];
     if (shell) items.push({ id: 'btnLogout', label: 'Déconnexion', icon: 'logout', kind: 'ghost' });

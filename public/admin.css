@@ -241,7 +241,10 @@ form.card details summary { color: var(--muted); font-size: 14px; margin-bottom:
 .confirm-dialog { border: 0; border-radius: 16px; padding: 24px 26px; max-width: 420px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
 .confirm-dialog::backdrop { background: rgba(10, 12, 20, 0.45); }
 .confirm-dialog p { margin: 0 0 20px; white-space: pre-line; line-height: 1.5; }
-.confirm-dialog .row { justify-content: flex-end; }
+.confirm-dialog .row { justify-content: flex-end; flex-wrap: nowrap; }
+#confirmDialog { min-width: min(440px, 92vw); }
+#confirmDialog .confirm-title { margin-bottom: 20px; }
+#confirmDialog .confirm-title:has(+ p:not(.hidden)) { margin-bottom: 8px; }
 .confirm-title { margin: 0 0 8px; font-size: 18px; text-transform: none; letter-spacing: 0; color: var(--text); }
 .confirm-list { margin: -8px 0 20px; padding-left: 20px; max-height: 40vh; overflow-y: auto; font-size: 14px; line-height: 1.45; }
 .confirm-list li + li { margin-top: 6px; }
