@@ -156,7 +156,7 @@ try {
     ['events', '13-admin-evenements'], ['sessions', '14-admin-photos'], ['templates', '15-admin-templates'], ['editor=strip-3', '16-admin-editeur-template'],
     ['flow', '17-admin-parcours-invite'], ['printing', '18-admin-impression'], ['sharing', '19-admin-galerie-partage'], ['theme', '20-admin-apparence'],
     ['texts', '21-admin-textes'], ['camera', '22-admin-appareil-photo'], ['control', '23-admin-ecran-controle'], ['lights', '24-admin-lumieres'],
-    ['security', '25-admin-securite'], ['backup', '26-admin-sauvegarde'], ['install', '27-admin-installation']
+    ['security', '25-admin-securite'], ['backup', '26-admin-sauvegarde'], ['install', '27-admin-installation'], ['logs', '27b-admin-journal']
   ];
   for (const [hash, name] of ADMIN_PAGES) {
     await evaluate(`location.hash = ${JSON.stringify(hash)}, true`);

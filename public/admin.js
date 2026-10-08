@@ -227,7 +227,7 @@ function installSection() {
   <div class="card">
     <div class="inst-head">
       <div><div class="inst-kicker">Journal</div></div>
-      <div class="cell-actions"><a class="btn small" href="/api/admin/logs" download>Télécharger le journal</a></div>
+      <div class="cell-actions"><a class="btn small" href="#logs">Journal en direct</a><a class="btn small" href="/api/admin/logs" download>Télécharger le journal</a></div>
     </div>
   </div>`;
 }
@@ -2752,7 +2752,122 @@ function unbindEditor() {
   E.drag = null;
 }
 
-const SECTIONS = { dashboard, events: eventsSection, sessions, templates: templatesSection, editor: editorSection, flow, printing, sharing, theme: themeSection, texts: textsSection, camera, control: controlSection, lights: lightsPage, security, backup: backupSection, install: installSection };
+// ---------- Journal en direct : lignes du serveur et appels à l'API, par module ----------
+
+const LOG_MAX = 3000;
+const LOG = { items: [], cats: [], source: null, cat: 'all', level: 'all', q: '', paused: false, pending: 0 };
+const LOG_LEVELS = [['all', 'Tout'], ['WARN', 'Avertissements'], ['ERROR', 'Erreurs']];
+
+function logsSection() {
+  return `
+  <h2>Journal</h2>
+  <div class="card log-card">
+    <div class="log-cats" id="logCats"></div>
+    <div class="log-bar">
+      <div class="seg" id="logLevels">${LOG_LEVELS.map(([k, l]) => `<button type="button" data-level="${k}" class="${LOG.level === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <input type="search" id="logSearch" placeholder="Rechercher" value="${esc(LOG.q)}">
+      <span class="log-state" id="logState"></span>
+      <div class="cell-actions">
+        <button type="button" class="btn small" id="logPause">${LOG.paused ? 'Reprendre' : 'Pause'}</button>
+        <a class="btn small" href="/api/admin/logs" download>Télécharger</a>
+      </div>
+    </div>
+    <div class="log-list" id="logList"></div>
+  </div>`;
+}
+
+const logMatch = (e) => (LOG.cat === 'all' || e.cat === LOG.cat)
+  && (LOG.level === 'all' || e.level === LOG.level || (LOG.level === 'WARN' && e.level === 'ERROR'))
+  && (!LOG.q || `${e.module} ${e.msg}`.toLowerCase().includes(LOG.q.toLowerCase()));
+
+function logRow(e) {
+  const d = new Date(e.t);
+  const time = `${d.toLocaleTimeString('fr-FR')}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+  const cat = LOG.cats.find(([k]) => k === e.cat)?.[1] || e.cat;
+  return `<div class="log-row lv-${e.level.toLowerCase()}"><span class="log-t">${time}</span><span class="log-cat c-${e.cat}">${esc(cat)}</span><span class="log-mod">${esc(e.module)}</span><span class="log-msg">${esc(e.msg)}</span></div>`;
+}
+
+function renderLogCats() {
+  const box = $('#logCats');
+  if (!box) return;
+  const count = (k) => LOG.items.filter((e) => k === 'all' || e.cat === k).length;
+  box.innerHTML = [['all', 'Vue générale'], ...LOG.cats].map(([k, l]) => `<button type="button" data-cat="${k}" class="log-chip${LOG.cat === k ? ' on' : ''}${k !== 'all' && !count(k) ? ' empty' : ''}">${esc(l)}<b>${count(k)}</b></button>`).join('');
+}
+
+function renderLogList() {
+  const list = $('#logList');
+  if (!list) return;
+  const rows = LOG.items.filter(logMatch);
+  list.innerHTML = rows.length ? rows.map(logRow).join('') : '<div class="log-empty">Aucune ligne</div>';
+  list.scrollTop = list.scrollHeight;
+  renderLogCats();
+}
+
+function logState() {
+  const el = $('#logState');
+  if (el) el.textContent = LOG.paused ? (LOG.pending ? `en pause · ${LOG.pending} nouvelle${LOG.pending > 1 ? 's' : ''}` : 'en pause') : (LOG.source ? 'en direct' : 'connexion…');
+}
+
+function addLog(e) {
+  LOG.items.push(e);
+  if (LOG.items.length > LOG_MAX) LOG.items.splice(0, LOG.items.length - LOG_MAX);
+  if (LOG.paused) { LOG.pending++; logState(); return; }
+  const list = $('#logList');
+  if (!list) return;
+  if (logMatch(e)) {
+    const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40; // on lisait plus haut : pas de saut
+    list.querySelector('.log-empty')?.remove();
+    list.insertAdjacentHTML('beforeend', logRow(e));
+    while (list.children.length > LOG_MAX) list.firstChild.remove();
+    if (atBottom) list.scrollTop = list.scrollHeight;
+  }
+  clearTimeout(addLog.t);
+  addLog.t = setTimeout(renderLogCats, 300); // compteurs des modules
+}
+
+function openLogStream() {
+  if (LOG.source) return;
+  const src = new EventSource('/api/admin/logs/live');
+  LOG.source = src;
+  src.addEventListener('init', (ev) => {
+    const d = JSON.parse(ev.data);
+    LOG.cats = d.categories;
+    LOG.items = d.entries;
+    LOG.pending = 0;
+    renderLogList();
+    logState();
+  });
+  src.addEventListener('log', (ev) => addLog(JSON.parse(ev.data)));
+  src.onerror = () => logState(); // EventSource se reconnecte seul (serveur relancé)
+}
+
+function closeLogStream() {
+  LOG.source?.close();
+  LOG.source = null;
+}
+
+function bindLogs() {
+  openLogStream();
+  renderLogList();
+  logState();
+  $('#logCats').onclick = (ev) => { const b = ev.target.closest('[data-cat]'); if (b) { LOG.cat = b.dataset.cat; renderLogList(); } };
+  $('#logLevels').onclick = (ev) => {
+    const b = ev.target.closest('[data-level]');
+    if (!b) return;
+    LOG.level = b.dataset.level;
+    document.querySelectorAll('#logLevels button').forEach((x) => x.classList.toggle('on', x === b));
+    renderLogList();
+  };
+  $('#logSearch').oninput = (ev) => { LOG.q = ev.target.value.trim(); renderLogList(); };
+  $('#logPause').onclick = (ev) => {
+    LOG.paused = !LOG.paused;
+    ev.target.textContent = LOG.paused ? 'Reprendre' : 'Pause';
+    if (!LOG.paused) { LOG.pending = 0; renderLogList(); }
+    logState();
+  };
+}
+
+const SECTIONS = { dashboard, events: eventsSection, sessions, templates: templatesSection, editor: editorSection, flow, printing, sharing, theme: themeSection, texts: textsSection, camera, control: controlSection, lights: lightsPage, security, backup: backupSection, install: installSection, logs: logsSection };
 const OLD_HASHES = { limits: 'printing', hardware: 'camera', devices: 'control' }; // anciens liens de l'admin
 
 // ---------- Rendu + événements ----------
@@ -2776,6 +2891,7 @@ function render() {
   syncFavicon();
   const sec = currentSection();
   if (prevSection === 'editor' && sec !== 'editor') unbindEditor();
+  if (sec !== 'logs') closeLogStream(); // journal en direct : connexion fermée en quittant la page
   prevSection = sec;
   const sameSection = render.last === location.hash;
   render.last = location.hash;
@@ -2867,6 +2983,7 @@ async function renderTemplateCards() {
 }
 
 function bindSection(sec) {
+  if (sec === 'logs') return bindLogs();
   if (sec === 'dashboard') {
     $('#btnPaper').onclick = async () => {
       const v = $('#paperInput').value;

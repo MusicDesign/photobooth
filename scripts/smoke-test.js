@@ -692,6 +692,31 @@ async function runSteps(app, camera) {
     assert.equal(logs.status, 200);
     const { default: AdmZip } = await import('adm-zip');
     assert.deepEqual(new AdmZip(Buffer.from(await logs.arrayBuffer())).getEntries().map((e) => e.entryName).sort(), ['booth.log', 'booth.log.1']);
+    // Journal en direct : lignes en mémoire classées par module, appels à l'API, puis chaque nouvelle ligne
+    const { categorize } = await import('../server/log.js');
+    assert.equal(categorize('gphoto2', 'x'), 'camera');
+    assert.equal(categorize('devices', 'imprimante : none'), 'printer');
+    assert.equal(categorize('devices', 'réseau : pas de Wi-Fi'), 'network');
+    assert.equal(categorize('inconnu', 'x'), 'system');
+    assert.equal((await fetch(`${base}/api/admin/logs/live`)).status, 401, 'journal réservé à l\'admin');
+    const ctrl = new AbortController();
+    const live = await fetch(`${base}/api/admin/logs/live`, { headers: ADMIN, signal: ctrl.signal });
+    assert.match(live.headers.get('content-type'), /text\/event-stream/);
+    const reader = live.body.getReader();
+    let sse = '';
+    const until = async (re) => { while (!re.test(sse)) sse += new TextDecoder().decode((await reader.read()).value); };
+    await until(/event: init\ndata: .*\n\n/);
+    const init = JSON.parse(sse.match(/event: init\ndata: (.*)\n/)[1]);
+    assert.ok(init.categories.some(([k]) => k === 'camera'));
+    assert.ok(init.entries.some((e) => e.cat === 'apiAdmin' && /GET \/api\/admin\/state → 200/.test(e.msg)), 'appels de l\'admin notés');
+    assert.ok(init.entries.some((e) => e.cat === 'api' && /\/api\/bootstrap/.test(e.msg)), 'appels de la borne notés');
+    assert.ok(!init.entries.some((e) => e.cat === 'api' && /\/api\/ping/.test(e.msg)), 'ping ignoré');
+    console.log('[cups] ligne de test du journal en direct');
+    await until(/event: log\ndata: .*ligne de test du journal en direct.*\n/);
+    const pushed = JSON.parse(sse.match(/event: log\ndata: (.*ligne de test.*)\n/)[1]);
+    assert.equal(pushed.cat, 'printer');
+    assert.equal(pushed.module, 'cups');
+    ctrl.abort();
     // Déplacement vers « Tests » : la session et ses tirages suivent
     await post(`/api/admin/sessions/${s2.id}/move`, { eventId: first }, ADMIN);
     b = (await j('/api/bootstrap')).data.counters;

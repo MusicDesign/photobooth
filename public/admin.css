@@ -563,3 +563,30 @@ details.more .menu { position: absolute; right: 0; top: calc(100% + 4px); z-inde
 .col { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 14px; }
 #formImportRead input[type=file] { flex: 1; min-width: 220px; }
 .light-theme-color { display: flex; align-items: center; gap: 8px; align-self: end; padding: 10px 0; }
+
+/* Journal en direct */
+.log-card { padding: 16px; }
+.log-cats { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.log-chip { appearance: none; border: 0; font: inherit; font-size: 13px; font-weight: 700; padding: 6px 10px; border-radius: 999px; background: var(--bg); color: var(--text); cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.log-chip b { font-weight: 600; color: var(--muted); font-size: 12px; }
+.log-chip.on { background: var(--s); color: #fff; }
+.log-chip.on b { color: rgba(255,255,255,0.75); }
+.log-chip.empty { opacity: 0.5; }
+.log-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+.log-bar input[type=search] { flex: 1; min-width: 160px; padding: 7px 10px; }
+.log-bar .cell-actions { margin-left: auto; }
+.log-state { font-size: 13px; color: var(--muted); }
+.log-list { height: calc(100vh - 300px); min-height: 320px; overflow-y: auto; background: #0f1218; color: #d7dbe2; border-radius: 10px; padding: 8px 0; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; user-select: text; }
+.log-row { display: grid; grid-template-columns: 96px 138px 64px 1fr; gap: 10px; padding: 1px 12px; align-items: baseline; }
+.log-row:hover { background: rgba(255,255,255,0.05); }
+.log-t { color: #7d8594; }
+.log-cat { color: #9fb3c8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.log-mod { color: #7d8594; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.log-msg { white-space: pre-wrap; word-break: break-word; }
+.log-row.lv-warn .log-msg { color: #f2c46d; }
+.log-row.lv-error .log-msg { color: #ff8a80; }
+.log-cat.c-camera { color: #7cc4ff; } .log-cat.c-printer { color: #c9a0ff; } .log-cat.c-lights { color: #ffd166; }
+.log-cat.c-screen { color: #8fe3c0; } .log-cat.c-deck { color: #ff9fd0; } .log-cat.c-sessions { color: #a8e06b; }
+.log-cat.c-api, .log-cat.c-apiAdmin { color: #7d8594; }
+.log-empty { padding: 12px; color: #7d8594; }
+@media (max-width: 800px) { .log-row { grid-template-columns: 80px 1fr; } .log-cat, .log-mod { display: none; } .log-list { height: 60vh; } }

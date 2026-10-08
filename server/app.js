@@ -25,6 +25,7 @@ import { apiRouter } from './routes/api.js';
 import { adminRouter, LoginGuard } from './routes/admin.js';
 import { galleryHtml, missingHtml, eventGalleryHtml } from './gallery.js';
 import { HttpError, isLocalRequest } from './util.js';
+import { installLogCapture, recordLog } from './log.js';
 import { pruneUploads, missingUploadRefs } from './uploads.js';
 import { ROOT, OUTPUT_DIR, PUBLIC_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, UPLOADS_DIR, SAMPLES_DIR } from './paths.js';
 
@@ -39,6 +40,7 @@ import { ROOT, OUTPUT_DIR, PUBLIC_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, 
  */
 export async function createApp({ port = Number(process.env.PORT) || 3000, onShutdown = null, onRestart = null, remoteScreen = null, backgroundCamera = false } = {}) {
   for (const d of [OUTPUT_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, UPLOADS_DIR]) fs.mkdirSync(d, { recursive: true });
+  installLogCapture(); // journal en direct de l'admin (le fichier, lui, est posé par le lanceur)
 
   const config = new Config();
   config.load();
@@ -155,6 +157,19 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
 
   app.disable('x-powered-by');
   app.use(express.json({ limit: '2mb' }));
+  // Appels à l'API : journal en direct de l'admin (pas dans booth.log). Sans les appels qui tournent en boucle.
+  const QUIET_API = /^\/(ping|live\.mjpeg|admin\/logs)/;
+  app.use('/api', (req, res, next) => {
+    if (QUIET_API.test(req.path)) return next();
+    const t0 = Date.now();
+    const admin = req.path.startsWith('/admin'); // lu tout de suite : les routeurs réécrivent req.path
+    res.on('finish', () => {
+      const level = res.statusCode >= 500 ? 'ERROR' : res.statusCode >= 400 ? 'WARN' : 'INFO';
+      const from = isLocalRequest(req) ? (admin ? 'admin' : 'borne') : (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+      recordLog(level, `${req.method} ${req.originalUrl} → ${res.statusCode} · ${Date.now() - t0} ms`, { module: from, cat: admin ? 'apiAdmin' : 'api', file: false });
+    });
+    next();
+  });
   // Favicon = le logo défini dans Apparence (toutes les pages, y compris celles des téléphones)
   // L'écran de la borne est réservé à la machine de la borne : un téléphone qui ouvrait l'accueil devenait une
   // deuxième borne (Stream Deck repris, live view réveillé, séances en parallèle) et la faisait planter.

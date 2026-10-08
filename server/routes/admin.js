@@ -7,7 +7,7 @@ import { ZipArchive } from 'archiver';
 import { UPLOADS_DIR, OUTPUT_DIR } from '../paths.js';
 import { samplePhotos } from '../samples.js';
 import { HttpError, parseCookies, safeName, localDate } from '../util.js';
-import { LOG_FILE } from '../log.js';
+import { LOG_FILE, LOG_CATEGORIES, recentLogs, onLog, publicEntry } from '../log.js';
 import { validateConfigPatch, screenPatch, EDITABLE_SECTIONS } from '../config-validate.js';
 import { CAMERA_DRIVERS, CAMERA_FALLBACKS } from '../camera/index.js';
 import { MANUAL_SETTINGS, MAX_SHOTS } from '../camera/control.js';
@@ -615,6 +615,16 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   });
 
   /** Journal du serveur (data/logs/booth.log et l'ancien booth.log.1), en ZIP : lisible sans terminal sur la borne. */
+  // Journal en direct (page Journal) : les lignes en mémoire, puis chaque nouvelle ligne (Server-Sent Events)
+  r.get('/logs/live', (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+    const send = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+    send('init', { categories: LOG_CATEGORIES, entries: recentLogs() });
+    const off = onLog((e) => send('log', publicEntry(e)));
+    const keep = setInterval(() => res.write(': \n\n'), 20000); // proxy, veille : la connexion reste ouverte
+    req.on('close', () => { off(); clearInterval(keep); });
+  });
+
   r.get('/logs', (req, res) => {
     const files = [LOG_FILE, `${LOG_FILE}.1`].filter((f) => fs.existsSync(f));
     if (!files.length) throw new HttpError(404, 'LOG_EMPTY', 'Aucun journal enregistré');
