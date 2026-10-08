@@ -8,7 +8,7 @@ import { UPLOADS_DIR, OUTPUT_DIR } from '../paths.js';
 import { samplePhotos } from '../samples.js';
 import { HttpError, parseCookies, safeName, localDate } from '../util.js';
 import { LOG_FILE } from '../log.js';
-import { coerceNumbers } from '../config.js';
+import { validateConfigPatch, screenPatch, EDITABLE_SECTIONS } from '../config-validate.js';
 import { CAMERA_DRIVERS, CAMERA_FALLBACKS } from '../camera/index.js';
 import { MANUAL_SETTINGS, MAX_SHOTS } from '../camera/control.js';
 import { PRINTER_DRIVERS, PRINTER_FALLBACKS } from '../printer/index.js';
@@ -17,25 +17,40 @@ import { compose } from '../compositor.js';
 import { PATTERNS } from '../themes.js';
 import { modelStatus, downloadModel } from '../models.js';
 import { cutoutPerf } from '../cutout-ai.js';
-import { buildPreviews } from '../template-previews.js';
+import { buildPreviews, buildAllPreviews } from '../template-previews.js';
 import { buildBundle, readBundle, describeBundle, checkBundle, applyBundle, backupBeforeImport, revertLastImport, lastImportBackup } from '../config-bundle.js';
 import { MjpegBroadcaster } from '../camera/mjpeg.js';
 import { OUTPUT_DIR as OUT } from '../paths.js';
 
-const EDITABLE_SECTIONS = ['booth', 'camera', 'printer', 'limits', 'templates', 'theme', 'texts', 'admin', 'share', 'gallery', 'lights', 'screen', 'usb'];
 const SESSIONS_PER_PAGE = 48;
+const SESSION_MS = 12 * 60 * 60 * 1000; // connexion admin (cookie) : 12 h
 
-/** Réglages de l'écran (DDC/CI) : luminosité et volume de 0 à 100, ou null = la borne n'y touche pas. */
-function screenPatch(body = {}) {
-  const out = {};
-  for (const k of ['brightness', 'volume']) {
-    if (!(k in body)) continue;
-    const v = body[k];
-    if (v !== null && !(Number.isInteger(v) && v >= 0 && v <= 100)) throw new HttpError(400, 'SCREEN_VALUE', `${k === 'volume' ? 'Volume' : 'Luminosité'} de l'écran : nombre entier de 0 à 100, ou vide`);
-    out[k] = v;
+/**
+ * Codes admin faux, par adresse IP (téléphones du hotspot compris) : 5 essais, puis 30 s d'attente, doublée à chaque
+ * nouvel échec (1 h au plus). Vaut pour la connexion comme pour l'en-tête x-admin-pin. En mémoire : remis à zéro au
+ * redémarrage, et pour une adresse dès qu'elle donne le bon code.
+ */
+export class LoginGuard {
+  constructor({ free = 5, baseMs = 30000, maxMs = 60 * 60 * 1000, now = Date.now } = {}) {
+    Object.assign(this, { free, baseMs, maxMs, now });
+    this.ips = new Map(); // ip → { fails, until }
   }
-  if ('display' in body) out.display = String(body.display || '').slice(0, 120);
-  return out;
+
+  check(ip) {
+    const wait = (this.ips.get(ip)?.until || 0) - this.now();
+    if (wait > 0) throw new HttpError(429, 'TOO_MANY_ATTEMPTS', `Trop d'essais : réessayez dans ${Math.ceil(wait / 1000)} s`);
+  }
+
+  fail(ip) {
+    const e = this.ips.get(ip) || { fails: 0, until: 0 };
+    e.fails += 1;
+    if (e.fails >= this.free) e.until = this.now() + Math.min(this.maxMs, this.baseMs * 2 ** (e.fails - this.free));
+    this.ips.set(ip, e);
+    if (this.ips.size > 1000) for (const [k, v] of this.ips) if (v.until < this.now()) this.ips.delete(k);
+  }
+
+  success(ip) { this.ips.delete(ip); }
+  reset() { this.ips.clear(); }
 }
 const DISK_LOW = 5 * 1024 ** 3; // sous 5 Go libres : alerte au tableau de bord
 
@@ -48,19 +63,48 @@ async function diskStatus() {
   } catch { return null; }
 }
 
+/** Comparaison des codes en temps constant. */
+const samePin = (a, b) => {
+  const h = (v) => crypto.createHash('sha256').update(String(v ?? '')).digest();
+  return crypto.timingSafeEqual(h(a), h(b));
+};
+
 const IMAGE_EXT = { 'image/png': '.png', 'image/svg+xml': '.svg', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
 
-export function adminRouter({ booth, config, store, templates, themes, devices, deck, lights = null, screen = null, setup = null, updater = null, usb = null, shutdown, restart, powerOff = null, reboot = null, canMachine = () => false, kioskScreen = () => null, remoteScreen = null }) {
+export function adminRouter({ booth, config, store, templates, themes, devices, deck, lights = null, screen = null, setup = null, updater = null, usb = null, shutdown, restart, powerOff = null, reboot = null, canMachine = () => false, kioskScreen = () => null, remoteScreen = null, guard = new LoginGuard() }) {
   const r = express.Router();
-  const tokens = new Set();
+  const tokens = new Map(); // jeton du cookie → fin de validité
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024 } });
+  const adminPin = () => String(config.get().admin.pin ?? '');
+  const ipOf = (req) => req.socket.remoteAddress || '';
+
+  // Code admin changé (admin, import) : toutes les connexions ouvertes avec l'ancien code sont fermées
+  let knownPin = adminPin();
+  config.on('change', () => {
+    if (adminPin() === knownPin) return;
+    knownPin = adminPin();
+    tokens.clear();
+  });
+  const openSession = (res) => {
+    const token = crypto.randomBytes(24).toString('hex');
+    const now = Date.now();
+    for (const [t, exp] of tokens) if (exp <= now) tokens.delete(t);
+    tokens.set(token, now + SESSION_MS);
+    res.setHeader('Set-Cookie', `booth_admin=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MS / 1000}`);
+  };
 
   const isAuthed = (req) => {
-    if (!String(config.get().admin.pin ?? '')) return true; // code vide : admin ouvert (phase de test)
+    if (!adminPin()) return true; // code vide : admin ouvert (phase de test)
     const cookie = parseCookies(req.headers.cookie)['booth_admin'];
-    if (cookie && tokens.has(cookie)) return true;
+    const exp = cookie && tokens.get(cookie);
+    if (exp && exp > Date.now()) return true;
+    if (exp) tokens.delete(cookie);
     const pin = req.headers['x-admin-pin'];
-    return pin !== undefined && String(pin) === String(config.get().admin.pin);
+    if (pin === undefined) return false;
+    guard.check(ipOf(req));
+    if (samePin(pin, adminPin())) { guard.success(ipOf(req)); return true; }
+    guard.fail(ipOf(req));
+    return false;
   };
 
   const saveUpload = (file, prefix, allowed) => {
@@ -76,10 +120,11 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   const notifyBooth = () => booth.broadcast({ type: 'config' });
 
   r.post('/login', (req, res) => {
-    if (String(req.body?.pin ?? '') !== String(config.get().admin.pin)) throw new HttpError(401, 'BAD_PIN', 'Code incorrect');
-    const token = crypto.randomBytes(24).toString('hex');
-    tokens.add(token);
-    res.setHeader('Set-Cookie', `booth_admin=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=43200`);
+    const ip = ipOf(req);
+    guard.check(ip);
+    if (!samePin(req.body?.pin ?? '', adminPin())) { guard.fail(ip); throw new HttpError(401, 'BAD_PIN', 'Code incorrect'); }
+    guard.success(ip);
+    openSession(res);
     res.json({ ok: true });
   });
 
@@ -257,18 +302,12 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     for (const [k, v] of Object.entries(req.body || {})) {
       if (EDITABLE_SECTIONS.includes(k) && v && typeof v === 'object') patch[k] = v;
     }
-    if (patch.booth?.touch && !['auto', 'touch', 'buttons'].includes(patch.booth.touch)) throw new HttpError(400, 'TOUCH', 'Mode d\'écran tactile inconnu');
-    if (patch.booth?.window && !['kiosk', 'fullscreen'].includes(patch.booth.window)) throw new HttpError(400, 'WINDOW', 'Mode de fenêtre inconnu');
-    if (patch.screen) patch.screen = screenPatch(patch.screen);
-    if (patch.usb?.content && !['originals', 'finals', 'both'].includes(patch.usb.content)) throw new HttpError(400, 'USB_CONTENT', 'Contenu attendu : originals, finals ou both');
-    if (patch.camera?.driver && !CAMERA_DRIVERS.includes(patch.camera.driver)) throw new HttpError(400, 'DRIVER', 'Pilote caméra inconnu');
-    if (patch.camera?.fallback && !CAMERA_FALLBACKS.includes(patch.camera.fallback)) throw new HttpError(400, 'DRIVER', 'Repli caméra inconnu');
-    if (patch.printer?.driver && !PRINTER_DRIVERS.includes(patch.printer.driver)) throw new HttpError(400, 'DRIVER', 'Pilote imprimante inconnu');
-    if (patch.printer?.fallback && !PRINTER_FALLBACKS.includes(patch.printer.fallback)) throw new HttpError(400, 'DRIVER', 'Repli imprimante inconnu');
-    if (patch.templates?.defaultFormat && !FORMATS[patch.templates.defaultFormat]) throw new HttpError(400, 'FORMAT', 'Format inconnu');
-    const notNumber = coerceNumbers(patch);
-    if (notNumber) throw new HttpError(400, 'NUMBER', `Nombre attendu pour « ${notNumber} »`);
-    res.json({ config: config.update(patch) });
+    if (patch.templates) delete patch.templates.schema; // tenu par la borne (Templates.selection)
+    validateConfigPatch(patch, { templateIds: new Set(templates.items.keys()) });
+    const pinBefore = adminPin();
+    const cfg = config.update(patch);
+    if (adminPin() !== pinBefore && adminPin()) openSession(res); // les autres connexions sont fermées, pas celle-ci
+    res.json({ config: cfg });
   });
 
   // Mise à jour (dépôt git) : version, recherche, installation en arrière-plan suivie par la page Installation
@@ -405,7 +444,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   });
 
   /** Miniatures du template (choix du cadre) : calculées ici, une fois, plutôt qu'à chaque affichage sur la borne. */
-  const previews = (id) => buildPreviews(templates.get(id)).catch((e) => console.warn(`[templates] miniature de ${id} : ${e.message}`));
+  const previews = (id) => buildPreviews(templates.get(id), { fresh: () => templates.items.get(id) }).catch((e) => console.warn(`[templates] miniature de ${id} : ${e.message}`));
 
   r.post('/templates', upload.single('overlay'), async (req, res) => {
     const cfg = config.get();
@@ -417,9 +456,12 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       background: req.body?.background,
       overlayBuffer: req.file?.buffer || null
     });
-    const enabled = cfg.templates.enabled.includes(t.id) ? cfg.templates.enabled : [...cfg.templates.enabled, t.id];
     await previews(t.id);
-    config.update({ templates: { enabled, default: cfg.templates.default && templates.items.has(cfg.templates.default) ? cfg.templates.default : t.id } });
+    // Relue après le calcul des miniatures : un enregistrement fait entre-temps n'est pas écrasé
+    const tc = config.get().templates;
+    const cur = Array.isArray(tc.enabled) ? tc.enabled : [];
+    const enabled = cur.includes(t.id) ? cur : [...cur, t.id];
+    config.update({ templates: { enabled, default: tc.default && templates.items.has(tc.default) ? tc.default : t.id } });
     res.json(templates.toPublic(templates.get(t.id)));
   });
 
@@ -458,9 +500,9 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
 
   r.delete('/templates/:id', (req, res) => {
     templates.remove(req.params.id);
-    const cfg = config.get();
-    const enabled = cfg.templates.enabled.filter((id) => id !== req.params.id);
-    config.update({ templates: { enabled, default: enabled.includes(cfg.templates.default) ? cfg.templates.default : (enabled[0] || '') } });
+    const tc = config.get().templates;
+    const enabled = (Array.isArray(tc.enabled) ? tc.enabled : []).filter((id) => id !== req.params.id);
+    config.update({ templates: { enabled, default: enabled.includes(tc.default) ? tc.default : (enabled[0] || '') } });
     res.json({ ok: true });
   });
 
@@ -572,6 +614,11 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   let pendingImport = null; // fichier lu, en attente du choix de l'admin : { id, bundle, at }
   const bundleCtx = () => ({ config, templates });
   const bundleInfo = () => ({ boothName: config.get().booth.name || '', appVersion: updater?.status?.().version || '' });
+  /** Après un import ou son annulation : cadres proposés ramenés aux templates présents, miniatures recalculées. */
+  const afterImport = () => {
+    templates.reconcile(config);
+    buildAllPreviews(templates).then((n) => { if (n) notifyBooth(); });
+  };
 
   r.get('/config/export', (req, res) => {
     const on = (k, def) => (req.query[k] === undefined ? def : req.query[k] === '1');
@@ -601,10 +648,12 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     if (!pendingImport || pendingImport.id !== b.id || Date.now() - pendingImport.at > 30 * 60 * 1000) throw new HttpError(409, 'IMPORT_EXPIRED', 'Fichier à relire : l\'import a expiré');
     const sel = { sections: [].concat(b.sections || []), templates: [].concat(b.templates || []), secrets: !!b.secrets };
     if (!sel.sections.length && !sel.templates.length) throw new HttpError(400, 'IMPORT_EMPTY', 'Rien de coché');
-    checkBundle(pendingImport.bundle, sel);
-    const backup = await backupBeforeImport({ ...bundleCtx(), ...bundleInfo() });
-    const done = applyBundle(pendingImport.bundle, sel, bundleCtx());
-    pendingImport = null;
+    const pending = pendingImport; // un autre fichier peut être relu pendant la sauvegarde : on applique celui-ci
+    checkBundle(pending.bundle, sel);
+    const backup = await backupBeforeImport({ ...bundleCtx(), ...bundleInfo(), bundle: pending.bundle, sel });
+    const done = applyBundle(pending.bundle, sel, bundleCtx());
+    if (pendingImport === pending) pendingImport = null;
+    afterImport();
     console.log(`[config] import : ${done.sections} section(s), ${done.templates} template(s) (sauvegarde ${path.basename(backup)})`);
     res.json({ done, backup: { name: path.basename(backup) } });
   });
@@ -616,6 +665,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
 
   r.post('/config/import/revert', (req, res) => {
     const done = revertLastImport(bundleCtx());
+    afterImport();
     console.log('[config] import annulé : état d\'avant rétabli');
     res.json({ done });
   });

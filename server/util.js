@@ -49,10 +49,14 @@ export function newId(exists = () => false) {
 
 export const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
+/** Clés jamais recopiées d'un objet reçu (PUT /config, settings.json importé) : elles modifieraient le prototype. */
+export const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 /** Fusion profonde : les objets sont fusionnés, tout le reste (tableaux inclus) est remplacé. */
 export function deepMerge(target, patch) {
   if (!isPlainObject(patch)) return target;
   for (const [k, v] of Object.entries(patch)) {
+    if (UNSAFE_KEYS.has(k)) continue;
     if (isPlainObject(v) && isPlainObject(target[k])) deepMerge(target[k], v);
     else target[k] = isPlainObject(v) ? deepMerge({}, v) : v;
   }

@@ -55,10 +55,18 @@ async function saveConfig(patch, okMsg = 'Enregistré') {
  */
 function autoSave(f, fn) {
   if (!f) return;
+  // Champ hors de ses bornes (min, max), obligatoire laissé vide, format attendu : rien n'est envoyé, le navigateur le signale
+  const valid = (el) => {
+    if (el.checkValidity()) return true;
+    el.reportValidity();
+    saveState('error');
+    return false;
+  };
   const run = () => { quietSave = true; try { fn(new FormData(f), f); } finally { quietSave = false; } };
-  f.onsubmit = (e) => { e.preventDefault(); run(); };
+  f.onsubmit = (e) => { e.preventDefault(); if (valid(f.contains(document.activeElement) && document.activeElement.checkValidity ? document.activeElement : f)) run(); };
   f.addEventListener('change', (e) => {
     if (e.target.type === 'file' || e.target.closest('[data-nosave]')) return;
+    if (!valid(e.target)) return;
     clearTimeout(f.saveTimer);
     f.saveTimer = setTimeout(run, 250); // plusieurs changements d'affilée (flèches d'un nombre) : un seul envoi
   });
@@ -1849,7 +1857,7 @@ function security() {
         <small>Sur la borne : 5 appuis en haut à droite de l'écran, ou sur le Stream Deck les touches du haut gauche, droite, gauche, droite, ouvrent l'admin.</small>
       </div>
       <div>
-        <label>Code opérateur <input name="operatorPin" value="${esc(cfg.limits.operatorPin)}" required></label>
+        <label>Code opérateur <input name="operatorPin" value="${esc(cfg.limits.operatorPin)}" required inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" title="4 à 8 chiffres"></label>
         <small>Sur la borne (écran ou Stream Deck) : lève la limite de copies et le quota, et autorise la réimpression depuis la galerie si elle est réglée ainsi.</small>
       </div>
     </div>
@@ -2798,7 +2806,8 @@ function render() {
   }
 }
 
-const num = (fd, k) => Number(fd.get(k));
+/** Champ numérique : undefined s'il est vide (le réglage n'est pas envoyé, il reste tel quel) plutôt que 0. */
+const num = (fd, k) => { const v = fd.get(k); return v === null || String(v).trim() === '' ? undefined : Number(v); };
 
 /**
  * Ordre des templates : glisser une carte par sa poignée (souris ou doigt ; le glisser-déposer natif ne marche
@@ -3109,14 +3118,14 @@ function bindSettingsForms() {
       ...(fd.has('flash') ? { flash: fd.get('flash'), flashAutoThreshold: num(fd, 'flashAutoThreshold') } : {}),
       setupCommand: fd.get('setupCommand').trim(), armFireCommand: fd.get('armFireCommand').trim(),
       captureCommand: fd.get('captureCommand'), liveviewCommand: fd.get('liveviewCommand'),
-      liveview: fd.get('liveview') === 'on', settleMs: num(fd, 'settleMs'), liveIdleMs: num(fd, 'liveIdleSec') * 1000
+      liveview: fd.get('liveview') === 'on', settleMs: num(fd, 'settleMs'), liveIdleMs: num(fd, 'liveIdleSec') === undefined ? undefined : num(fd, 'liveIdleSec') * 1000
     } },
     booth: { lensPosition: fd.get('lensPosition') }
   }));
   form('#formControl', (fd) => saveConfig({ booth: { touch: fd.get('touchMode') || 'auto', cursor: fd.get('cursor') || 'show', window: fd.get('windowMode') || 'kiosk' } }));
   form('#formDeck', (fd) => saveConfig({ booth: { streamDeck: { enabled: fd.get('deckEnabled') === 'on', brightness: num(fd, 'deckBrightness'), position: fd.get('deckPosition'), showButtons: fd.get('deckShowButtons') === 'on' } } }));
   form('#formShare', (fd, f) => saveConfig({ share: { baseUrl: fd.get('shareBaseUrl').trim(), publicUrl: fd.get('publicUrl').trim(), qrOnDone: f.qrOnDone.checked, requireWifi: f.requireWifi.checked } }));
-  form('#formCodes', (fd) => saveConfig({ admin: { pin: fd.get('adminPin') }, limits: { operatorPin: fd.get('operatorPin') } }));
+  form('#formCodes', (fd, f) => saveConfig({ admin: { pin: fd.get('adminPin') }, ...(f.operatorPin.checkValidity() ? { limits: { operatorPin: fd.get('operatorPin') } } : {}) }));
   form('#formWifi', (fd, f) => saveConfig({ share: { wifi: { enabled: f.enabled.checked, ssid: f.ssid.value.trim(), password: f.password.value, security: f.security.value } } }, 'Wi-Fi enregistré'));
   form('#formGallery', (fd, f) => saveConfig({ gallery: { booth: f.booth.checked, web: f.web.checked, reprint: f.reprint.value, qr: f.qr.checked } }, 'Galerie enregistrée'));
   form('#formTexts', (fd) => {

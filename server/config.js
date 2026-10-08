@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { CONFIG_FILE } from './paths.js';
-import { clone, deepMerge, isPlainObject, loadJsonSafe, writeJsonAtomic, backupJson } from './util.js';
+import { clone, deepMerge, isPlainObject, loadJsonSafe, writeJsonAtomic, backupJson, UNSAFE_KEYS } from './util.js';
 
 /**
  * Configuration par défaut. Le fichier data/config.json ne contient que ce que
@@ -86,8 +86,8 @@ export const DEFAULTS = {
   },
   templates: {
     guestCanChoose: true,
-    enabled: ['classic-10x15', 'strip-3'],
-    default: 'classic-10x15',
+    enabled: ['default'],     // cadres proposés (liste vide : aucun), ramenés aux templates présents au démarrage (Templates.selection)
+    default: 'default',       // « Photo seule », créé au premier lancement
     defaultFormat: '10x15-paysage',
     order: [],                // ordre d'affichage des cadres (glissé dans l'admin) ; les absents viennent après
     gifEnabled: false,        // templates GIF proposés aux invités (numérique uniquement)
@@ -210,6 +210,7 @@ export const DEFAULTS = {
  */
 export function coerceNumbers(patch, defaults = DEFAULTS, trail = []) {
   for (const [k, v] of Object.entries(patch)) {
+    if (UNSAFE_KEYS.has(k)) continue; // ignorées par deepMerge
     const d = defaults?.[k];
     if (typeof d === 'number') {
       const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;

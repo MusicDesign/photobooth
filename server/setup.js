@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { ROOT, TEMPLATES_DIR, SAMPLES_DIR } from './paths.js';
 import { MODELS, modelPath, downloadModel } from './models.js';
 import { ffmpegPath } from './video.js';
+import { samplePhotos } from './samples.js';
 
 const require = createRequire(import.meta.url);
 
@@ -83,6 +84,8 @@ const DEPS = ['express', 'ws', 'sharp', 'onnxruntime-node', 'qrcode', 'archiver'
  * État de l'installation : { platform, pkg, items }. Chaque item : { id, label, state ('ok' | 'missing'), required,
  * detail, fix (commande à lancer), pkg (paquet système manquant), auto (installable par la borne sans mot de passe) }.
  */
+const countTemplates = () => (fs.existsSync(TEMPLATES_DIR) ? fs.readdirSync(TEMPLATES_DIR).filter((d) => fs.existsSync(path.join(TEMPLATES_DIR, d, 'template.json'))).length : 0);
+
 export function checkInstall() {
   const mac = process.platform === 'darwin', linux = process.platform === 'linux';
   const pm = packageManager();
@@ -111,8 +114,14 @@ export function checkInstall() {
   add({ id: 'model-fast', label: 'Détourage rapide (MODNet)', required: true, state: fast ? 'ok' : 'missing', detail: fast ? 'livré avec l\'app' : 'server/models/modnet.onnx absent', fix: fast ? null : 'git checkout server/models/modnet.onnx' });
   const precise = modelPath('subject');
   add({ id: 'model-precise', label: MODELS.subject.name, state: precise ? 'ok' : 'missing', detail: precise ? 'installé' : `à télécharger une fois (${Math.round(MODELS.subject.size / 1048576)} Mo, internet)`, fix: precise ? null : 'npm run models', auto: !precise });
-  const nTemplates = fs.existsSync(TEMPLATES_DIR) ? fs.readdirSync(TEMPLATES_DIR).filter((d) => fs.existsSync(path.join(TEMPLATES_DIR, d, 'template.json'))).length : 0;
-  add({ id: 'templates', label: 'Cadres', state: nTemplates ? 'ok' : 'missing', detail: nTemplates ? `${nTemplates} cadre${nTemplates > 1 ? 's' : ''}` : 'aucun : cadres de démo à générer', fix: nTemplates ? null : 'npm run demo-assets', auto: !nTemplates });
+  // Cadres et photos d'exemple (aperçus des cadres, essai du détourage, caméra simulée). Des cadres existent déjà
+  // (« Photo seule » créé au premier lancement) : seules les photos d'exemple manquantes sont générées.
+  const nTemplates = countTemplates();
+  const nSamples = samplePhotos().length;
+  const tplOk = nTemplates > 0 && nSamples > 0;
+  add({ id: 'templates', label: 'Cadres', state: tplOk ? 'ok' : 'missing',
+    detail: !nTemplates ? 'aucun : cadres de démo à générer' : `${nTemplates} cadre${nTemplates > 1 ? 's' : ''}${nSamples ? '' : ', sans photo d\'exemple'}`,
+    fix: tplOk ? null : nTemplates ? 'npm run demo-assets -- --samples' : 'npm run demo-assets', auto: !tplOk });
   if (linux) tool('cups', 'Impression (CUPS)', 'lpstat', { missing: 'absent : impression impossible' });
   else if (WIN) add({ id: 'cups', label: 'Impression (CUPS)', state: 'missing', detail: 'impression CUPS non gérée sous Windows' });
   else add({ id: 'cups', label: 'Impression (CUPS)', state: which('lpstat') ? 'ok' : 'missing', detail: which('lpstat') ? 'intégré à macOS' : 'lpstat introuvable' });
@@ -217,9 +226,10 @@ export class Setup {
         await downloadModel('subject', { log: say });
       }
       if (todo.some((it) => it.id === 'templates')) {
-        say('Cadres de démo et photos d\'exemple…');
+        const withTemplates = !countTemplates(); // cadres déjà là (modifiés à la borne) : jamais réécrits
+        say(withTemplates ? 'Cadres de démo et photos d\'exemple…' : 'Photos d\'exemple…');
         const { generateDemoAssets } = await import('../scripts/make-demo-assets.js');
-        await generateDemoAssets({ templatesDir: TEMPLATES_DIR, samplesDir: SAMPLES_DIR });
+        await generateDemoAssets({ templatesDir: TEMPLATES_DIR, samplesDir: SAMPLES_DIR, templates: withTemplates });
       }
       this.check();
       const left = this.last.items.filter((it) => it.state !== 'ok');

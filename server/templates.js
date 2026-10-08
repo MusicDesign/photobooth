@@ -55,6 +55,8 @@ export const BOOMERANG_MAX_SIDE = 960; // vidéo MP4 (le GIF de secours est réd
 /** Types animés : numérique uniquement, jamais imprimés, tous les calques photo montrent la même image. */
 export const ANIMATED_KINDS = ['gif', 'boomerang'];
 export const isAnimatedKind = (kind) => ANIMATED_KINDS.includes(kind);
+/** config.templates.schema : 2 = liste des cadres proposés vide → aucun cadre (avant : tous). Voir Templates.selection. */
+export const SELECTION_SCHEMA = 2;
 
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const SRC = /^(assets\/)?[A-Za-z0-9._-]+\.(png|jpe?g|webp)$/i;
@@ -243,7 +245,6 @@ export class Templates {
       if (raw && !raw.id) raw.id = name;
       try {
         this.items.set(raw.id, normalize(raw, dir));
-        this.pruneAssets(this.items.get(raw.id)); // images importées puis abandonnées (calque supprimé, détourage refait)
       } catch (e) {
         console.warn(`[templates] ${name} ignoré : ${e.message}`);
       }
@@ -268,11 +269,37 @@ export class Templates {
     return t;
   }
 
-  /** Templates activés, dans l'ordre de la config. Les GIF seulement si l'option GIF est active. */
+  /** Templates activés, dans l'ordre de la config (liste vide : aucun). Les GIF seulement si l'option GIF est active. */
   enabled(config) {
-    const ids = config.templates.enabled?.length ? config.templates.enabled : [...this.items.keys()];
+    const ids = Array.isArray(config.templates.enabled) ? config.templates.enabled : [];
     const list = ids.filter((id) => this.items.has(id) && (!isAnimatedKind(this.items.get(id).kind) || config.templates.gifEnabled)).map((id) => this.items.get(id));
     return this.sorted(config, list).map((t) => this.toPublic(t));
+  }
+
+  /**
+   * Cadres proposés (templates.enabled) et cadre par défaut ramenés aux templates présents. Liste vide : aucun cadre.
+   * Config d'avant (sans templates.schema), où une liste vide voulait dire « tous » : elle devient la liste de tous.
+   * Liste vidée parce qu'aucun de ses cadres n'existe (réglages par défaut d'une installation neuve, cadres supprimés
+   * à la main, import) : tous les cadres présents, la borne reste utilisable. Rend le correctif, ou null.
+   */
+  selection(tc = {}) {
+    const all = this.sorted({ templates: tc }).map((t) => t.id);
+    const raw = Array.isArray(tc.enabled) ? tc.enabled.filter((id) => typeof id === 'string') : [];
+    let enabled = [...new Set(raw.filter((id) => this.items.has(id)))];
+    if (!enabled.length && (raw.length || tc.schema !== SELECTION_SCHEMA)) enabled = all;
+    const def = this.items.has(tc.default) ? tc.default : (enabled[0] || '');
+    const same = tc.schema === SELECTION_SCHEMA && def === tc.default && JSON.stringify(enabled) === JSON.stringify(tc.enabled);
+    return same ? null : { enabled, default: def, schema: SELECTION_SCHEMA };
+  }
+
+  /** Applique selection() à la config enregistrée (démarrage, import, annulation d'un import). */
+  reconcile(config) {
+    const patch = this.selection(config.data.templates);
+    if (patch) {
+      console.log(`[templates] cadres proposés : ${patch.enabled.join(', ') || 'aucun'} (défaut : ${patch.default || 'aucun'})`);
+      config.update({ templates: patch });
+    }
+    return patch;
   }
 
   toPublic(t) {
@@ -332,10 +359,13 @@ export class Templates {
       layers: patch.layers ?? cur.layers
     }, cur.dir);
     for (const l of def.layers) {
-      if (l.type === 'image' && !fs.existsSync(path.join(cur.dir, l.src))) throw new HttpError(400, 'ASSET_MISSING', `Image introuvable : ${l.src}`);
+      if (l.type !== 'image') continue;
+      if (!fs.existsSync(path.join(cur.dir, l.src))) throw new HttpError(400, 'ASSET_MISSING', `Image introuvable : ${l.src}`);
+      if (l.cutSrc && !fs.existsSync(path.join(cur.dir, l.cutSrc))) l.cutSrc = null; // version sans fond disparue : l'originale
     }
     this.write(def);
     this.reload();
+    this.pruneAssets(this.get(id)); // images importées puis abandonnées (calque supprimé, détourage refait)
     return this.toPublic(this.get(id));
   }
 

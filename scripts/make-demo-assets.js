@@ -76,16 +76,23 @@ async function samples() {
   }
 }
 
-/** Génère templates et photos d'exemple dans les dossiers indiqués (utilisé par les tests). */
-export async function generateDemoAssets({ templatesDir, samplesDir } = {}) {
+/**
+ * Génère templates et photos d'exemple dans les dossiers indiqués (utilisé par les tests et l'installation).
+ * templates = false : photos d'exemple seules (les cadres de la borne ne sont pas touchés).
+ */
+export async function generateDemoAssets({ templatesDir, samplesDir, templates = true } = {}) {
   if (templatesDir) TPL = templatesDir;
   if (samplesDir) SAMPLES = samplesDir;
-  await classic();
-  await strip();
+  if (templates) {
+    await classic();
+    await strip();
+  }
   await samples();
 }
 
+// npm run demo-assets -- --samples : photos d'exemple seules
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await generateDemoAssets();
-  console.log('Templates et photos de démonstration générés.');
+  const onlySamples = process.argv.includes('--samples');
+  await generateDemoAssets({ templates: !onlySamples });
+  console.log(onlySamples ? 'Photos d\'exemple générées.' : 'Templates et photos de démonstration générés.');
 }

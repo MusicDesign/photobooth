@@ -22,7 +22,7 @@ import { Updater } from './update.js';
 import { Usb } from './usb.js';
 import { setCutoutAuto, measurePrecise, restoreCutoutPerf, onCutoutPerf } from './cutout-ai.js';
 import { apiRouter } from './routes/api.js';
-import { adminRouter } from './routes/admin.js';
+import { adminRouter, LoginGuard } from './routes/admin.js';
 import { galleryHtml, missingHtml, eventGalleryHtml } from './gallery.js';
 import { HttpError, isLocalRequest } from './util.js';
 import { pruneUploads, missingUploadRefs } from './uploads.js';
@@ -50,6 +50,7 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
 
   const store = new Store();
   const templates = new Templates();
+  templates.reconcile(config); // cadres proposés absents (installation neuve, cadres supprimés à la main) : voir selection
   const themes = new Themes();
 
   // Pilotes choisis d'après la config (ou détectés en mode auto), remplaçables à chaud.
@@ -228,7 +229,8 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   }).catch(() => {}), 5000);
   wss.on('connection', (ws) => { if (updateNotice && !updater.status().updating) ws.send(JSON.stringify(updateNotice)); });
 
-  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, lights, screen, setup, updater, usb, shutdown, restart, powerOff, reboot, canMachine: (verb) => machineOk[verb], kioskScreen, remoteScreen }));
+  const adminGuard = new LoginGuard(); // essais de code admin ratés, par adresse
+  app.use('/api/admin', adminRouter({ guard: adminGuard, booth, config, store, templates, themes, devices, deck, lights, screen, setup, updater, usb, shutdown, restart, powerOff, reboot, canMachine: (verb) => machineOk[verb], kioskScreen, remoteScreen }));
   // Écran déporté (iPad…) : l'écran de la borne et son toucher, avec le code admin (voir electron/remote-screen.js)
   app.get('/remote', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'remote.html')));
   // API de l'écran de la borne : seulement depuis la borne (les téléphones n'ont besoin que de ping et de la galerie)
@@ -300,5 +302,5 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   };
 
   // cameraReady : première détection de la caméra finie (le lanceur garde son écran de lancement jusque-là)
-  return { app, server, wss, booth, config, store, templates, themes, devices, deck, lights, screen, setup, updater, usb, port, close, cameraReady: devices.cameraReady };
+  return { app, server, wss, booth, config, store, templates, adminGuard, themes, devices, deck, lights, screen, setup, updater, usb, port, close, cameraReady: devices.cameraReady };
 }

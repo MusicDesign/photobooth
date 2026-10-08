@@ -148,7 +148,7 @@ export class Store {
   }
 
   getEvent(id) {
-    return this.data.events[id] || null;
+    return Object.hasOwn(this.data.events, id) ? this.data.events[id] : null; // id « constructor » : pas le prototype
   }
 
   activeEvent() {
@@ -158,7 +158,7 @@ export class Store {
   createEvent({ name, date }) {
     const base = slug(`${date || ''} ${name}`);
     let id = base;
-    for (let i = 2; this.data.events[id]; i++) id = `${base}-${i}`;
+    for (let i = 2; Object.hasOwn(this.data.events, id); i++) id = `${base}-${i}`;
     const ev = { id, name: String(name).trim().slice(0, 80), date: date || localDate(), createdAt: new Date().toISOString(), printed: 0 };
     this.data.events[id] = ev;
     this.save();
@@ -183,7 +183,7 @@ export class Store {
 
   /** Tirages comptés pour un événement (delta positif ou négatif, jamais sous zéro). */
   addEventPrinted(id, delta) {
-    const ev = this.data.events[id];
+    const ev = this.getEvent(id);
     if (!ev) return;
     ev.printed = Math.max(0, (ev.printed || 0) + delta);
     this.save();
@@ -207,12 +207,12 @@ export class Store {
   }
 
   getSession(id) {
-    return this.data.sessions[id] || null;
+    return Object.hasOwn(this.data.sessions, id) ? this.data.sessions[id] : null;
   }
 
   /** Écrit la fiche de la session dans son dossier ; nouvelle session : le compteur suit (dans db.json). */
   saveSession(session) {
-    const isNew = !this.data.sessions[session.id];
+    const isNew = !Object.hasOwn(this.data.sessions, session.id);
     this.data.sessions[session.id] = session;
     this.writeSession(session);
     if (isNew) { this.data.counters.sessionsCount += 1; this.save(); }
@@ -221,7 +221,7 @@ export class Store {
 
   /** Supprime une session (sa fiche ; les photos, c'est la borne) ; le compteur suit pour que le tableau de bord reste juste. */
   deleteSession(id) {
-    if (!this.data.sessions[id]) return false;
+    if (!Object.hasOwn(this.data.sessions, id)) return false;
     delete this.data.sessions[id];
     fs.rmSync(this.sessionFile(id), { force: true });
     this.data.counters.sessionsCount = Math.max(0, this.data.counters.sessionsCount - 1);
@@ -233,7 +233,7 @@ export class Store {
   resetEventSessions(eventId) {
     for (const s of this.sessionsOfEvent(eventId)) { delete this.data.sessions[s.id]; fs.rmSync(this.sessionFile(s.id), { force: true }); }
     this.data.counters.sessionsCount = Object.keys(this.data.sessions).length;
-    if (this.data.events[eventId]) this.data.events[eventId].printed = 0;
+    if (Object.hasOwn(this.data.events, eventId)) this.data.events[eventId].printed = 0;
     this.save();
   }
 
