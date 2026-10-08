@@ -369,7 +369,11 @@ async function runSteps(app, camera) {
     assert.equal(locked.status, 429, JSON.stringify(locked.data));
     assert.equal(locked.data.error, 'TOO_MANY_ATTEMPTS');
     assert.equal((await j('/api/admin/state', { headers: ADMIN })).status, 429, 'en-tête bloqué aussi');
+    const before = await j('/api/admin/login'); // la borne demande avant d'afficher le pavé du code
+    assert.equal(before.status, 429);
+    assert.match(before.data.message, /réessayez dans \d+ s/);
     app.adminGuard.reset();
+    assert.equal((await j('/api/admin/login')).status, 200);
     assert.equal((await j('/api/admin/state', { headers: { 'x-admin-pin': 'faux' } })).status, 401);
     // Connexion par cookie, fermée quand le code admin change (sauf pour celui qui l'a changé)
     const cookieOf = (res) => res.headers.get('set-cookie')?.split(';')[0];

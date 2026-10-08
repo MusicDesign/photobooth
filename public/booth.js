@@ -1341,6 +1341,7 @@ async function operatorUnlock() {
 
 async function adminAccess() {
   if (state.boot.adminOpen) return openAdmin(); // code admin vide (tests)
+  try { await api('/api/admin/login'); } catch (e) { toast(e.message); return; } // essais bloqués : pas de pavé
   const pin = await askPin('Code admin');
   if (pin === null) return;
   try {

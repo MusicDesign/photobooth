@@ -119,6 +119,8 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
 
   const notifyBooth = () => booth.broadcast({ type: 'config' });
 
+  // Avant d'afficher le pavé du code : 429 tant que les essais sont bloqués (la borne montre le délai, pas le pavé)
+  r.get('/login', (req, res) => { guard.check(ipOf(req)); res.json({ ok: true }); });
   r.post('/login', (req, res) => {
     const ip = ipOf(req);
     guard.check(ip);
