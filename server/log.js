@@ -5,7 +5,8 @@ import { DATA_DIR } from './paths.js';
 
 export const LOG_FILE = process.env.BOOTH_LOG_FILE || path.join(DATA_DIR, 'logs', 'booth.log');
 const MAX_BYTES = 5 * 1024 * 1024;
-const KEEP = 3000; // lignes gardées en mémoire pour le journal en direct de l'admin
+const KEEP = 3000; // lignes gardées en mémoire pour le journal en direct de l'admin (événements)
+const KEEP_CALLS = 1000; // appels HTTP, à part : leur flot (admin ouverte, 1 toutes les 5 s) ne chasse pas les événements
 
 /** Modules du journal en direct (filtres de l'admin), dans l'ordre d'affichage. */
 export const LOG_CATEGORIES = [
@@ -39,6 +40,8 @@ export function categorize(module, msg = '') {
 }
 
 const entries = [];
+const calls = [];
+export const isCall = (e) => e.cat === 'api' || e.cat === 'apiAdmin';
 const listeners = new Set();
 let run = null; // exécution en cours dans le fichier : { file, offset (taille au lancement), rotations }
 let seq = 0;
@@ -53,14 +56,15 @@ export function recordLog(level, text, opts = {}) {
   const module = opts.module || m?.[1] || '';
   const msg = m ? text.slice(m[0].length) : text;
   const e = { id: ++seq, t: Date.now(), level, module, cat: opts.cat || categorize(module, msg), msg, text, file: opts.file !== false };
-  entries.push(e);
-  if (entries.length > KEEP) entries.shift();
+  const list = isCall(e) ? calls : entries;
+  list.push(e);
+  if (list.length > (list === calls ? KEEP_CALLS : KEEP)) list.shift();
   for (const fn of listeners) { try { fn(e); } catch { /* un abonné en panne ne bloque pas les autres */ } }
   return e;
 }
 
-/** Dernières lignes (les n plus récentes), sans le champ interne file. */
-export const recentLogs = (n = KEEP) => entries.slice(-n).map(publicEntry);
+/** Lignes en mémoire (événements et appels HTTP), dans l'ordre, sans les champs internes. */
+export const recentLogs = () => [...entries, ...calls].sort((a, b) => a.id - b.id).map(publicEntry);
 export const publicEntry = ({ file, text, ...e }) => e;
 /** Abonnement aux nouvelles lignes ; renvoie la fonction de désabonnement. */
 export function onLog(fn) { listeners.add(fn); return () => listeners.delete(fn); }

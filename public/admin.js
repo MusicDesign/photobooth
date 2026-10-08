@@ -2773,7 +2773,9 @@ function unbindEditor() {
 
 // ---------- Journal en direct : lignes du serveur et appels à l'API, par module ----------
 
-const LOG_MAX = 3000;
+const LOG_MAX = 3000; // événements gardés à l'écran
+const LOG_MAX_CALLS = 1000; // appels HTTP, comptés à part (comme sur le serveur)
+const logIsCall = (e) => e.cat === 'api' || e.cat === 'apiAdmin';
 const LOG = { items: [], cats: [], source: null, cat: 'all', level: 'all', q: '', paused: false, pending: 0 };
 const LOG_LEVELS = [['all', 'Tout'], ['WARN', 'Avertissements'], ['ERROR', 'Erreurs']];
 
@@ -2803,7 +2805,7 @@ function logRow(e) {
   const d = new Date(e.t);
   const time = `${d.toLocaleTimeString('fr-FR')}.${String(d.getMilliseconds()).padStart(3, '0')}`;
   const cat = LOG.cats.find(([k]) => k === e.cat)?.[1] || e.cat;
-  return `<div class="log-row lv-${e.level.toLowerCase()}"><span class="log-t">${time}</span><span class="log-cat c-${e.cat}">${esc(cat)}</span><span class="log-mod">${esc(e.module)}</span><span class="log-msg">${esc(e.msg)}</span></div>`;
+  return `<div class="log-row lv-${e.level.toLowerCase()}" data-id="${e.id}"><span class="log-t">${time}</span><span class="log-cat c-${e.cat}">${esc(cat)}</span><span class="log-mod">${esc(e.module)}</span><span class="log-msg">${esc(e.msg)}</span></div>`;
 }
 
 function renderLogCats() {
@@ -2829,7 +2831,11 @@ function logState() {
 
 function addLog(e) {
   LOG.items.push(e);
-  if (LOG.items.length > LOG_MAX) LOG.items.splice(0, LOG.items.length - LOG_MAX);
+  const call = logIsCall(e);
+  if (LOG.items.filter((x) => logIsCall(x) === call).length > (call ? LOG_MAX_CALLS : LOG_MAX)) {
+    const [old] = LOG.items.splice(LOG.items.findIndex((x) => logIsCall(x) === call), 1); // la plus ancienne du même genre
+    $('#logList')?.querySelector(`[data-id="${old.id}"]`)?.remove();
+  }
   if (LOG.paused) { LOG.pending++; logState(); return; }
   const list = $('#logList');
   if (!list) return;
@@ -2837,7 +2843,6 @@ function addLog(e) {
     const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40; // on lisait plus haut : pas de saut
     list.querySelector('.log-empty')?.remove();
     list.insertAdjacentHTML('beforeend', logRow(e));
-    while (list.children.length > LOG_MAX) list.firstChild.remove();
     if (atBottom) list.scrollTop = list.scrollHeight;
   }
   clearTimeout(addLog.t);

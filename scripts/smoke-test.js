@@ -699,7 +699,7 @@ async function runSteps(app, camera) {
     const runText = await run.text();
     assert.ok(runText.includes('[test] ligne de cette exécution') && !runText.includes('\nancienne\n'), 'journal de l\'exécution en cours');
     // Journal en direct : lignes en mémoire classées par module, appels à l'API, puis chaque nouvelle ligne
-    const { categorize } = await import('../server/log.js');
+    const { categorize, recordLog, recentLogs } = await import('../server/log.js');
     assert.equal(categorize('gphoto2', 'x'), 'camera');
     assert.equal(categorize('devices', 'imprimante : none'), 'printer');
     assert.equal(categorize('devices', 'réseau : pas de Wi-Fi'), 'network');
@@ -723,6 +723,13 @@ async function runSteps(app, camera) {
     assert.equal(pushed.cat, 'printer');
     assert.equal(pushed.module, 'cups');
     ctrl.abort();
+    // Appels HTTP gardés à part : des heures d'admin ouverte (1 appel / 5 s) ne chassent pas les événements
+    recordLog('INFO', '[booth] événement à garder');
+    for (let i = 0; i < 1500; i++) recordLog('INFO', 'GET /api/admin/devices → 200 · 0 ms', { module: 'admin', cat: 'apiAdmin', file: false });
+    const kept = recentLogs();
+    assert.ok(kept.some((e) => e.msg === 'événement à garder'), 'événement toujours en mémoire');
+    assert.ok(kept.filter((e) => e.cat === 'api' || e.cat === 'apiAdmin').length <= 1000, 'appels plafonnés');
+    assert.ok(kept.every((e, i) => !i || kept[i - 1].id < e.id), 'lignes dans l\'ordre');
     // Déplacement vers « Tests » : la session et ses tirages suivent
     await post(`/api/admin/sessions/${s2.id}/move`, { eventId: first }, ADMIN);
     b = (await j('/api/bootstrap')).data.counters;
