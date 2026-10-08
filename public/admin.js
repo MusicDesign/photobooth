@@ -251,7 +251,9 @@ function updateCard() {
 function pollUpdate() {
   clearTimeout(pollUpdate.t);
   pollUpdate.t = setTimeout(async () => {
-    try { S.update = (await api('/api/admin/update')).update; } catch { return; }
+    // Serveur injoignable en pleine mise à jour : il est en train de se relancer.
+    try { S.update = (await api('/api/admin/update')).update; } catch { if (S.update?.updating || S.update?.restarting) waitRelaunch(); return; }
+    if (S.update?.restarting) return waitRelaunch();
     if (currentSection() === 'install') render();
     if (S.update?.updating) pollUpdate();
   }, 1500);
@@ -2854,7 +2856,7 @@ function bindSection(sec) {
     if (S.update?.available && !S.update.checkedAt && !check.done) { check.done = true; check(); } // une fois en arrivant sur la page
     $('#btnUpdateCheck')?.addEventListener('click', (e) => check(e.currentTarget));
     $('#btnUpdateInstall')?.addEventListener('click', async () => {
-      if (!await askConfirm('Mettre à jour la borne ?\n\nElle devra ensuite redémarrer.', 'Mettre à jour', 'retake')) return;
+      if (!await askConfirm(`Mettre à jour la borne ?\n\n${S.update?.canRestart ? 'Elle redémarre toute seule à la fin.' : 'Elle devra ensuite redémarrer.'}`, 'Mettre à jour', 'retake')) return;
       try { S.update = (await api('/api/admin/update/install', { method: 'POST' })).update; render(); pollUpdate(); } catch (err) { toast(err.message, true); }
     });
     $('#btnUpdateRestart')?.addEventListener('click', () => $('#btnRestart')?.click());
@@ -3183,7 +3185,13 @@ $('#btnReboot').onclick = () => powerAction('/api/admin/reboot', 'Redémarrer', 
 $('#btnShutdown').onclick = () => powerAction('/api/admin/poweroff', 'Éteindre', 'Extinction…', 'L\'ordinateur s\'éteint.');
 // Relancer : le logiciel se ferme proprement (caméra, Stream Deck) et se relance tout seul sur l'accueil.
 $('#btnRestart').onclick = async () => {
-  if (!await powerAction('/api/admin/restart', 'Relancer', 'Relance…', 'La borne revient dans quelques secondes.')) return;
+  if (await powerAction('/api/admin/restart', 'Relancer', 'Relance…', 'La borne revient dans quelques secondes.')) waitRelaunch();
+};
+/** Logiciel en train de se relancer (bouton Relancer, fin de mise à jour) : écran d'attente, puis retour à l'accueil. */
+async function waitRelaunch() {
+  if (waitRelaunch.on) return;
+  waitRelaunch.on = true;
+  document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>Relance…</h1><p class="sub">La borne revient dans quelques secondes.</p></div></div>`;
   // Lanceur Chromium : la fenêtre reste ouverte, on revient à l'accueil dès que le serveur relancé répond
   // (l'app Electron, elle, se relance entièrement).
   let down = false;
@@ -3193,7 +3201,7 @@ $('#btnRestart').onclick = async () => {
     if (!up) down = true;
     else if (down || i >= 30) { location.href = '/'; return; }
   }
-};
+}
 /** Confirmation dans la page : se valide à la souris, au clavier ou depuis le Stream Deck. */
 function askConfirm(text, okLabel, deckIcon = 'power') {
   return new Promise((resolve) => {

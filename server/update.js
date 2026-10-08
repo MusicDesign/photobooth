@@ -15,12 +15,14 @@ export const localVersion = () => { try { return JSON.parse(fs.readFileSync(path
  * qui attend sur origin, puis `git pull --ff-only`, `npm install`, modules manquants (setup.js) et redémarrage.
  * Seulement quand le projet est un dépôt git (clone) : une app empaquetée se met à jour par réinstallation.
  * Refusée s'il y a des modifications locales non enregistrées : c'est à l'humain de trancher.
+ * Réussie, elle relance le logiciel toute seule (restart), après l'impression en cours s'il y en a une (busy).
  */
 export class Updater {
-  constructor({ setup = null, restart = null } = {}) {
+  constructor({ setup = null, restart = null, busy = () => false } = {}) {
     this.setup = setup;
     this.restart = restart;
-    this.state = { available: fs.existsSync(path.join(ROOT, '.git')), version: localVersion(), remoteVersion: null, commit: null, date: null, subject: null, branch: null, behind: null, incoming: [], checkedAt: null, error: null, updating: false, log: [], updatedAt: null, needRestart: false };
+    this.busy = busy;
+    this.state = { available: fs.existsSync(path.join(ROOT, '.git')), version: localVersion(), remoteVersion: null, commit: null, date: null, subject: null, branch: null, behind: null, incoming: [], checkedAt: null, error: null, updating: false, log: [], updatedAt: null, needRestart: false, restarting: false };
   }
 
   git(...args) {
@@ -59,7 +61,7 @@ export class Updater {
     return this.status();
   }
 
-  /** Met à jour : pull, dépendances, modules manquants. La borne doit ensuite être redémarrée (needRestart). */
+  /** Met à jour : pull, dépendances, modules manquants, puis relance du logiciel (sinon needRestart : à la main). */
   async update({ log = null } = {}) {
     if (this.state.updating || !this.state.available) return this.status();
     this.state.updating = true;
@@ -76,7 +78,14 @@ export class Updater {
       if (this.setup) { say('Modules nécessaires'); await this.setup.install({ log: say }); }
       await this.version();
       Object.assign(this.state, { behind: 0, incoming: [], remoteVersion: this.state.version, updatedAt: new Date().toISOString(), needRestart: true });
-      say(`Version ${this.state.version} installée : redémarrage de la borne nécessaire.`);
+      if (!this.restart) say(`Version ${this.state.version} installée : redémarrage de la borne nécessaire.`);
+      else {
+        say(`Version ${this.state.version} installée : relance du logiciel.`);
+        this.state.restarting = true;
+        // L'admin lit encore l'état (restarting) avant que le serveur ferme ; une impression en cours se termine.
+        const relaunch = () => (this.busy() ? setTimeout(relaunch, 2000) : this.restart());
+        setTimeout(relaunch, 2000);
+      }
     } catch (e) {
       this.state.error = first(e);
       say(`Échec : ${first(e)}`);

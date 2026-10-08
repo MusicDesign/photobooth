@@ -214,7 +214,7 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   const reboot = machine('reboot', 'redémarrage de l\'ordinateur');
   const restart = stopThen(onRestart, 'redémarrage');
   // Mise à jour depuis l'admin (dépôt git) : version en cours lue au démarrage
-  const updater = new Updater({ setup, restart });
+  const updater = new Updater({ setup, restart, busy: () => booth.printing() });
   updater.version().catch(() => {});
 
   app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, lights, screen, setup, updater, usb, shutdown, restart, powerOff, reboot, canMachine: (verb) => machineOk[verb], kioskScreen, remoteScreen }));
