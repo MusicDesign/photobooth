@@ -621,7 +621,7 @@ function flow() {
     <div class="card">
       <h3>Filtres</h3>
       <label class="inline"><input name="filtersEnabled" type="checkbox" ${b.filters?.enabled ? 'checked' : ''}> Proposer des filtres à l'invité</label>
-      <small>Sur « On la garde ? » : l'invité choisit un filtre sous sa photo avant de la garder ou de l'imprimer. Il s'applique à tout le montage : photos, cadre, textes et logo. GIF et boomerangs compris.</small>
+      <small>Sur « On la garde ? » : l'invité choisit un filtre sous sa photo avant de la garder ou de l'imprimer. Il s'applique à tout le montage : photos, cadre, textes et logo (le grain des filtres argentiques : photos seulement). GIF et boomerangs compris.</small>
       <table class="filter-table">
         <thead><tr><th>Filtre</th><th>Proposé</th><th>Par défaut</th></tr></thead>
         <tbody>${FILTERS.map((f) => {

@@ -5,7 +5,7 @@ import { FONTS, GIF_MAX_SIDE, BOOMERANG_SPEEDS, BOOMERANG_MAX_SIDE } from './tem
 import { chromaKey, applyMatte, aiMatteRange } from '../public/cutout.js';
 import { shotMatte, adjustContour, cleanEdges } from './cutout-ai.js';
 import { ffmpegPath, encodeMp4 } from './video.js';
-import { applyFilter } from '../public/filters.js';
+import { applyFilter, applyGrain, filterById } from '../public/filters.js';
 
 /**
  * Rendu du template pour l'impression : chaque calque est dessiné dans l'ordre,
@@ -103,7 +103,15 @@ async function cutout(img, l, file, mirror, fastCutout) {
   return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
 }
 
-async function renderLayer(l, { template, shotFiles, mirror, fastCutout }) {
+/** Grain du filtre (argentique) sur la photo seule, le même pour chaque image d'un GIF (graine = n° du calque). */
+async function grain(buf, filter, seed) {
+  if (!filterById(filter).grain) return buf;
+  const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  applyGrain(data, info.width, info.height, filter, seed);
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
+}
+
+async function renderLayer(l, i, { template, shotFiles, mirror, fastCutout, filter }) {
   const W = template.width;
   const H = template.height;
   switch (l.type) {
@@ -114,6 +122,7 @@ async function renderLayer(l, { template, shotFiles, mirror, fastCutout }) {
       if (mirror) img = img.flop(); // photo en miroir, comme l'aperçu : chacun reste là où il s'est vu par rapport au cadre
       img = img.resize(l.width, l.height, { fit: 'cover', position: 'centre' });
       let buf = l.cutout && l.cutout !== 'none' ? await cutout(img, l, file, mirror, fastCutout) : await img.png().toBuffer();
+      buf = await grain(buf, filter, i + 1);
       buf = await roundCorners(buf, l.width, l.height, l.radius);
       buf = await withOpacity(buf, l.opacity);
       return placeLayer(buf, l, W, H);
@@ -138,14 +147,14 @@ async function renderLayer(l, { template, shotFiles, mirror, fastCutout }) {
 
 /**
  * Tous les calques assemblés sur le fond (sharp prêt à écrire), puis le filtre de l'invité (public/filters.js)
- * sur tout le montage : photos, cadre, textes et logo. Le détourage se fait avant, sur les couleurs d'origine.
+ * sur tout le montage : photos, cadre, textes et logo. Son grain éventuel, lui, ne touche que les photos. Le détourage se fait avant, sur les couleurs d'origine.
  * plainFile : vignette du montage sans filtre (vignettes des filtres sur « On la garde ? »).
  */
 async function render(template, shotFiles, mirror, filter = 'none', { fastCutout = false, plainFile = null } = {}) {
   const layers = [];
-  for (const l of template.layers) {
+  for (const [i, l] of template.layers.entries()) {
     if (l.visible === false) continue;
-    const placed = await renderLayer(l, { template, shotFiles, mirror, fastCutout });
+    const placed = await renderLayer(l, i, { template, shotFiles, mirror, fastCutout, filter });
     if (placed) layers.push(placed);
   }
   const montage = sharp({ create: { width: template.width, height: template.height, channels: 3, background: template.background || '#ffffff' } })

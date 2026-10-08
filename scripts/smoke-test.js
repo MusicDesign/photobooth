@@ -1004,6 +1004,14 @@ async function runSteps(app, camera) {
     const k = pm.width / (await sharp(file).metadata()).width;
     const plainBand = [...await sharp(plain).extract({ left: Math.round(50 * k), top: Math.round(1100 * k), width: 1, height: 1 }).raw().toBuffer()];
     assert.ok(plainBand[0] > 200 && plainBand[1] < 60, `vignette sans filtre : bande rouge : ${plainBand}`);
+    // Argentique : du grain sur la photo, pas sur le cadre (bande rouge unie)
+    await put('/api/admin/config', { booth: { filters: { enabled: true, available: ['none', 'bw', 'sepia', 'filmbw'] } } }, ADMIN);
+    assert.equal((await post(`/api/session/${s.id}/compose`, { filter: 'filmbw' })).data.filter, 'filmbw');
+    const spread = async (x, y) => { const { data } = await sharp(file).extract({ left: x, top: y, width: 40, height: 40 }).greyscale().raw().toBuffer({ resolveWithObject: true }); return Math.max(...data) - Math.min(...data); };
+    const before = await spread(900, 500);
+    assert.ok(await spread(50, 1080) <= 6, 'cadre sans grain');
+    await post(`/api/session/${s.id}/compose`, { filter: 'bw' });
+    assert.ok(before > (await spread(900, 500)) + 8, `grain sur la photo : écart ${before} contre ${await spread(900, 500)} sans`);
     const back = (await post(`/api/session/${s.id}/compose`, { filter: 'none' })).data;
     assert.equal(back.filter, 'none');
     const bandBack = await px(50, 1100); assert.ok(bandBack[0] > 200 && bandBack[1] < 60, `« Couleur » : bande rouge revenue : ${bandBack}`);

@@ -18,6 +18,15 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 
+// sharp prévient à chaque chargement sous Electron + Linux, même quand ses propres binaires (@img/sharp-linux-*)
+// fonctionnent : sans ce filtre, le journal affiche une fausse erreur à chaque démarrage de la borne
+const emitWarning = process.emitWarning.bind(process);
+process.emitWarning = (warning, ...rest) => {
+  const code = rest[0]?.code ?? rest[1];
+  if (code === 'SharpElectronLinux') return;
+  emitWarning(warning, ...rest);
+};
+
 // Lancée depuis le Finder, l'app hérite d'un PATH minimal (/usr/bin:/bin…) : sans Homebrew, gphoto2 est introuvable.
 if (process.platform === 'darwin') {
   const dirs = (process.env.PATH || '').split(':');
