@@ -139,6 +139,7 @@ export const DEFAULTS = {
     quotaReached: 'Les impressions sont terminées pour ce soir, mais votre photo vous attend en ligne !',
     paperEmpty: 'Plus de papier pour le moment, mais votre photo vous attend en ligne !', // stock à 0 (admin)
     printerUnavailable: "L'imprimante n'est pas disponible, mais votre photo vous attend en ligne !",
+    cameraUnavailable: "L'appareil photo n'est pas disponible, contactez l'organisateur.", // accueil : séance impossible
     finish: 'Terminer',
     gallery: 'Galerie',
     galleryTitle: 'Les photos de la soirée',

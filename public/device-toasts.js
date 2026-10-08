@@ -7,7 +7,8 @@ function ensureBox() {
   if (box?.isConnected) return box;
   const css = document.createElement('style');
   css.textContent = `
-    #deviceToasts { position: fixed; top: 16px; right: 16px; z-index: 100000; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; pointer-events: none; }
+    #deviceToasts { position: fixed; top: 16px; right: 16px; z-index: 100000; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; pointer-events: none; user-select: none; -webkit-user-select: none; }
+    .device-toast.link { pointer-events: auto; cursor: pointer; }
     .device-toast { display: flex; align-items: center; gap: 10px; max-width: min(420px, 90vw); padding: 10px 16px; border-radius: 12px; background: rgba(24, 26, 32, .94); color: #fff; font: 600 15px/1.3 system-ui, sans-serif; box-shadow: 0 6px 24px rgba(0, 0, 0, .3); animation: deviceToastIn .25s ease-out; transition: opacity .3s, transform .3s; }
     .device-toast i { flex: none; width: 10px; height: 10px; border-radius: 50%; background: #2fbf71; }
     .device-toast.off i { background: #e5534b; }
@@ -22,9 +23,10 @@ function ensureBox() {
   return box;
 }
 
-function show(kind, label, detail, ms = SHOW_MS) {
+function show(kind, label, detail, ms = SHOW_MS, onClick = null) {
   const el = document.createElement('div');
-  el.className = `device-toast${kind ? ` ${kind}` : ''}`;
+  el.className = `device-toast${kind ? ` ${kind}` : ''}${onClick ? ' link' : ''}`;
+  if (onClick) el.addEventListener('click', onClick);
   el.setAttribute('role', 'status');
   const dot = document.createElement('i');
   const text = document.createElement('span');
@@ -36,6 +38,7 @@ function show(kind, label, detail, ms = SHOW_MS) {
   }
   el.append(dot, text);
   const parent = ensureBox();
+  for (const same of [...parent.children]) if (same.textContent === el.textContent) same.remove(); // même message : remplacé, pas empilé
   parent.appendChild(el);
   while (parent.children.length > 5) parent.firstChild.remove();
   setTimeout(() => { el.classList.add('leaving'); setTimeout(() => el.remove(), 320); }, ms);
@@ -52,9 +55,10 @@ export function systemNotice(text, ms = 6000) {
 }
 
 // Mise à jour disponible, annoncée au lancement de la borne : { type: 'update', version }. Une fois par page.
+// onClick : admin connecté, la notification mène à la page Installation.
 let updateShown = false;
-export function updateNotice({ version }) {
+export function updateNotice({ version }, onClick = null) {
   if (updateShown) return;
   updateShown = true;
-  show('update', 'Mise à jour disponible', version || '', 10000);
+  show('update', 'Mise à jour disponible', version || '', 10000, onClick);
 }

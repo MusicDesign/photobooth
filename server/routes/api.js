@@ -7,6 +7,7 @@ export function apiRouter({ booth }) {
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024 } });
 
   r.get('/bootstrap', (req, res) => res.json(booth.bootstrap()));
+  r.get('/camera', (req, res) => res.set('Cache-Control', 'no-store').json(booth.cameraState())); // avant une séance
 
   // ?calib=1 : aperçu de l'écran du calibrage (flash pas levé : les premières photos de test sont sans flash)
   r.get('/live.mjpeg', (req, res) => booth.camera.attachLiveClient(res, { noFlash: req.query.calib === '1' }));

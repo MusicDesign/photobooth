@@ -192,7 +192,16 @@ export class Booth {
 
   // ---------- Sessions ----------
 
+  /** Appareil photo du serveur hors service (boîtier en préparation ou en panne) : { ok, message }. Le mode
+   * navigateur (webcam) se vérifie sur la borne elle-même. */
+  cameraState() {
+    const st = this.camera.status?.() || {};
+    return { mode: this.camera.mode, ok: this.camera.mode === 'browser' || st.ok !== false, message: st.message || null };
+  }
+
   async createSession(templateId) {
+    const cam = this.cameraState();
+    if (!cam.ok) throw new HttpError(409, 'CAMERA_UNAVAILABLE', `Caméra indisponible${cam.message ? ` : ${cam.message}` : ''}`);
     if (this.camera.calibrating) throw new HttpError(409, 'CAMERA_CALIBRATING', 'Réglage de l\'appareil en cours, un instant…');
     const cfg = this.cfg();
     const enabled = this.templates.enabled(cfg).map((t) => t.id);

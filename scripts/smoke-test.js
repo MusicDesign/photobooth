@@ -144,6 +144,22 @@ async function runSteps(app, camera) {
   });
 
   let s;
+  await step('appareil photo hors service : séance refusée, l\'accueil le sait avant', async () => {
+    const cam = app.booth.camera;
+    assert.equal((await j('/api/camera')).data.ok, true);
+    if (cam.mode === 'browser') return; // webcam : vérifiée par la borne (elle doit s'ouvrir), pas par le serveur
+    cam.status = () => ({ ok: false, message: 'boîtier débranché' });
+    try {
+      const st = (await j('/api/camera')).data;
+      assert.equal(st.ok, false);
+      assert.equal(st.message, 'boîtier débranché');
+      const r = await post('/api/session', { templateId: 'strip-3' });
+      assert.equal(r.status, 409);
+      assert.equal(r.data.error, 'CAMERA_UNAVAILABLE');
+    } finally { delete cam.status; }
+    assert.ok(app.config.get().texts.cameraUnavailable, 'message pour l\'invité');
+  });
+
   await step('session bande 3 photos + prises de vue', async () => {
     s = (await post('/api/session', { templateId: 'strip-3' })).data;
     assert.equal(s.shotsExpected, 3);

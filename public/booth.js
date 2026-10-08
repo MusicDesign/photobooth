@@ -652,9 +652,23 @@ function templatePageTurn(delta) {
   menuActivity();
 }
 
-function onIdleTap() {
+/** Appareil photo prêt ? Webcam : elle doit s'ouvrir ; boîtier : le serveur le dit. Le détail va au système. */
+async function cameraOk() {
+  if (state.boot.camera.mode === 'browser') { await startLive(); return !!state.live; }
+  const cam = await api('/api/camera').catch(() => null);
+  if (cam?.ok) return true;
+  systemNotice(cam?.message ? `Caméra indisponible : ${cam.message}` : 'Caméra indisponible');
+  return false;
+}
+
+async function onIdleTap() {
   const { items, guestCanChoose, default: def } = state.boot.templates;
   if (!items.length) return systemNotice('Aucun template activé, voir l\'admin');
+  if (state.checkingCamera) return;
+  state.checkingCamera = true;
+  const ok = await cameraOk().finally(() => { state.checkingCamera = false; });
+  if (state.screen !== 'idle') return;
+  if (!ok) return toast(state.boot.texts?.cameraUnavailable || '', 6000); // pas de séance sans appareil photo
   startLive(); // réveille le live view du boîtier pendant que l'invité choisit son cadre
   if (items.some(usesAi)) preloadAi();
   if (guestCanChoose && items.length > 1) { state.templatePage = 0; renderTemplateGrid(); showScreen('template'); $('#templateGrid').scrollTop = 0; sizeTemplateCards(); }
@@ -1376,13 +1390,21 @@ async function adminAccess() {
 }
 
 /** Départ vers l'admin : déclenchement programmé annulé et session non validée abandonnée avant de quitter la page. */
-async function openAdmin() {
+/** Notification de mise à jour touchée : page Installation si l'admin est déjà connecté (sinon rien, pas de pavé). */
+async function openInstallIfAdmin() {
+  if (state.screen !== 'idle') return; // invité en pleine séance
+  let authed = state.boot.adminOpen;
+  if (!authed) authed = (await api('/api/admin/login').catch(() => null))?.authed;
+  if (authed) openAdmin('install');
+}
+
+async function openAdmin(section = '') {
   const armed = state.armedSession;
   state.armedSession = null;
   const pending = [armed && api(`/api/session/${armed}/disarm`, { method: 'POST' }), state.session && dropSession()];
   if (state.screen !== 'idle') showScreen('idle');
   await Promise.allSettled(pending);
-  location.href = '/admin.html';
+  location.href = `/admin.html${section ? `#${section}` : ''}`;
 }
 
 // ---------- Galerie : photos de l'événement, navigation, réimpression ----------
@@ -1820,7 +1842,7 @@ function connectWs() {
     try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'deck') { onDeckPress(msg.id); return; }
     if (msg.type === 'device') { deviceNotice(msg); return; }
-    if (msg.type === 'update') { updateNotice(msg); return; }
+    if (msg.type === 'update') { updateNotice(msg, openInstallIfAdmin); return; }
     if (msg.type === 'sessions' && state.screen === 'idle') renderIdleGallery(); // photo supprimée depuis l'admin
     if (msg.type === 'flashStray') { if (state.boot) { state.boot.camera.flashStray = msg.stray; $('#flashBadge').classList.toggle('hidden', !msg.stray); } return; }
     if (msg.type === 'deckInfo') { // Stream Deck branché ou débranché : la galerie se met à sa taille

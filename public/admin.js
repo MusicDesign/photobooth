@@ -796,7 +796,7 @@ function themeSection() {
 
 // Textes des écrans, groupés dans l'ordre du passage d'un invité ; libellé = où le texte apparaît
 const TEXT_GROUPS = [
-  ['Accueil', [['welcome', 'Accueil, écran tactile'], ['welcomeNoTouch', 'Accueil, écran non tactile (Stream Deck)'], ['gallery', 'Bouton de la galerie']]],
+  ['Accueil', [['welcome', 'Accueil, écran tactile'], ['welcomeNoTouch', 'Accueil, écran non tactile (Stream Deck)'], ['gallery', 'Bouton de la galerie'], ['cameraUnavailable', 'Appareil photo indisponible']]],
   ['Séance photo', [['chooseTemplate', 'Choix du cadre'], ['getReady', 'Avant le décompte'], ['start', 'Bouton de départ'], ['lookUp', 'Bandeau « regardez l\'objectif »'], ['holdPose', 'Entre le « 0 » et la photo'], ['pleaseWait', 'Pendant le montage (GIF, boomerang)'], ['boomerangGo', 'Boomerang : pendant le film'], ['focusing', 'Boomerang : mise au point en cours']]],
   ['Relecture', [['review', 'Titre, photo'], ['reviewGif', 'Titre, GIF'], ['retake', 'Bouton refaire'], ['keep', 'Bouton garder, photo'], ['keepGif', 'Bouton garder, GIF']]],
   ['Impression', [['copies', 'Choix du nombre de tirages'], ['print', 'Bouton imprimer'], ['noPrint', 'Bouton sans impression'], ['printing', 'Impression en cours'], ['quotaReached', 'Quota de l\'événement atteint'], ['paperEmpty', 'Plus de papier'], ['printerUnavailable', 'Imprimante indisponible']]],
@@ -3406,7 +3406,7 @@ function scheduleRefresh() {
     try { msg = JSON.parse(ev.data); } catch { /* ignoré */ }
     if (msg?.type === 'deck') return onDeckPress(msg.id);
     if (msg?.type === 'deckInfo') return;
-    if (msg?.type === 'update') return updateNotice(msg);
+    if (msg?.type === 'update') return updateNotice(msg, S ? () => { location.hash = 'install'; } : null); // connecté : vers la page Installation
     if (msg?.type === 'device') { deviceNotice(msg); if (S && currentSection() !== 'editor') scheduleRefresh(); return; } // la page affichée suit l'état annoncé (lumières, boîtier, Wi-Fi…)
     if (msg?.type === 'config') refreshDevices(); // pilote de caméra changé (boîtier branché / débranché), entre autres
     if (S && ['dashboard', 'sessions', 'events'].includes(currentSection())) scheduleRefresh();

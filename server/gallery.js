@@ -47,7 +47,7 @@ function page({ theme, boothName, title = boothName, css = '', body }) {
 <link rel="stylesheet" href="/fonts/font-awesome/css/solid.min.css">
 <style>
   :root{--primary:${c.primary};--secondary:${c.secondary};--bg:${c.background};--surface:${c.surface};--text:${c.text};--on-primary:${c.onPrimary};--on-surface:${readableOn(c.surface, c.secondary, c.text, c.background, '#ffffff', '#000000')}}
-  *{box-sizing:border-box}body{margin:0;font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column;align-items:center;padding:24px 16px;gap:20px;min-height:100vh}
+  *{box-sizing:border-box;user-select:none;-webkit-user-select:none}body{margin:0;font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column;align-items:center;padding:24px 16px;gap:20px;min-height:100vh}
   h1{font-size:22px;margin:0;color:var(--secondary)}
   .card{background:var(--surface);border-radius:20px;box-shadow:0 10px 40px rgba(0,0,0,.12);padding:12px;max-width:640px;width:100%}
   img,video{display:block;width:100%;height:auto;border-radius:12px}
