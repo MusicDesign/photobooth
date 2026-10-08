@@ -21,7 +21,24 @@ function signature(t, samples) {
   return crypto.createHash('sha1').update(JSON.stringify([def, files, SIDE])).digest('hex').slice(0, 10);
 }
 
-export async function buildPreviews(t, { force = false } = {}) {
+/**
+ * Un calcul à la fois par template : deux calculs en parallèle (enregistrement pendant celui du démarrage)
+ * supprimaient chacun les fichiers de l'autre. Le second attend le premier, puis repart du template à jour :
+ * fresh() le relit à ce moment-là (null : supprimé entre-temps).
+ */
+const running = new Map(); // dossier du template → dernier calcul lancé
+export function buildPreviews(t, { fresh = null, force = false } = {}) {
+  const prev = running.get(t.dir) || Promise.resolve();
+  const job = prev.catch(() => {}).then(() => {
+    const cur = fresh ? fresh() : t;
+    return cur && fs.existsSync(cur.dir) ? build(cur, { force }) : [];
+  });
+  running.set(t.dir, job);
+  job.catch(() => {}).finally(() => { if (running.get(t.dir) === job) running.delete(t.dir); });
+  return job;
+}
+
+async function build(t, { force = false } = {}) {
   const samples = samplePhotos();
   if (!samples.length) return [];
   const sig = signature(t, samples);
@@ -62,9 +79,9 @@ export async function buildAllPreviews(templates) {
   for (const t of templates.all()) {
     try {
       const before = fs.existsSync(path.join(t.dir, PREVIEW_META)) ? fs.readFileSync(path.join(t.dir, PREVIEW_META), 'utf8') : '';
-      await buildPreviews(t);
+      await buildPreviews(t, { fresh: () => templates.items.get(t.id) });
       if (fs.readFileSync(path.join(t.dir, PREVIEW_META), 'utf8') !== before) n++;
-    } catch (e) { console.warn(`[templates] miniature de ${t.id} : ${e.message}`); }
+    } catch (e) { if (fs.existsSync(t.dir)) console.warn(`[templates] miniature de ${t.id} : ${e.message}`); } // supprimé pendant le calcul : rien à dire
   }
   if (n) console.log(`[templates] ${n} miniature(s) calculée(s)`);
   return n;

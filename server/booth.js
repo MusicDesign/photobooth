@@ -622,9 +622,15 @@ export class Booth {
     return { list, default: list.includes(f.default) ? f.default : list[0] };
   }
 
+  /** Code opérateur saisi sur la borne. Code enregistré vide (ancienne config) : rien ne déverrouille. */
+  operatorPinOk(pin) {
+    const expected = String(this.cfg().limits.operatorPin ?? '');
+    return expected !== '' && String(pin ?? '') === expected;
+  }
+
   unlock(id, pin) {
     const s = this.load(id);
-    if (String(pin) !== String(this.cfg().limits.operatorPin)) throw new HttpError(403, 'BAD_PIN', 'Code opérateur incorrect');
+    if (!this.operatorPinOk(pin)) throw new HttpError(403, 'BAD_PIN', 'Code opérateur incorrect');
     s.unlocked = true;
     this.store.saveSession(s);
     return this.view(s);
@@ -703,7 +709,7 @@ export class Booth {
     }
     if (isAnimatedKind(s.kind)) throw new HttpError(409, 'GIF_NO_PRINT', 'Un GIF ne s\'imprime pas');
     const operator = mode === 'operator';
-    if (operator && String(pin ?? '') !== String(cfg.limits.operatorPin)) throw new HttpError(403, 'BAD_PIN', 'Code opérateur incorrect');
+    if (operator && !this.operatorPinOk(pin)) throw new HttpError(403, 'BAD_PIN', 'Code opérateur incorrect');
     const max = operator ? cfg.limits.operatorMaxCopies : cfg.limits.maxCopiesPerSession;
     if (!Number.isInteger(copies) || copies < 1 || copies > max) throw new HttpError(400, 'COPIES_INVALID', `Nombre de copies invalide (1 à ${max})`);
     if (s.status === 'printing') throw new HttpError(409, 'SESSION_PRINTING', 'Cette photo est déjà en cours d\'impression');

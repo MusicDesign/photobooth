@@ -3,8 +3,8 @@ import path from 'node:path';
 import { ZipArchive } from 'archiver';
 import AdmZip from 'adm-zip';
 import { UPLOADS_DIR } from './paths.js';
-import { DEFAULTS, coerceNumbers } from './config.js';
-import { clone, HttpError } from './util.js';
+import { validateConfigPatch } from './config-validate.js';
+import { clone, HttpError, isPlainObject } from './util.js';
 
 /**
  * Export et import de la configuration de la borne : un fichier .zip avec
@@ -77,12 +77,12 @@ const templateDirs = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((
  * Archive de la configuration, à brancher sur une réponse ou un fichier.
  * parts : { settings, templates } (booléens) ; secrets : codes et mots de passe inclus ou non.
  */
-export function buildBundle({ config, templates, parts = {}, secrets = false, boothName = '', appVersion = '' }) {
+export function buildBundle({ config, templates, parts = {}, secrets = false, boothName = '', appVersion = '', extra = {} }) {
   const zip = new ZipArchive({ zlib: { level: 6 } });
   const settings = parts.settings === false ? null : (secrets ? clone(config.data) : stripSecrets(config.data));
   zip.append(JSON.stringify({
     app: 'photobooth-config', format: FORMAT, appVersion, boothName, exportedAt: new Date().toISOString(),
-    secrets: !!(settings && secrets), parts: { settings: !!settings, templates: !!parts.templates }
+    secrets: !!(settings && secrets), parts: { settings: !!settings, templates: !!parts.templates }, ...extra
   }, null, 2), { name: 'manifest.json' });
   if (settings) {
     zip.append(JSON.stringify(settings, null, 2), { name: 'settings.json' });
@@ -155,14 +155,20 @@ export function describeBundle(bundle, { templates }) {
 }
 
 /**
- * Fichier retouché à la main : les réglages numériques des sections choisies doivent être des nombres (texte
- * numérique converti). Vérifié avant la sauvegarde et avant d'écrire quoi que ce soit.
+ * Fichier retouché à la main ou d'une autre version : les sections choisies passent la même vérification que les
+ * réglages enregistrés depuis l'admin (config-validate.js) ; un nombre hors bornes y est ramené. Les cadres
+ * proposés absents de la borne sont retirés après l'import (Templates.reconcile). Vérifié avant la sauvegarde et
+ * avant d'écrire quoi que ce soit.
  */
 export function checkBundle(bundle, sel) {
   for (const key of sel.sections || []) {
-    if (!SECTION_LABELS[key] || !bundle.settings?.[key]) continue;
-    const notNumber = coerceNumbers({ [key]: bundle.settings[key] });
-    if (notNumber) throw new HttpError(400, 'IMPORT_NUMBER', `Réglage invalide dans le fichier : nombre attendu pour « ${notNumber} »`);
+    if (!SECTION_LABELS[key] || !isPlainObject(bundle.settings?.[key])) continue;
+    try {
+      validateConfigPatch({ [key]: bundle.settings[key] }, { clamp: true });
+    } catch (e) {
+      if (!(e instanceof HttpError)) throw e;
+      throw new HttpError(400, `IMPORT_${e.code}`, `Réglage invalide dans le fichier : ${e.message}`);
+    }
   }
 }
 
@@ -183,7 +189,7 @@ export function applyBundle(bundle, sel, { config, templates }) {
   const done = { sections: 0, templates: 0 };
   for (const id of sel.templates || []) {
     const t = bundle.templates.get(id);
-    if (!t || !/^[\w.-]+$/.test(id)) continue;
+    if (!t || !/^[A-Za-z0-9][\w.-]*$/.test(id)) continue;
     const dir = path.join(templates.dir, id);
     fs.rmSync(dir, { recursive: true, force: true });
     for (const f of t.files) extract(f.entry, dir, f.rel);
@@ -193,7 +199,7 @@ export function applyBundle(bundle, sel, { config, templates }) {
   const useSecrets = !!sel.secrets && !!bundle.manifest.secrets;
   const patch = {};
   for (const key of sel.sections || []) {
-    if (!SECTION_LABELS[key] || !bundle.settings?.[key]) continue;
+    if (!SECTION_LABELS[key] || !isPlainObject(bundle.settings?.[key])) continue;
     const section = clone(bundle.settings[key]);
     if (!useSecrets) keepCurrentSecrets(key, section, config.data);
     patch[key] = section;
@@ -216,12 +222,21 @@ export const lastImportBackup = (config) => {
   return f ? { file: path.join(dir, f), name: f, at: fs.statSync(path.join(dir, f)).mtime.toISOString() } : null;
 };
 
-/** État actuel complet (secrets compris) dans backups/avant-import-<date>.zip ; les 3 plus récentes sont gardées. */
-export async function backupBeforeImport({ config, templates, boothName, appVersion }) {
+/**
+ * État actuel complet (secrets compris) dans backups/avant-import-<date>.zip ; les 3 plus récentes sont gardées.
+ * bundle et sel (l'import qui va suivre) : templates et fichiers envoyés qu'il ajoute, notés dans le manifeste
+ * pour que l'annulation les retire.
+ */
+export async function backupBeforeImport({ config, templates, boothName, appVersion, bundle = null, sel = {} }) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const dir = backupDir(config);
   const file = path.join(dir, `${BACKUP_PREFIX}${stamp}.zip`);
-  await writeBundle(buildBundle({ config, templates, parts: { settings: true, templates: true }, secrets: true, boothName, appVersion }), file);
+  const before = new Set(templateDirs(templates.dir));
+  const added = {
+    addedTemplates: (sel.templates || []).filter((id) => bundle?.templates.has(id) && /^[A-Za-z0-9][\w.-]*$/.test(id) && !before.has(id)),
+    addedUploads: (sel.sections || []).length && bundle ? [...bundle.uploads.keys()].filter((f) => !fs.existsSync(path.join(UPLOADS_DIR, f))) : []
+  };
+  await writeBundle(buildBundle({ config, templates, parts: { settings: true, templates: true }, secrets: true, boothName, appVersion, extra: added }), file);
   const old = fs.readdirSync(dir).filter((n) => n.startsWith(BACKUP_PREFIX) && n.endsWith('.zip')).sort().reverse().slice(3);
   for (const f of old) fs.rmSync(path.join(dir, f), { force: true });
   return file;
@@ -232,5 +247,18 @@ export function revertLastImport(ctx) {
   const last = lastImportBackup(ctx.config);
   if (!last) throw new HttpError(404, 'NO_BACKUP', 'Aucune sauvegarde d\'avant import');
   const bundle = readBundle(fs.readFileSync(last.file));
-  return applyBundle(bundle, { sections: Object.keys(SECTION_LABELS), templates: [...bundle.templates.keys()], secrets: true }, ctx);
+  // Ajouts de l'import annulé : templates et fichiers envoyés absents avant lui
+  let removed = 0;
+  for (const id of [].concat(bundle.manifest.addedTemplates || [])) {
+    if (typeof id !== 'string' || !/^[A-Za-z0-9][\w.-]*$/.test(id) || bundle.templates.has(id)) continue;
+    const dir = path.join(ctx.templates.dir, id);
+    if (fs.existsSync(dir)) { fs.rmSync(dir, { recursive: true, force: true }); removed++; }
+  }
+  if (removed) ctx.templates.reload();
+  const done = applyBundle(bundle, { sections: Object.keys(SECTION_LABELS), templates: [...bundle.templates.keys()], secrets: true }, ctx);
+  const used = new Set(uploadRefs(ctx.config.data));
+  for (const f of [].concat(bundle.manifest.addedUploads || [])) {
+    if (typeof f === 'string' && /^[A-Za-z0-9][\w.-]*$/.test(f) && !used.has(f)) fs.rmSync(path.join(UPLOADS_DIR, f), { force: true });
+  }
+  return { ...done, removedTemplates: removed };
 }

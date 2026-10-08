@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
 import { FONTS, GIF_MAX_SIDE, BOOMERANG_SPEEDS, BOOMERANG_MAX_SIDE } from './templates.js';
@@ -118,7 +119,9 @@ async function renderLayer(l, { template, shotFiles, mirror, fastCutout }) {
       return placeLayer(buf, l, W, H);
     }
     case 'image': {
-      const src = l.bgRemove && l.bgRemove !== 'none' && l.cutSrc ? l.cutSrc : l.src; // version sans fond si demandée
+      // Version sans fond si demandée, l'originale si son fichier a disparu
+      const cut = l.bgRemove && l.bgRemove !== 'none' && l.cutSrc && fs.existsSync(path.join(template.dir, l.cutSrc));
+      const src = cut ? l.cutSrc : l.src;
       let buf = await sharp(path.join(template.dir, src)).resize(l.width, l.height, { fit: 'fill' }).png().toBuffer();
       buf = await roundCorners(buf, l.width, l.height, l.radius);
       buf = await withOpacity(buf, l.opacity);

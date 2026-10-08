@@ -79,15 +79,25 @@ function toast(msg, ms = 3500) {
 
 async function renderLogo(url) {
   const slots = $$('.logo-slot');
-  if (/\.svg(\?|$)/i.test(url)) { // logo Cheeesy coloré par le serveur (/logo.svg?c=…) ou SVG importé
+  // Seul le logo Cheeesy coloré par le serveur (/logo.svg?c=…) est inséré dans la page : un SVG importé pourrait y
+  // apporter des scripts, des styles pour toute la page ou des id en double. Celui-là s'affiche comme une image.
+  if (/^\/logo\.svg(\?|$)/.test(url || '')) {
     try {
       const svg = await (await fetch(url)).text();
-      for (const s of slots) s.innerHTML = svg; // un SVG importé en currentColor hérite de la couleur secondaire
+      for (const s of slots) s.innerHTML = svg;
       return;
     } catch { /* on retombe sur <img> */ }
   }
-  for (const s of slots) s.innerHTML = `<img src="${url}" alt="">`;
+  for (const s of slots) {
+    const img = document.createElement('img');
+    img.src = url || '';
+    img.alt = '';
+    s.replaceChildren(img);
+  }
 }
+
+/** url("…") pour une propriété CSS : guillemets, barres obliques inverses et retours à la ligne neutralisés. */
+const cssUrl = (u) => `url("${String(u).replace(/["\\\n\r]/g, (c) => `\\${c.charCodeAt(0).toString(16)} `)}")`;
 
 /** Contraste WCAG entre deux couleurs hex. */
 function contrast(hexA, hexB) {
@@ -120,7 +130,7 @@ function applyBoot() {
   document.body.dataset.font = theme.font || 'system';
   document.body.dataset.cursor = ['idle', 'hide'].includes(booth.cursor) ? booth.cursor : 'show';
   nudgeCursor();
-  document.body.style.backgroundImage = theme.backgroundImage ? `url("${theme.backgroundImage}")` : '';
+  document.body.style.backgroundImage = theme.backgroundImage ? cssUrl(theme.backgroundImage) : '';
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', theme.colors.background);
   document.title = booth.name;
   renderLogo(theme.logo);

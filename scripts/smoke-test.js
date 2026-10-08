@@ -100,6 +100,48 @@ async function runSteps(app, camera) {
     assert.equal(boot.limits.operatorPin, undefined, 'le PIN opérateur ne doit pas fuiter');
   });
 
+  await step('cadres proposés : installation neuve, ancienne liste vide (= tous), liste vide = aucun, cadres disparus', async () => {
+    const { Templates } = await import('../server/templates.js');
+    const { DEFAULTS } = await import('../server/config.js');
+    const dir = fs.mkdtempSync(path.join(tmp, 'tpl-neuf-'));
+    const fresh = new Templates(dir); // aucun template : « Photo seule » créé
+    const fakeConfig = (templates) => ({ data: { templates }, update(p) { Object.assign(this.data.templates, p.templates); } });
+    const c1 = fakeConfig(structuredClone(DEFAULTS.templates));
+    fresh.reconcile(c1);
+    assert.deepEqual(c1.data.templates.enabled, ['default'], 'installation neuve : « Photo seule » proposé');
+    assert.equal(c1.data.templates.default, 'default');
+    assert.equal(fresh.enabled(c1.data).length, 1);
+    // Config d'avant : liste vide = tous les cadres, convertie une fois
+    fs.cpSync(path.join(process.env.BOOTH_TEMPLATES_DIR, 'strip-3'), path.join(dir, 'strip-3'), { recursive: true });
+    fresh.reload();
+    const c2 = fakeConfig({ ...structuredClone(DEFAULTS.templates), enabled: [], default: '' });
+    fresh.reconcile(c2);
+    assert.deepEqual(c2.data.templates.enabled.sort(), ['default', 'strip-3']);
+    // Après conversion, liste vide = aucun cadre (l'admin l'affiche ainsi)
+    const c3 = fakeConfig({ ...c2.data.templates, enabled: [] });
+    assert.equal(fresh.selection(c3.data.templates), null, 'liste vide voulue : gardée');
+    assert.equal(fresh.enabled(c3.data).length, 0);
+    // Cadres proposés tous disparus (supprimés à la main) : tous les présents
+    const c4 = fakeConfig({ ...c2.data.templates, enabled: ['parti'], default: 'parti' });
+    fresh.reconcile(c4);
+    assert.deepEqual(c4.data.templates.enabled.sort(), ['default', 'strip-3']);
+    assert.ok(['default', 'strip-3'].includes(c4.data.templates.default));
+    // Sur la borne de test : config par défaut (« default » absent) → cadres de démo proposés, séance possible
+    assert.equal(app.config.data.templates.schema, 2);
+    assert.deepEqual([...app.config.get().templates.enabled].sort(), ['classic-10x15', 'strip-3']);
+    // Liste vide = aucun cadre, aussi pour la borne
+    await put('/api/admin/config', { templates: { enabled: [] } }, ADMIN);
+    assert.equal((await j('/api/bootstrap')).data.templates.items.length, 0);
+    assert.equal((await post('/api/session', {})).data.error, 'NO_TEMPLATE');
+    await put('/api/admin/config', { templates: { enabled: ['classic-10x15', 'strip-3'] } }, ADMIN);
+    // Liste invalide ou cadre inconnu : refusés (la suppression d'un cadre échouait ensuite)
+    for (const enabled of ['strip-3', { a: 1 }, [1], ['inconnu']]) {
+      assert.equal((await put('/api/admin/config', { templates: { enabled } }, ADMIN)).status, 400, JSON.stringify(enabled));
+    }
+    assert.equal((await put('/api/admin/config', { templates: { default: 'inconnu' } }, ADMIN)).status, 400);
+    assert.ok(Array.isArray(app.config.get().templates.enabled));
+  });
+
   let s;
   await step('session bande 3 photos + prises de vue', async () => {
     s = (await post('/api/session', { templateId: 'strip-3' })).data;
@@ -171,6 +213,17 @@ async function runSteps(app, camera) {
     assert.equal(refused.data.error, 'QUOTA_REACHED');
     const badPin = await post(`/api/session/${s2.id}/unlock`, { pin: '9999' });
     assert.equal(badPin.status, 403);
+    // Code opérateur vide, trop court ou pas en chiffres : refusé à l'enregistrement ; vide (ancienne config) : rien ne déverrouille
+    for (const operatorPin of ['', '12', 'abcd', '123456789']) {
+      const r = await put('/api/admin/config', { limits: { operatorPin } }, ADMIN);
+      assert.equal(r.status, 400, `code ${JSON.stringify(operatorPin)} accepté`);
+      assert.equal(r.data.error, 'OPERATOR_PIN');
+    }
+    const pinBefore = app.config.get().limits.operatorPin;
+    app.config.update({ limits: { operatorPin: '' } });
+    assert.equal((await post(`/api/session/${s2.id}/unlock`, { pin: '' })).status, 403, 'code vide : refusé');
+    assert.equal((await post(`/api/session/${s2.id}/unlock`, {})).status, 403);
+    app.config.update({ limits: { operatorPin: pinBefore } });
     const unlocked = await post(`/api/session/${s2.id}/unlock`, { pin: app.config.get().limits.operatorPin });
     assert.equal(unlocked.data.maxCopies, 10);
     const ok = await post(`/api/session/${s2.id}/print`, { copies: 2 });
@@ -288,6 +341,29 @@ async function runSteps(app, camera) {
 
   await step('admin : refus sans PIN, état complet, réimpression, compteurs', async () => {
     assert.equal((await j('/api/admin/state')).status, 401);
+    // Codes faux : 5 essais, puis attente (429) même avec le bon code, à la connexion comme par l'en-tête
+    const login = (pin) => post('/api/admin/login', { pin });
+    for (let i = 0; i < 5; i++) assert.equal((await login('0000')).status, 401);
+    const locked = await login(ADMIN['x-admin-pin']);
+    assert.equal(locked.status, 429, JSON.stringify(locked.data));
+    assert.equal(locked.data.error, 'TOO_MANY_ATTEMPTS');
+    assert.equal((await j('/api/admin/state', { headers: ADMIN })).status, 429, 'en-tête bloqué aussi');
+    app.adminGuard.reset();
+    assert.equal((await j('/api/admin/state', { headers: { 'x-admin-pin': 'faux' } })).status, 401);
+    // Connexion par cookie, fermée quand le code admin change (sauf pour celui qui l'a changé)
+    const cookieOf = (res) => res.headers.get('set-cookie')?.split(';')[0];
+    const res1 = await fetch(`${base}/api/admin/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: ADMIN['x-admin-pin'] }) });
+    const c1 = cookieOf(res1);
+    assert.match(res1.headers.get('set-cookie'), /Max-Age=43200/);
+    const other = cookieOf(await fetch(`${base}/api/admin/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: ADMIN['x-admin-pin'] }) }));
+    assert.equal((await j('/api/admin/state', { headers: { cookie: c1 } })).status, 200);
+    const res2 = await fetch(`${base}/api/admin/config`, { method: 'PUT', headers: { 'Content-Type': 'application/json', cookie: c1 }, body: JSON.stringify({ admin: { pin: '8642' } }) });
+    assert.equal(res2.status, 200);
+    const c2 = cookieOf(res2);
+    assert.equal((await j('/api/admin/state', { headers: { cookie: other } })).status, 401, 'autre connexion fermée');
+    assert.equal((await j('/api/admin/state', { headers: { cookie: c1 } })).status, 401, 'ancien cookie fermé');
+    assert.equal((await j('/api/admin/state', { headers: { cookie: c2 } })).status, 200, 'nouveau cookie de celui qui a changé le code');
+    assert.equal((await put('/api/admin/config', { admin: { pin: ADMIN['x-admin-pin'] } }, { 'x-admin-pin': '8642' })).status, 200);
     const st = (await j('/api/admin/state', { headers: ADMIN })).data;
     assert.ok(st.sessions.length >= 3);
     assert.ok(st.themes.length >= 3);
@@ -403,6 +479,11 @@ async function runSteps(app, camera) {
   });
 
   await step('événements : création, rattachement, compteurs par événement, déplacement, export ZIP, suppression', async () => {
+    // Identifiants pris dans le prototype des objets : inconnus, pas d'erreur 500
+    assert.equal(app.store.getEvent('constructor'), null);
+    assert.equal(app.store.getSession('__proto__'), null);
+    assert.equal((await j('/api/admin/events/constructor/sessions', { headers: ADMIN })).status, 404);
+    assert.equal((await j('/api/session/constructor')).status, 404);
     const st = (await j('/api/admin/state', { headers: ADMIN })).data;
     const first = st.activeEventId;
     assert.equal(st.events.find((e) => e.id === first).name, 'Tests', 'les sessions existantes sont rangées dans « Tests »');
@@ -557,6 +638,12 @@ async function runSteps(app, camera) {
     assert.equal(logos().length, 1, 'l\'ancien logo est supprimé quand il est remplacé');
     assert.equal((await put('/api/admin/config', { booth: { logo: '' }, theme: { custom: { logo: '' } } }, ADMIN)).status, 200);
     assert.equal(logos().length, 0, 'logo par défaut : plus de fichier envoyé');
+    // Logo et image de fond : seulement des fichiers envoyés depuis l'admin
+    for (const logo of ['javascript:alert(1)', '/uploads/../config.json', 'https://exemple.fr/logo.png', '/uploads/a.png" onerror="x', 3]) {
+      assert.equal((await put('/api/admin/config', { booth: { logo } }, ADMIN)).status, 400, JSON.stringify(logo));
+    }
+    assert.equal((await put('/api/admin/config', { theme: { custom: { backgroundImage: 'x");background:red' } } }, ADMIN)).status, 400);
+    assert.equal(app.config.get().booth.logo, '');
     // Référence vers un fichier disparu : remise à vide au démarrage
     const { missingUploadRefs } = await import('../server/uploads.js');
     assert.deepEqual(missingUploadRefs({ booth: { logo: '/uploads/logo-0.svg', backgroundImage: '' }, theme: { custom: {} } }), { booth: { logo: '' } });
@@ -651,6 +738,33 @@ async function runSteps(app, camera) {
     const dir = path.join(process.env.BOOTH_TEMPLATES_DIR, tplId, 'assets');
     assert.ok(fs.existsSync(path.join(dir, path.basename(used.src))), 'image utilisée gardée');
     assert.ok(!fs.existsSync(path.join(dir, path.basename(orphan.src))), 'image non utilisée supprimée');
+    // Le nettoyage ne touche que le template enregistré : une image ancienne d'un autre template reste
+    const otherId = app.templates.all().find((x) => x.id !== tplId).id;
+    const otherAsset = path.join(process.env.BOOTH_TEMPLATES_DIR, otherId, 'assets', 'ancienne.png');
+    fs.mkdirSync(path.dirname(otherAsset), { recursive: true });
+    fs.writeFileSync(otherAsset, png);
+    const old = new Date(Date.now() - 3600 * 1000);
+    fs.utimesSync(otherAsset, old, old);
+    app.templates.reload();
+    assert.equal((await put(`/api/admin/templates/${tplId}`, { name: app.templates.get(tplId).name }, ADMIN)).status, 200);
+    assert.ok(fs.existsSync(otherAsset), 'image d\'un autre template gardée');
+    fs.rmSync(otherAsset);
+    // Version sans fond disparue : enregistrement accepté (cutSrc vidé), montage avec l'image d'origine
+    const withCut = [...app.templates.get(tplId).layers, { type: 'image', src: used.src, bgRemove: 'color', cutSrc: 'assets/disparue-sansfond-12345678.png', x: 0, y: 0, width: 100, height: 100 }];
+    const sv = await put(`/api/admin/templates/${tplId}`, { layers: withCut }, ADMIN);
+    assert.equal(sv.status, 200, JSON.stringify(sv.data));
+    assert.equal(sv.data.layers.at(-1).cutSrc, null);
+    const { compose } = await import('../server/compositor.js');
+    const tc = { ...app.templates.get(tplId) };
+    tc.layers = tc.layers.map((l, i) => (i === tc.layers.length - 1 ? { ...l, cutSrc: 'assets/disparue-sansfond-12345678.png' } : l));
+    const outCut = path.join(tmp, 'cutsrc-absent.jpg');
+    await compose(tc, Array.from({ length: tc.shots }, () => path.join(SAMPLES_DIR, 'sample-1.jpg')), outCut);
+    assert.ok(fs.existsSync(outCut), 'montage malgré la version sans fond absente');
+    // Miniatures demandées deux fois en même temps : calculées l'une après l'autre, fichiers présents
+    const { buildPreviews } = await import('../server/template-previews.js');
+    const [f1, f2] = await Promise.all([buildPreviews(app.templates.get(tplId), { force: true }), buildPreviews(app.templates.get(tplId), { force: true })]);
+    assert.deepEqual(f1, f2);
+    for (const f of f2) assert.ok(fs.existsSync(path.join(app.templates.get(tplId).dir, f)), `miniature ${f} présente`);
   });
 
   await step('GIF : masqué tant que désactivé, poses, animation, jamais imprimé, refaire toutes les poses', async () => {
@@ -1070,6 +1184,19 @@ async function runSteps(app, camera) {
       assert.ok(r.data.message.includes('limits.countdownSec'), r.data.message);
     }
     assert.equal((await put('/api/admin/config', { lights: { idle: { brightness: 'fort' } } }, ADMIN)).status, 400, 'réglage imbriqué');
+    // Hors bornes : refusé (0 s de décompte, 0 tirage par invité bloquaient la borne)
+    for (const limits of [{ countdownSec: 0 }, { maxCopiesPerSession: 0 }, { operatorMaxCopies: 0 }, { maxRetakesPerSession: -2 }, { countdownSec: 1000 }]) {
+      const r = await put('/api/admin/config', { limits }, ADMIN);
+      assert.equal(r.status, 400, `${JSON.stringify(limits)} accepté`);
+      assert.equal(r.data.error, 'NUMBER');
+    }
+    assert.equal((await put('/api/admin/config', { lights: { idle: { brightness: 300 } } }, ADMIN)).status, 400);
+    assert.equal(app.config.get().limits.maxCopiesPerSession, 2);
+    // Clés du prototype ignorées
+    const polluted = await fetch(`${base}/api/admin/config`, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...ADMIN }, body: '{"booth":{"__proto__":{"pollue":1},"constructor":{"prototype":{"pollue":1}}}}' });
+    assert.equal(polluted.status, 200);
+    assert.equal({}.pollue, undefined, 'prototype des objets intact');
+    assert.equal(Object.hasOwn(app.config.data.booth, 'constructor'), false);
     assert.equal(app.config.get().limits.countdownSec, before, 'valeur refusée : réglage inchangé');
     assert.equal((await put('/api/admin/config', { limits: { countdownSec: ' 4 ', maxRetakesPerSession: -1 } }, ADMIN)).status, 200);
     assert.strictEqual(app.config.get().limits.countdownSec, 4, 'texte numérique enregistré comme nombre');
@@ -1090,6 +1217,29 @@ async function runSteps(app, camera) {
     assert.notEqual(app.config.get().booth.name, 'Import refusé', 'aucune section appliquée');
     assert.equal(app.config.get().limits.countdownSec, before);
     assert.deepEqual((await j('/api/admin/config/import/backup', { headers: ADMIN })).data, backupsBefore, 'pas de sauvegarde pour un import refusé');
+    // Même vérification qu'à l'enregistrement : valeur à choix inconnue refusée, nombre hors bornes ramené dans ses bornes,
+    // cadres proposés absents de la borne retirés
+    const importSettings = async (patch, sections) => {
+      const z2 = new AdmZip(zip.toBuffer());
+      z2.updateFile('settings.json', Buffer.from(JSON.stringify({ ...settings, ...patch })));
+      const f2 = new FormData();
+      f2.append('file', new Blob([z2.toBuffer()]), 'config.zip');
+      const p = await j('/api/admin/config/import/preview', { method: 'POST', headers: ADMIN, body: f2 });
+      return post('/api/admin/config/import/apply', { id: p.data.import.id, sections }, ADMIN);
+    };
+    const badTouch = await importSettings({ booth: { ...settings.booth, touch: 'souris' } }, ['booth']);
+    assert.equal(badTouch.status, 400);
+    assert.equal(badTouch.data.error, 'IMPORT_TOUCH');
+    const badLogo = await importSettings({ booth: { ...settings.booth, logo: 'javascript:alert(1)' } }, ['booth']);
+    assert.equal(badLogo.data.error, 'IMPORT_UPLOAD_URL');
+    const clamped = await importSettings({ limits: { ...settings.limits, countdownSec: 0, maxCopiesPerSession: 0 }, templates: { ...settings.templates, enabled: ['absent', 'strip-3'], default: 'absent' } }, ['limits', 'templates']);
+    assert.equal(clamped.status, 200, JSON.stringify(clamped.data));
+    assert.equal(app.config.get().limits.countdownSec, 1);
+    assert.equal(app.config.get().limits.maxCopiesPerSession, 1);
+    assert.deepEqual(app.config.get().templates.enabled, ['strip-3'], 'cadre absent retiré');
+    assert.equal(app.config.get().templates.default, 'strip-3');
+    assert.equal((await post('/api/admin/config/import/revert', {}, ADMIN)).status, 200);
+    assert.equal(app.config.get().limits.countdownSec, before);
   });
 
   await step('export et import de la configuration : secrets exclus, choix par section, templates, annulation', async () => {
@@ -1166,6 +1316,22 @@ async function runSteps(app, camera) {
     assert.equal(cfg().booth.name, 'Borne A');
     assert.equal((await post('/api/admin/config/import/revert', {}, ADMIN)).status, 200);
     assert.equal(cfg().booth.name, 'Avant dernier import', 'import annulé');
+    // Annulation d'un import qui a ajouté un template : il est retiré, et des cadres proposés
+    const extra = new AdmZip(plain);
+    for (const e of extra.getEntries().filter((x) => x.entryName.startsWith(`templates/${tpl.id}/`))) {
+      const data = e.entryName.endsWith('template.json') ? Buffer.from(JSON.stringify({ ...JSON.parse(e.getData()), id: 'importe' })) : e.getData();
+      extra.addFile(e.entryName.replace(`templates/${tpl.id}/`, 'templates/importe/'), data);
+    }
+    const p7 = await preview(extra.toBuffer());
+    assert.ok(p7.data.import.templates.some((t) => t.id === 'importe' && !t.exists));
+    await apply({ id: p7.data.import.id, templates: ['importe'] });
+    assert.ok(app.templates.items.has('importe'));
+    await put('/api/admin/config', { templates: { enabled: [...cfg().templates.enabled, 'importe'] } }, ADMIN);
+    assert.equal((await post('/api/admin/config/import/revert', {}, ADMIN)).status, 200);
+    assert.ok(!app.templates.items.has('importe'), 'template ajouté par l\'import retiré');
+    assert.ok(!fs.existsSync(path.join(app.templates.dir, 'importe')));
+    assert.ok(!cfg().templates.enabled.includes('importe'), 'retiré des cadres proposés');
+    assert.ok(app.templates.items.has(tpl.id), 'template d\'avant gardé');
     assert.ok((await j('/api/admin/config/import/backup', { headers: ADMIN })).data.backup, 'sauvegarde listée');
     // Fichiers invalides ou périmés refusés
     assert.equal((await preview(Buffer.from('pas un zip'))).status, 400);
