@@ -18,3 +18,6 @@ data/templates/*/preview.json
 # Sauvegardes automatiques de la base et de la configuration
 data/backups/
 data/*.illisible-*
+# Photos d'exemple générées (caméra simulée, scripts/make-demo-assets.js)
+data/samples/*
+!data/samples/.gitkeep
