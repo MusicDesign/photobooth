@@ -9,14 +9,20 @@ $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 function Say($t) { Write-Host "`n> $t" -ForegroundColor Cyan }
 
-# 1. Node.js 20 ou plus (winget)
-$major = 0
-if (Get-Command node -ErrorAction SilentlyContinue) { $major = [int](((node -v) -replace '^v', '') -split '\.')[0] }
-if ($major -lt 20) {
-  if ($Check) { Write-Host 'x Node.js 20 ou plus absent'; exit 1 }
+# 1. Node.js 22.12 ou plus (winget)
+function NodeVersion {
+  if (-not (Get-Command node -ErrorAction SilentlyContinue)) { return [version]'0.0' }
+  $v = ((node -v) -replace '^v', '') -split '\.'
+  return [version]"$($v[0]).$($v[1])"
+}
+if ((NodeVersion) -lt [version]'22.12') {
+  if ($Check) { Write-Host 'x Node.js 22.12 ou plus absent'; exit 1 }
   Say 'Node.js'
-  winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements
+  # Déjà installé mais trop ancien : winget install ne fait rien, c'est une mise à niveau
+  if (Get-Command node -ErrorAction SilentlyContinue) { winget upgrade --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements }
+  else { winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements }
   $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+  if ((NodeVersion) -lt [version]'22.12') { Write-Host 'Node.js 22.12 ou plus requis (nodejs.org) : relancez ce script après l''avoir installé.'; exit 1 }
 }
 Write-Host "Windows $([Environment]::OSVersion.Version) · Node.js $(node -v) · npm $(npm -v)"
 

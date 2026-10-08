@@ -141,6 +141,9 @@ export class Gphoto2Camera extends BaseCamera {
     if (process.platform === 'darwin') {
       // macOS accapare l'appareil avec son propre démon PTP.
       try { await execFileP('killall', ['ptpcamerad']); } catch { /* pas lancé */ }
+    } else if (process.platform === 'linux') {
+      // GNOME (gvfs) monte le boîtier comme un disque et le garde (« Could not claim the USB device »).
+      try { await execFileP('pkill', ['-x', 'gvfsd-gphoto2']); } catch { /* pas lancé */ }
     }
     await this.resetUsb();
     await this.probe();
@@ -311,8 +314,9 @@ export class Gphoto2Camera extends BaseCamera {
       if (this.live || this.stopping || this.busy || !this.wanted()) return;
       this.spawnLive();
     };
-    // macOS relance son démon PTP à chaque branchement du boîtier : on le libère avant chaque live.
+    // macOS relance son démon PTP à chaque branchement du boîtier (GNOME, son gvfsd-gphoto2) : on le libère avant chaque live.
     if (process.platform === 'darwin') execFile('killall', ['ptpcamerad'], () => go());
+    else if (process.platform === 'linux') execFile('pkill', ['-x', 'gvfsd-gphoto2'], () => go());
     else go();
   }
 

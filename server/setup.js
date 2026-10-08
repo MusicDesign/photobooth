@@ -118,9 +118,11 @@ export function checkInstall() {
   else add({ id: 'cups', label: 'Impression (CUPS)', state: which('lpstat') ? 'ok' : 'missing', detail: which('lpstat') ? 'intégré à macOS' : 'lpstat introuvable' });
   if (!WIN) tool('ddc', 'Écran (DDC/CI)', mac ? 'm1ddc' : 'ddcutil', { missing: 'absent : luminosité et volume de l\'écran non réglables', args: mac ? null : ['--version'] });
   if (linux) tool('nmcli', 'Hotspot Wi-Fi (NetworkManager)', 'nmcli', { missing: 'absent : pas de hotspot', args: ['--version'] });
-  if (linux) tool('chromium', 'Chromium (lanceur kiosque)', which('chromium') ? 'chromium' : 'chromium-browser', { missing: electron ? 'absent : l\'app Electron suffit' : 'absent', args: ['--version'] });
+  // Chromium ne sert qu'au lanceur script : avec l'app Electron, rien à installer (ni chromium-l10n)
+  if (linux && electron && !which('chromium') && !which('chromium-browser')) add({ id: 'chromium', label: 'Chromium (lanceur kiosque)', detail: 'inutile : l\'app Electron suffit' });
+  else if (linux) tool('chromium', 'Chromium (lanceur kiosque)', which('chromium') ? 'chromium' : 'chromium-browser', { missing: 'absent', args: ['--version'] });
   // Debian : Chromium présent sans sa traduction (« chromium-l10n ») reste en anglais et propose de traduire la borne
-  if (linux && pm === 'apt' && !isUbuntu() && which('chromium') && !debInstalled('chromium-l10n')) {
+  if (linux && !electron && pm === 'apt' && !isUbuntu() && which('chromium') && !debInstalled('chromium-l10n')) {
     Object.assign(items.at(-1), { state: 'missing', detail: 'sans traduction française : Chromium propose de traduire la borne', fix: installCommand(pm, 'chromium-l10n'), pkg: 'chromium-l10n' });
   }
   if (linux) kioskSetup(add);
@@ -197,7 +199,18 @@ export class Setup {
       if (pkgs.length) {
         const cmd = installCommand(c.pkg, pkgs.join(' '));
         say(cmd);
-        await run(cmd, { say, interactive });
+        try { await run(cmd, { say, interactive }); } catch (e) {
+          // Un paquet introuvable (chromium-browser en snap sur Ubuntu…) fait tout échouer : un par un, pour avoir le reste
+          if (pkgs.length < 2) throw e;
+          say(`Échec groupé (${e.message}) : installation paquet par paquet`);
+          const failed = [];
+          for (const p of pkgs) {
+            const one = installCommand(c.pkg, p);
+            say(one);
+            try { await run(one, { say, interactive }); } catch { failed.push(p); }
+          }
+          if (failed.length) { this.error = `paquets non installés : ${failed.join(', ')}`; say(`Paquets non installés : ${failed.join(', ')}`); }
+        }
       }
       if (todo.some((it) => it.id === 'model-precise')) {
         say(`Téléchargement de ${MODELS.subject.name} (${Math.round(MODELS.subject.size / 1048576)} Mo)…`);

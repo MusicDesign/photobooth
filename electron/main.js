@@ -179,7 +179,8 @@ async function start() {
     backgroundCamera: true,
     onShutdown: () => { stopped = true; app.quit(); },
     // Redémarrer : nouvelle instance au départ de celle-ci (même dossier d'app, même environnement)
-    onRestart: () => { stopped = true; app.relaunch(app.isPackaged ? {} : { args: [app.getAppPath()] }); app.exit(0); }
+    // Même port qu'avant s'il est libre : l'admin ouverte sur un téléphone ou une tablette s'y reconnecte.
+    onRestart: () => { stopped = true; if (server.listening) process.env.PORT = String(server.address().port); app.relaunch(app.isPackaged ? {} : { args: [app.getAppPath()] }); app.exit(0); }
   });
   try {
     await listenFree(server, port); // port pris par une autre application : le suivant

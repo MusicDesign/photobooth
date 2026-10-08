@@ -28,7 +28,7 @@ Trois briques, toujours les mêmes :
 | Brique | Rôle | Où ça tourne |
 |---|---|---|
 | Serveur Node.js | Sessions, compositing, quotas, pilotes caméra et imprimante | Mac pour les tests, PC Linux en production |
-| Écran de la borne | Page web plein écran, tactile | Chromium en kiosque ou app Electron sur le PC de la borne (ou un iPad récent en Accès guidé, voir 10.10) |
+| Écran de la borne | Page web plein écran, tactile | App Electron (ou Chromium en kiosque) sur le PC de la borne (ou un iPad récent en Accès guidé, voir 10.10) |
 | Admin | Page web `/admin.html`, protégée par un PIN | N'importe quel navigateur sur le même réseau |
 
 La caméra et l'imprimante se branchent **sur la machine qui fait tourner le
@@ -41,7 +41,7 @@ finit dans `data/config.json` ; les photos vont dans `output/sessions/<id>/`.
 
 ### 2.1 Prérequis
 
-- Node.js 20 ou plus : `node -v`. Sinon installe-le via nvm ou nodejs.org.
+- Node.js 22.12 ou plus : `node -v`. Sinon `scripts/install.sh` (2.2) l'installe, ou nvm, ou nodejs.org.
 - Homebrew (pour gphoto2 à l'étape 5) : `brew -v`.
 
 ### 2.2 Installation
@@ -393,8 +393,8 @@ où tu charges l'imprimante ; il décroît à chaque tirage.
 ## 10. Installer sur le PC de la borne (Linux)
 
 Cible : un PC tactile (tablette type Surface, mini-PC + écran tactile) sous
-**Fedora Workstation** (bureau GNOME), processeur x86 64 bits. Ubuntu convient
-aussi : les commandes équivalentes sont indiquées.
+**Fedora Workstation** (bureau GNOME), processeur x86 64 bits. Debian 13 et Ubuntu
+conviennent aussi : les commandes équivalentes sont indiquées.
 
 ### 10.1 Système
 
@@ -404,18 +404,27 @@ borne (ex. `borne`). Sur une **Microsoft Surface**, ajoute le noyau
 « Installation » du projet, section Fedora) : sans lui, l'écran tactile ne
 répond pas. Redémarre et vérifie que le tactile marche avant d'aller plus loin.
 
+**Debian** installée avec un mot de passe root : l'utilisateur de la borne n'a pas le droit
+`sudo`. À faire une fois, puis fermer et rouvrir la session :
+`su -c 'usermod -aG sudo borne'` (mot de passe root demandé, `borne` étant le compte de la borne).
+
 ### 10.2 Dépendances
 
+`scripts/install.sh --kiosk`, lancé depuis le projet (10.3), installe tout ce qui manque :
+Node.js 22.12 ou plus, dépendances npm et app Electron, gphoto2, CUPS, ddcutil, NetworkManager
+(sudo), modèle IA, icône et lancement automatique (10.5). Le Node.js des dépôts est trop ancien
+sur Debian 13 (v20) et Ubuntu 24.04 (v18) : le script installe celui de NodeSource.
+
+À la main, si besoin :
+
 ```bash
-sudo dnf install -y nodejs git gphoto2 cups gutenprint-cups chromium liberation-fonts
-# Ubuntu : sudo apt install -y nodejs npm git gphoto2 cups printer-driver-gutenprint chromium-browser fonts-liberation
-# Debian : sudo apt install -y git gphoto2 cups printer-driver-gutenprint chromium chromium-l10n fonts-liberation (Node.js 22 : scripts/install.sh)
-node -v      # v20 ou plus
-scripts/install.sh --kiosk   # ou, depuis le projet : Node.js, les mêmes paquets (sudo) + ddcutil, NetworkManager, modèle IA, icône et lancement auto (10.5)
+sudo dnf install -y git gphoto2 cups gutenprint-cups liberation-fonts
+# Debian/Ubuntu : sudo apt install -y git gphoto2 cups printer-driver-gutenprint fonts-liberation
+node -v      # v22.12 ou plus
 ```
 
-Chromium n'est utile qu'avec le lanceur par défaut (10.5) ; l'app Electron
-embarque le sien.
+Chromium (`chromium`, `chromium-browser` sous Ubuntu, avec `chromium-l10n` sous Debian)
+ne sert qu'au lanceur Chromium (10.5) ; l'app Electron, installée par défaut, embarque le sien.
 
 ### 10.3 Le projet
 
@@ -424,9 +433,12 @@ cd ~
 sudo apt install -y git   # Debian/Ubuntu neuves : git absent (Fedora : sudo dnf install -y git)
 git clone https://github.com/MusicDesign/photobooth.git
 cd photobooth
-npm install
-npm start          # premier test sur http://localhost:3000, Ctrl+C ensuite
+scripts/install.sh --kiosk   # tout ce qui manque (10.2), puis lance la borne
 ```
+
+Ni le `git clone` ni le script avec `sudo` : le script demande le mot de passe quand il en a
+besoin, et un dépôt appartenant à root bloque la mise à jour depuis l'admin
+(`sudo chown -R $USER ~/photobooth` pour réparer).
 
 Le fichier `data/config.json` et le dossier `data/templates` peuvent être
 copiés depuis le Mac pour garder le thème, les templates et les limites. Le
@@ -447,7 +459,7 @@ Pour que la mise à jour depuis l'admin y accède aussi, enregistre-le une fois 
 ### 10.4 Libérer l'appareil photo
 
 GNOME monte l'appareil comme une clé USB dès qu'on le branche, ce qui bloque
-gphoto2. À désactiver une fois :
+gphoto2. `scripts/install.sh --kiosk` le désactive ; à la main :
 
 ```bash
 systemctl --user mask gvfs-gphoto2-volume-monitor
@@ -459,7 +471,7 @@ Puis refais le test de l'étape 5.2 (sans la ligne `killall`).
 ### 10.5 Plein écran au démarrage, icône sur le bureau
 
 ```bash
-scripts/kiosk/install-linux.sh --no-sleep
+scripts/kiosk/install-linux.sh --electron --no-sleep   # déjà fait par scripts/install.sh --kiosk
 ```
 
 Le script, pour l'utilisateur courant et sans sudo :
@@ -472,8 +484,8 @@ Deux lanceurs, au choix, avec le même comportement :
 
 | Lanceur | Installation | Principe |
 |---|---|---|
-| Chromium en kiosque (défaut) | `install-linux.sh` | `scripts/kiosk/photobooth.sh` démarre le serveur Node puis Chromium plein écran, avec un profil à part |
-| App Electron | `install-linux.sh --electron` | Serveur et fenêtre plein écran dans une seule app (`npm run app`) |
+| App Electron (défaut) | `install-linux.sh --electron` | Serveur et fenêtre plein écran dans une seule app (`npm run app`) |
+| Chromium en kiosque | `install-linux.sh` | `scripts/kiosk/photobooth.sh` démarre le serveur Node puis Chromium plein écran, avec un profil à part |
 | App Electron empaquetée | `npm run app:build` puis `install-linux.sh --exec dist/Cheeesy-*.AppImage` | Un fichier unique ; ses données vont dans `~/.config/Cheeesy/` (`~/.config/Cheesy/` si la borne a été installée sous l'ancien nom) et non dans le dépôt |
 
 L'AppImage se construit **sur la borne elle-même** : les modules natifs

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -8,13 +9,27 @@ import { run } from './setup.js';
 const execFileP = promisify(execFile);
 const first = (e) => String(e?.stderr || e?.message || e).trim().split('\n')[0];
 /** Version X.X.X du package.json : c'est elle qu'on affiche ; le commit n'est qu'un détail. */
+/** Modifications locales que la mise à jour gère seule (voir prepare) : templates suivis par git (le « default »
+ * avant la 0.8.13) et package-lock.json réécrit par un npm d'une autre version. */
+const TEMPLATES = 'data/templates/';
+const LOCK = 'package-lock.json';
+/** Chemins de `git status --porcelain -z` (les deux pour un renommage). */
+function statusPaths(out) {
+  const parts = out.split('\0').filter(Boolean), paths = [];
+  for (let i = 0; i < parts.length; i++) {
+    paths.push(parts[i].slice(3));
+    if (/^[RC]/.test(parts[i])) paths.push(parts[++i]);
+  }
+  return paths;
+}
 export const localVersion = () => { try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version || null; } catch { return null; } };
 
 /**
  * Mise à jour de la borne depuis l'admin (page Installation) : version en cours (commit git), vérification de ce
  * qui attend sur origin, puis `git pull --ff-only`, `npm install`, modules manquants (setup.js) et redémarrage.
  * Seulement quand le projet est un dépôt git (clone) : une app empaquetée se met à jour par réinstallation.
- * Refusée s'il y a des modifications locales non enregistrées : c'est à l'humain de trancher.
+ * Refusée s'il y a des modifications locales non enregistrées (hors templates et package-lock.json, voir prepare) :
+ * c'est à l'humain de trancher. Dépendances en échec : retour à la version précédente.
  * Réussie, elle relance le logiciel toute seule (restart), après l'impression en cours s'il y en a une (busy).
  */
 export class Updater {
@@ -26,7 +41,10 @@ export class Updater {
   }
 
   git(...args) {
-    return execFileP('git', args, { cwd: ROOT, timeout: 120000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).then((r) => r.stdout.trim());
+    return this.gitRaw(...args).then((out) => out.trim());
+  }
+  gitRaw(...args) {
+    return execFileP('git', args, { cwd: ROOT, timeout: 120000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).then((r) => r.stdout);
   }
 
   /** Commit, date, sujet et branche en cours. */
@@ -37,7 +55,10 @@ export class Updater {
       Object.assign(this.state, { version: localVersion(), commit, date, subject, branch });
     } catch (e) {
       this.state.available = false;
-      this.state.error = `git : ${first(e)}`;
+      // Dépôt cloné par un autre utilisateur (sudo git clone) : git refuse d'y travailler
+      this.state.error = /dubious ownership/i.test(String(e?.stderr || e?.message))
+        ? `git refuse le dossier ${ROOT}, qui appartient à un autre utilisateur (cloné avec sudo ?) : sudo chown -R ${os.userInfo().username} "${ROOT}"`
+        : `git : ${first(e)}`;
     }
     return this.status();
   }
@@ -61,7 +82,8 @@ export class Updater {
     return this.status();
   }
 
-  /** Met à jour : pull, dépendances, modules manquants, puis relance du logiciel (sinon needRestart : à la main). */
+  /** Met à jour : pull, dépendances, modules manquants, puis relance du logiciel (sinon needRestart : à la main).
+   * Dépendances en échec : retour au code d'avant (git reset) et à ses dépendances, la mise à jour reste proposée. */
   async update({ log = null } = {}) {
     if (this.state.updating || !this.state.available) return this.status();
     this.state.updating = true;
@@ -70,15 +92,18 @@ export class Updater {
     // Étape en cours, pour la barre de progression de l'admin (le détail reste dans log et la console)
     const step = (s) => { this.state.step = s; };
     const say = (line) => { if (!line) return; this.state.log.push(line); log?.(line); console.log(`[update] ${line}`); };
+    let before = null, kept = null;
     try {
-      if (await this.git('status', '--porcelain', '--untracked-files=no')) throw new Error('modifications locales non enregistrées : mise à jour refusée (voir git status)');
+      kept = await this.prepare(say);
       const branch = this.state.branch || 'main';
+      before = await this.git('rev-parse', 'HEAD');
       step('pull');
       say(`git pull --ff-only origin ${branch}`);
       say(await this.git('pull', '--ff-only', 'origin', branch));
+      this.restore(kept, say);
       step('deps');
       say('npm install');
-      await run('npm install --no-audit --no-fund', { say });
+      await this.npmInstall(say);
       step('modules');
       if (this.setup) { say('Modules nécessaires'); await this.setup.install({ log: say }); }
       await this.version();
@@ -92,13 +117,75 @@ export class Updater {
         setTimeout(relaunch, 2000);
       }
     } catch (e) {
-      this.state.error = first(e);
-      say(`Échec : ${first(e)}`);
+      let error = first(e);
+      say(`Échec : ${error}`);
+      // Code déjà tiré mais dépendances en échec : retour à la version d'avant, sinon la borne tournerait avec le
+      // nouveau code et les anciennes dépendances (binaire Electron compris), et se dirait « à jour ».
+      const now = before && await this.git('rev-parse', 'HEAD').catch(() => null);
+      if (now && now !== before) {
+        try {
+          say(`Retour à la version précédente (git reset --hard ${before.slice(0, 7)})`);
+          await this.git('reset', '--hard', before);
+          this.restore(kept, say);
+          say('npm install');
+          await this.npmInstall(say);
+          error += ' : mise à jour annulée, version précédente remise';
+        } catch (e2) {
+          error += ` ; retour à la version précédente incomplet (${first(e2)})`;
+          say(`Échec du retour : ${first(e2)}`);
+        }
+        await this.version();
+        await this.check(); // la mise à jour reste proposée
+      }
+      this.restore(kept, say); // templates de la borne remis tels qu'elle les avait
+      this.state.error = error;
     } finally {
       this.state.updating = false;
       this.state.step = null;
     }
     return this.status();
+  }
+
+  /** npm install, puis package-lock.json remis tel que dans git s'il a été réécrit (autre version de npm) : sinon la
+   * mise à jour suivante serait refusée (modifications locales). Les dépendances installées restent celles du lock. */
+  async npmInstall(say) {
+    await run('npm install --no-audit --no-fund', { say });
+    if (await this.git('status', '--porcelain', '--', LOCK)) await this.git('checkout', 'HEAD', '--', LOCK);
+  }
+
+  /**
+   * Avant le pull, modifications locales : package-lock.json réécrit par npm est remis tel que dans git ; les
+   * templates suivis par git (le « default » avant la 0.8.13) sont mis de côté tels quels (modifiés, supprimés ou
+   * intacts : le pull peut les retirer), remis en état d'origine pour que le pull passe, puis rendus par restore().
+   * Toute autre modification fait refuser la mise à jour : c'est à l'humain de trancher.
+   */
+  async prepare(say) {
+    const dirty = statusPaths(await this.gitRaw('status', '--porcelain', '-z', '--untracked-files=no'));
+    const other = dirty.filter((p) => p !== LOCK && !p.startsWith(TEMPLATES));
+    if (other.length) throw new Error(`modifications locales non enregistrées : mise à jour refusée (${other.slice(0, 3).join(', ')}${other.length > 3 ? '…' : ''}, voir git status)`);
+    if (dirty.includes(LOCK)) { say(`${LOCK} remis tel que dans git`); await this.git('checkout', 'HEAD', '--', LOCK); }
+    const kept = new Map();
+    for (const p of (await this.git('ls-tree', '-r', '--name-only', 'HEAD', '--', TEMPLATES)).split('\n').filter(Boolean)) {
+      const f = path.join(ROOT, p);
+      kept.set(p, fs.existsSync(f) ? fs.readFileSync(f) : null);
+    }
+    const touched = dirty.filter((p) => kept.has(p));
+    if (touched.length) {
+      say(`Templates modifiés à la borne, mis de côté pendant la mise à jour : ${touched.join(', ')}`);
+      await this.git('checkout', 'HEAD', '--', ...touched);
+    }
+    return kept;
+  }
+
+  /** Remet les templates mis de côté par prepare() tels que la borne les avait (null : supprimé à la borne). */
+  restore(kept, say) {
+    for (const [p, data] of kept || []) {
+      const f = path.join(ROOT, p);
+      try {
+        if (data === null) fs.rmSync(f, { force: true });
+        else if (!fs.existsSync(f) || !fs.readFileSync(f).equals(data)) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, data); }
+      } catch (e) { say(`${p} non remis : ${e.message}`); }
+    }
   }
 
   status() {
