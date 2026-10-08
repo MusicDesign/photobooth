@@ -340,7 +340,7 @@ async function startLive() {
         await video.play();
         state.live = { kind: 'video', el: video };
       } catch (e) {
-        toast(`Caméra indisponible : ${e.message}`, 6000);
+        systemNotice(`Caméra indisponible : ${e.message}`, 6000);
       }
     } else {
       const img = $('#mjpeg');
@@ -654,7 +654,7 @@ function templatePageTurn(delta) {
 
 function onIdleTap() {
   const { items, guestCanChoose, default: def } = state.boot.templates;
-  if (!items.length) return toast('Aucun template activé, voir l\'admin');
+  if (!items.length) return systemNotice('Aucun template activé, voir l\'admin');
   startLive(); // réveille le live view du boîtier pendant que l'invité choisit son cadre
   if (items.some(usesAi)) preloadAi();
   if (guestCanChoose && items.length > 1) { state.templatePage = 0; renderTemplateGrid(); showScreen('template'); $('#templateGrid').scrollTop = 0; sizeTemplateCards(); }
@@ -685,7 +685,7 @@ async function startSession(templateId) {
     startLive();
     prepareShot(0, true);
   } catch (e) {
-    toast(e.message);
+    systemNotice(e.message);
   } finally {
     state.starting = false;
   }
@@ -850,7 +850,7 @@ async function recordClip() {
     await finishShots();
   } catch (e) {
     if (!current(gen)) return;
-    toast(e.message, 5000);
+    systemNotice(e.message, 5000);
     prepareShot(0, true);
   }
 }
@@ -961,7 +961,7 @@ async function takeShot(index) {
     else await finishShots();
   } catch (e) {
     if (!current(gen)) return;
-    toast(e.message, 5000);
+    systemNotice(e.message, 5000);
     prepareShot(index, true);
   }
 }
@@ -980,10 +980,10 @@ async function finishShots() {
       return;
     } catch (e) {
       if (!current(gen)) return;
-      if (e.code === 'SESSION_NOT_FOUND' || e.code === 'SESSION_ABANDONED') { toast(e.message, 5000); return goIdle(); }
-      if (e.code === 'SHOTS_MISSING') { toast(e.message, 5000); return prepareShot(Math.max(0, state.session.shots.findIndex((x) => !x)), true); }
+      if (e.code === 'SESSION_NOT_FOUND' || e.code === 'SESSION_ABANDONED') { systemNotice(e.message, 5000); return goIdle(); }
+      if (e.code === 'SHOTS_MISSING') { systemNotice(e.message, 5000); return prepareShot(Math.max(0, state.session.shots.findIndex((x) => !x)), true); }
       if (attempt < 2) { await sleep(1500); if (!current(gen)) return; continue; }
-      toast(e.message, 5000);
+      systemNotice(e.message, 5000);
       hideCountdown();
       $('#shotLabel').textContent = 'Montage impossible';
       $('#btnStart').classList.add('hidden');
@@ -1081,7 +1081,7 @@ async function chooseFilter(id) {
     state.session = session;
     showMedia($('#finalImg'), $('#finalVideo'), `${state.session.final.url}?t=${Date.now()}`, state.session.final.video);
   } catch (e) {
-    if (current(gen)) toast(e.message, 5000);
+    if (current(gen)) systemNotice(e.message, 5000);
   } finally {
     state.filtering = false;
     $('#screen-review').classList.remove('filtering');
@@ -1102,7 +1102,7 @@ async function retakeAll() {
     if (!current(gen)) return;
     state.session = session;
   } catch (e) {
-    if (current(gen)) toast(e.message, 5000);
+    if (current(gen)) systemNotice(e.message, 5000);
     return;
   }
   state.shotImages = {};
@@ -1200,7 +1200,7 @@ async function finishWithoutPrint() {
     state.session = session;
   } catch (e) {
     if (!current(gen)) return;
-    toast(e.message, 5000);
+    systemNotice(e.message, 5000);
   }
   showDone();
 }
@@ -1225,7 +1225,7 @@ async function doPrint(copies) {
     else pollPrint();
   } catch (e) {
     if (!current(gen)) return;
-    toast(e.message, 5000);
+    systemNotice(e.message, 5000);
     // Limite atteinte entre-temps : l'écran des copies se met à jour (plus d'impression proposée)
     if (e.code === 'QUOTA_REACHED' || e.code === 'PRINTER_UNAVAILABLE' || e.code === 'PAPER_EMPTY') {
       try {
@@ -1257,7 +1257,7 @@ function pollPrint() {
     if (state.session.status === 'done') return showDone();
     if (state.session.status === 'error') {
       $('#printStatus').textContent = state.session.error || 'Erreur imprimante';
-      toast('Problème d\'impression, prévenez l\'organisateur', 6000);
+      systemNotice('Problème d\'impression, prévenez l\'organisateur', 6000);
       setTimer('printPoll', showDone, 8000);
       return;
     }
@@ -1357,13 +1357,15 @@ async function operatorUnlock() {
     toast('Limite levée pour cette session');
     keepPhoto();
   } catch (e) {
-    toast(e.message);
+    systemNotice(e.message);
   }
 }
 
 async function adminAccess() {
   if (state.boot.adminOpen) return openAdmin(); // code admin vide (tests)
-  try { await api('/api/admin/login'); } catch (e) { systemNotice(e.message); return; } // essais bloqués : pas de pavé
+  let before;
+  try { before = await api('/api/admin/login'); } catch (e) { systemNotice(e.message); return; } // essais bloqués : pas de pavé
+  if (before.authed) return openAdmin(); // « Retour à la borne » il y a peu : pas de code
   try {
     if (!await askPin('Code admin', (pin) => api('/api/admin/login', { method: 'POST', body: { pin } }))) return;
   } catch (e) {
@@ -1400,7 +1402,7 @@ async function openGallery() {
   try {
     state.gallery.items = (await api('/api/gallery')).items;
   } catch (e) {
-    toast(e.message);
+    systemNotice(e.message);
     return;
   }
   state.gallery.page = 0;
@@ -1545,7 +1547,7 @@ async function galleryReprint() {
     state.gallery.printingId = it.id;
     toast(copies > 1 ? `${copies} tirages lancés` : 'Tirage lancé');
   } catch (e) {
-    toast(e.message);
+    systemNotice(e.message);
   }
   renderReprint();
 }
@@ -1841,7 +1843,7 @@ function connectWs() {
       // L'admin a supprimé des photos : la galerie se recharge (retour à la grille).
       openGallery();
     } else if (msg.type === 'print' && msg.sessionId === state.gallery.printingId) {
-      if (msg.status === 'error') toast(msg.message || 'Erreur imprimante', 5000);
+      if (msg.status === 'error') systemNotice(msg.message || 'Erreur imprimante', 5000);
       if (msg.status === 'done' || msg.status === 'error') {
         state.gallery.printingId = null;
         const it = state.gallery.items.find((x) => x.id === msg.sessionId);
@@ -1851,7 +1853,7 @@ function connectWs() {
     } else if (msg.type === 'sessions' && state.session) {
       // L'admin a supprimé ou réinitialisé des sessions : si la nôtre a disparu, retour à l'accueil.
       api(`/api/session/${state.session.id}`).catch((e) => {
-        if (e.code === 'SESSION_NOT_FOUND') { toast('Session annulée par l\'opérateur', 4000); goIdle(); }
+        if (e.code === 'SESSION_NOT_FOUND') { systemNotice('Session annulée par l\'opérateur', 4000); goIdle(); }
       });
     } else if (msg.type === 'print' && state.session && msg.sessionId === state.session.id) {
       if (msg.status === 'printing') $('#printStatus').textContent = 'Impression…';

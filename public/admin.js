@@ -1852,8 +1852,9 @@ function security() {
   <form id="formCodes" class="card">
     <div class="grid-2">
       <div>
-        <label>Code PIN admin <input name="adminPin" value="${esc(cfg.admin.pin)}" placeholder="vide = pas de code"></label>
+        <label>Code PIN admin <input name="adminPin" value="${esc(cfg.admin.pin)}" placeholder="vide = pas de code" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" title="4 à 8 chiffres"></label>
         ${cfg.admin.pin ? '' : '<div class="alert">Aucun code admin : n\'importe qui peut ouvrir l\'admin. À remettre avant un événement.</div>'}
+        ${cfg.admin.pin && !/^\d{4,8}$/.test(cfg.admin.pin) ? '<div class="alert">Code admin impossible à saisir sur le pavé de la borne : 4 à 8 chiffres.</div>' : ''}
         <small>Sur la borne : 5 appuis en haut à droite de l'écran, ou sur le Stream Deck les touches du haut gauche, droite, gauche, droite, ouvrent l'admin.</small>
       </div>
       <div>
@@ -3125,7 +3126,7 @@ function bindSettingsForms() {
   form('#formControl', (fd) => saveConfig({ booth: { touch: fd.get('touchMode') || 'auto', cursor: fd.get('cursor') || 'show', window: fd.get('windowMode') || 'kiosk' } }));
   form('#formDeck', (fd) => saveConfig({ booth: { streamDeck: { enabled: fd.get('deckEnabled') === 'on', brightness: num(fd, 'deckBrightness'), position: fd.get('deckPosition'), showButtons: fd.get('deckShowButtons') === 'on' } } }));
   form('#formShare', (fd, f) => saveConfig({ share: { baseUrl: fd.get('shareBaseUrl').trim(), publicUrl: fd.get('publicUrl').trim(), qrOnDone: f.qrOnDone.checked, requireWifi: f.requireWifi.checked } }));
-  form('#formCodes', (fd, f) => saveConfig({ admin: { pin: fd.get('adminPin') }, ...(f.operatorPin.checkValidity() ? { limits: { operatorPin: fd.get('operatorPin') } } : {}) }));
+  form('#formCodes', (fd, f) => saveConfig({ ...(f.adminPin.checkValidity() ? { admin: { pin: fd.get('adminPin') } } : {}), ...(f.operatorPin.checkValidity() ? { limits: { operatorPin: fd.get('operatorPin') } } : {}) }));
   form('#formWifi', (fd, f) => saveConfig({ share: { wifi: { enabled: f.enabled.checked, ssid: f.ssid.value.trim(), password: f.password.value, security: f.security.value } } }, 'Wi-Fi enregistré'));
   form('#formGallery', (fd, f) => saveConfig({ gallery: { booth: f.booth.checked, web: f.web.checked, reprint: f.reprint.value, qr: f.qr.checked } }, 'Galerie enregistrée'));
   form('#formTexts', (fd) => {
@@ -3150,6 +3151,8 @@ function contrast(hexA, hexB) {
 // ---------- Connexion ----------
 
 function showLogin() {
+  // Sur la borne, le code se tape sur son pavé (5 appuis en haut à droite) : pas de page de connexion ici
+  if (ON_BOOTH) { location.replace('/'); return; }
   $('#login').classList.remove('hidden');
   $('#shell').classList.add('hidden');
   sendDeckUi();
@@ -3187,9 +3190,10 @@ $('#navToggle').addEventListener('click', () => setNavOpen(!document.body.classL
 $('#navBackdrop').addEventListener('click', () => setNavOpen(false));
 document.querySelectorAll('.nav a').forEach((a) => a.addEventListener('click', () => setNavOpen(false))); // même section : le hash ne change pas
 window.addEventListener('beforeunload', (e) => { if (currentSection() === 'editor' && E.dirty) { e.preventDefault(); e.returnValue = ''; } });
-$('#btnLogout').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }); location.reload(); };
-// Retour à la borne dans la même fenêtre : on se déconnecte, sinon la zone cachée rouvrirait l'admin sans code.
-$('#btnBooth').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }).catch(() => {}); location.href = '/'; };
+// Déconnexion : accueil de la borne sur la borne, page de connexion ailleurs (téléphone : « / » mène à la galerie)
+$('#btnLogout').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }).catch(() => {}); if (ON_BOOTH) location.href = '/'; else location.reload(); };
+// Retour à la borne : connexion gardée 2 min, la zone cachée rouvre l'admin sans code pendant ce délai
+$('#btnBooth').onclick = async () => { await api('/api/admin/leave', { method: 'POST' }).catch(() => {}); location.href = '/'; };
 // ---------- Arrêt : relancer ou quitter le logiciel, redémarrer ou éteindre l'ordinateur ----------
 // Un bouton « Arrêt » ouvre la fenêtre des choix (elle tient lieu de confirmation) ; seuls les choix permis
 // sur cette machine y figurent.

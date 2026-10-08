@@ -32,7 +32,7 @@ const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/M
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'booth-chrome-'));
 const chrome = spawn(CHROME, [
   '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--window-size=1920,1200',
-  '--hide-scrollbars', '--no-first-run', '--autoplay-policy=no-user-gesture-required',
+  '--hide-scrollbars', '--no-first-run', '--host-resolver-rules=MAP telephone.test 127.0.0.1', '--autoplay-policy=no-user-gesture-required',
   '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', 'about:blank'
 ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -139,12 +139,15 @@ try {
   await shot('10-fin-qr-code');
 
   // Administration
-  await page('Page.navigate', { url: `${base}/admin.html` });
+  // Page de connexion : seulement hors de la borne (sur la borne, le code se tape sur son pavé)
+  await page('Page.navigate', { url: `${base.replace('127.0.0.1', 'telephone.test')}/admin.html` });
   await waitFor(`!document.querySelector('#login').classList.contains('hidden')`);
   await sleep(300);
   await shot('11-admin-connexion');
+  await page('Page.navigate', { url: `${base}/admin.html` });
+  await waitFor(`location.pathname === '/' && document.readyState === 'complete'`); // borne non connectée : retour à l'accueil
   await evaluate(`fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:${JSON.stringify(app.config.get().admin.pin)}})}).then(r=>r.ok)`);
-  await evaluate(`location.hash = "dashboard"; location.reload(); true`);
+  await page('Page.navigate', { url: `${base}/admin.html#dashboard` });
   await waitFor(`!document.querySelector('#shell').classList.contains('hidden') && document.querySelector('.stat')`);
   await sleep(400);
   await shot('12-admin-tableau-de-bord');

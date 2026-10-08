@@ -215,6 +215,11 @@ async function runSteps(app, camera) {
     const badPin = await post(`/api/session/${s2.id}/unlock`, { pin: '9999' });
     assert.equal(badPin.status, 403);
     // Code opérateur vide, trop court ou pas en chiffres : refusé à l'enregistrement ; vide (ancienne config) : rien ne déverrouille
+    for (const pin of ['12', 'abcd', '123456789']) { // code admin : le pavé de la borne n'a que 8 chiffres
+      const r = await put('/api/admin/config', { admin: { pin } }, ADMIN);
+      assert.equal(r.status, 400, `code admin ${JSON.stringify(pin)} accepté`);
+      assert.equal(r.data.error, 'ADMIN_PIN');
+    }
     for (const operatorPin of ['', '12', 'abcd', '123456789']) {
       const r = await put('/api/admin/config', { limits: { operatorPin } }, ADMIN);
       assert.equal(r.status, 400, `code ${JSON.stringify(operatorPin)} accepté`);
@@ -392,6 +397,13 @@ async function runSteps(app, camera) {
     assert.equal((await j('/api/admin/state', { headers: { cookie: c1 } })).status, 401, 'ancien cookie fermé');
     assert.equal((await j('/api/admin/state', { headers: { cookie: c2 } })).status, 200, 'nouveau cookie de celui qui a changé le code');
     assert.equal((await put('/api/admin/config', { admin: { pin: ADMIN['x-admin-pin'] } }, { 'x-admin-pin': '8642' })).status, 200);
+    // Retour à la borne : la borne rouvre l'admin sans code tant que la connexion tient ; déconnexion : code redemandé
+    const c3 = cookieOf(await fetch(`${base}/api/admin/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: ADMIN['x-admin-pin'] }) }));
+    assert.equal((await j('/api/admin/login')).data.authed, false, 'sans cookie : pavé du code');
+    assert.equal((await post('/api/admin/leave', {}, { cookie: c3 })).status, 200);
+    assert.equal((await j('/api/admin/login', { headers: { cookie: c3 } })).data.authed, true, 'retour récent : admin sans code');
+    await post('/api/admin/logout', {}, { cookie: c3 });
+    assert.equal((await j('/api/admin/login', { headers: { cookie: c3 } })).data.authed, false, 'déconnecté : code redemandé');
     const st = (await j('/api/admin/state', { headers: ADMIN })).data;
     assert.ok(st.sessions.length >= 3);
     assert.ok(st.themes.length >= 3);

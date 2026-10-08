@@ -47,7 +47,8 @@ export const NUMBER_RANGES = {
 };
 
 /** Code opérateur : saisi sur le pavé de la borne (8 chiffres au plus). Vide ou trop court, n'importe qui lèverait les limites. */
-export const OPERATOR_PIN = /^\d{4,8}$/;
+export const OPERATOR_PIN = /^\d{4,8}$/; // le pavé de la borne : chiffres seulement, 8 au plus
+export const ADMIN_PIN = /^(\d{4,8})?$/; // vide = admin ouvert (tests)
 /** Logo et image de fond : fichiers envoyés depuis l'admin (POST /logo, /background), rien d'autre. */
 const UPLOAD_URL = /^\/uploads\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -101,6 +102,11 @@ export function validateConfigPatch(patch, { clamp = false, templateIds = null }
   oneOf('templates', 'defaultFormat', Object.keys(FORMATS), 'FORMAT', 'Format inconnu');
   if (isPlainObject(patch.screen)) patch.screen = screenPatch(patch.screen);
 
+  if (has(patch.admin, 'pin')) {
+    const pin = String(patch.admin.pin ?? '').trim();
+    if (!ADMIN_PIN.test(pin)) throw new HttpError(400, 'ADMIN_PIN', 'Code admin : 4 à 8 chiffres, ou vide');
+    patch.admin.pin = pin;
+  }
   if (has(patch.limits, 'operatorPin')) {
     const pin = String(patch.limits.operatorPin ?? '').trim();
     if (!OPERATOR_PIN.test(pin)) throw new HttpError(400, 'OPERATOR_PIN', 'Code opérateur : 4 à 8 chiffres');

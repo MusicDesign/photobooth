@@ -24,6 +24,7 @@ import { OUTPUT_DIR as OUT } from '../paths.js';
 
 const SESSIONS_PER_PAGE = 48;
 const SESSION_MS = 12 * 60 * 60 * 1000; // connexion admin (cookie) : 12 h
+const LEAVE_MS = 2 * 60 * 1000; // « Retour à la borne » : l'admin se rouvre sans code pendant 2 min
 
 /**
  * Codes admin faux, par adresse IP (téléphones du hotspot compris) : 5 essais, puis 30 s d'attente, doublée à chaque
@@ -119,14 +120,31 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
 
   const notifyBooth = () => booth.broadcast({ type: 'config' });
 
-  // Avant d'afficher le pavé du code : 429 tant que les essais sont bloqués (la borne montre le délai, pas le pavé)
-  r.get('/login', (req, res) => { guard.check(ipOf(req)); res.json({ ok: true }); });
+  // Avant d'afficher le pavé du code : encore connecté (retour à la borne récent) → admin sans code, connexion
+  // prolongée ; sinon 429 tant que les essais sont bloqués (la borne montre le délai, pas le pavé).
+  r.get('/login', (req, res) => {
+    const cookie = parseCookies(req.headers.cookie)['booth_admin'];
+    if (adminPin() && cookie && tokens.get(cookie) > Date.now()) {
+      tokens.set(cookie, Date.now() + SESSION_MS);
+      return res.json({ ok: true, authed: true });
+    }
+    guard.check(ipOf(req));
+    res.json({ ok: true, authed: false });
+  });
   r.post('/login', (req, res) => {
     const ip = ipOf(req);
     guard.check(ip);
     if (!samePin(req.body?.pin ?? '', adminPin())) { guard.fail(ip); guard.check(ip); throw new HttpError(401, 'BAD_PIN', 'Code incorrect'); } // dernier essai : le blocage tout de suite
     guard.success(ip);
     openSession(res);
+    res.json({ ok: true });
+  });
+
+  // « Retour à la borne » : la connexion ne dure plus que LEAVE_MS
+  r.post('/leave', (req, res) => {
+    const cookie = parseCookies(req.headers.cookie)['booth_admin'];
+    const exp = cookie && tokens.get(cookie);
+    if (exp) tokens.set(cookie, Math.min(exp, Date.now() + LEAVE_MS));
     res.json({ ok: true });
   });
 
