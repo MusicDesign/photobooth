@@ -241,12 +241,13 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   // Page d'une photo (tous les QR codes y mènent). Galerie téléphone ouverte : navigation entre les photos.
   app.get('/g/:id', (req, res) => {
     const cfg = config.get();
-    // Photo supprimée depuis (ou lien mal recopié) : page aux couleurs de la borne, pas l'erreur brute
-    if (!store.getSession(req.params.id)) {
+    // Photo supprimée depuis, pas validée par l'invité (ou lien mal recopié) : page aux couleurs de la borne, pas l'erreur brute
+    const found = store.getSession(req.params.id);
+    if (!found || booth.isUnvalidated(found)) {
       res.status(404).type('html').send(missingHtml({ theme: themes.resolve(cfg), boothName: cfg.booth.name, texts: cfg.texts, gallery: cfg.gallery.web }));
       return;
     }
-    const session = booth.view(booth.load(req.params.id));
+    const session = booth.view(found);
     const items = cfg.gallery.web ? booth.gallery() : [];
     const index = items.findIndex((it) => it.id === session.id);
     const nav = index < 0 ? null : { index, total: items.length, prev: items[index - 1], next: items[index + 1] };

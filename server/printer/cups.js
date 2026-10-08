@@ -3,6 +3,12 @@ import { promisify } from 'node:util';
 import { BasePrinter } from './base.js';
 
 const execFileP = promisify(execFile);
+const LPSTAT_MAX_FAILURES = 5;
+
+/** Le tirage est-il dans la sortie de lpstat -o ? Ligne type : "DNP-42   lucas   1024   …" (DNP-4 ne trouve pas DNP-42). */
+export function jobListed(stdout, jobId) {
+  return stdout.split('\n').some((l) => l.split(/\s/)[0] === jobId);
+}
 
 /**
  * Impression via CUPS (commande lp). Fonctionne sous Linux avec le pilote
@@ -53,11 +59,14 @@ export class CupsPrinter extends BasePrinter {
   watch(jobId) {
     const started = Date.now();
     let stalled = false;
+    let failures = 0; // lpstat en échec d'affilée
     const tick = async () => {
       try {
-        const { stdout } = await execFileP('lpstat', ['-W', 'not-completed', '-o']);
-        const pending = stdout.split('\n').some((l) => l.startsWith(jobId));
+        const { stdout } = await execFileP('lpstat', ['-W', 'not-completed', '-o'], { timeout: 10000 });
+        failures = 0;
+        const pending = jobListed(stdout, jobId);
         if (!pending) {
+          this.watchers.delete(jobId);
           this.emit('job', { jobId, status: 'done' });
           return;
         }
@@ -69,8 +78,12 @@ export class CupsPrinter extends BasePrinter {
           this.emit('job', { jobId, status: 'error', message: 'Impression bloquée depuis 5 min (papier ? bourrage ?)' });
         }
       } catch (e) {
-        this.emit('job', { jobId, status: 'error', message: e.message });
-        return;
+        // Échec passager (CUPS qui redémarre) : on réessaie ; au-delà, fin du suivi (final : la borne l'oublie)
+        if (++failures >= LPSTAT_MAX_FAILURES) {
+          this.watchers.delete(jobId);
+          this.emit('job', { jobId, status: 'error', final: true, message: `Suivi de l'impression impossible : ${e.message}` });
+          return;
+        }
       }
       this.watchers.set(jobId, setTimeout(tick, stalled ? 10000 : 2000));
     };

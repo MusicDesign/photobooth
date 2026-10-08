@@ -27,6 +27,8 @@ const state = {
   gallery: { items: [], index: 0, page: 0, copies: 1, printingId: null, qr: new Map() },
   templatePage: 0, // page des cadres quand le Stream Deck pilote l'écran
   deck: null, // Stream Deck branché : { connected, gallery: { perPage, cols } | null } (message 'deckInfo')
+  gen: 0, // change à chaque session quittée ou lancée : une attente (photo, montage, impression) d'avant s'arrête là
+  starting: false, // création de session en cours (double appui, plusieurs touches du Stream Deck)
   pendingConfigReload: false
 };
 
@@ -285,15 +287,21 @@ function goIdle() {
 /** Quitte la session en cours. Pas validée (« Je la garde ») : le serveur la supprime avec ses photos (il vérifie lui-même). */
 function dropSession() {
   clearAllTimers();
+  state.gen += 1;
   state.doneReturnAt = null;
   const s = state.session;
-  if (s && ['shooting', 'review'].includes(s.status) && !state.kept) api(`/api/session/${s.id}/abandon`, { method: 'POST' }).catch(() => {});
+  let abandon = null;
+  if (s && ['shooting', 'review'].includes(s.status) && !state.kept) abandon = api(`/api/session/${s.id}/abandon`, { method: 'POST' }).catch(() => {});
   state.kept = false;
   state.session = null;
   state.template = null;
   state.shotImages = {};
   state.assets = new Map();
+  return abandon;
 }
+
+/** La session de gen est-elle toujours celle à l'écran ? Sinon l'invité a annulé ou une autre a commencé. */
+const current = (gen) => gen === state.gen;
 
 /** Aperçu, avant la première photo : l'invité revient au choix du cadre (le live reste ouvert). */
 function canChangeTemplate() {
@@ -646,9 +654,14 @@ function onIdleTap() {
 // ---------- Prise de vue ----------
 
 async function startSession(templateId) {
+  if (state.starting) return;
+  state.starting = true;
+  if (state.session) dropSession(); // session précédente pas refermée : abandonnée
+  const gen = ++state.gen;
   state.kept = false;
   try {
     const session = await api('/api/session', { method: 'POST', body: { templateId } });
+    if (!current(gen)) { api(`/api/session/${session.id}/abandon`, { method: 'POST' }).catch(() => {}); return; }
     state.session = session;
     state.template = state.boot.templates.items.find((t) => t.id === session.templateId);
     if (usesAi(state.template)) preloadAi(); // modèle de détourage chargé pendant que le live démarre
@@ -663,12 +676,15 @@ async function startSession(templateId) {
     prepareShot(0, true);
   } catch (e) {
     toast(e.message);
+  } finally {
+    state.starting = false;
   }
 }
 
 function prepareShot(index, manual) {
   state.currentShot = index;
   resetShutter(); // chaque photo commence obturateur fermé, qui s'ouvre sur le flux
+  $('#btnCompose').classList.add('hidden');
   const total = state.template.shots;
   // GIF lancé : on reste en plein écran d'une pose à l'autre (« Photo 2/3 », décompte…), sans revenir à l'aperçu
   if (isGif(state.template) && !manual) {
@@ -707,6 +723,8 @@ function showPoseLabel(index) {
 }
 
 async function runCountdown(index) {
+  const gen = state.gen;
+  const live = () => current(gen) && state.screen === 'capture'; // annulé, ou décompte d'une session d'avant
   clearTimer('idleReturn');
   $('#btnStart').classList.add('hidden');
   $('#btnCaptureBack').classList.add('hidden'); // décompte lancé : plus de retour au choix du cadre
@@ -714,10 +732,10 @@ async function runCountdown(index) {
   if (isGif(state.template) && index === 0) { // lancement du GIF : plein écran dès « Photo 1/3 »
     showPoseLabel(0);
     await sleep(POSE_LABEL_MS);
-    if (state.screen !== 'capture') return;
+    if (!live()) return;
   }
   await waitLive(); // le boîtier peut mettre une à deux secondes à rouvrir l'obturateur
-  if (state.screen !== 'capture') return;
+  if (!live()) return;
   const cd = $('#countdown');
   cd.classList.remove('hidden', 'msg', 'wait');
   if (isGif(state.template)) enterLookMode(); // décompte des poses en plein écran, flèche vers l'objectif
@@ -751,7 +769,7 @@ async function runCountdown(index) {
     void cd.offsetWidth;
     cd.classList.add('pop');
     await sleep(1000);
-    if (state.screen !== 'capture') return; // annulé
+    if (!live()) return; // annulé
   }
   if (boomerang) return recordClip();
   // « 0 » : la photo part, mais le boîtier met encore une à trois secondes (liaison, mise au point,
@@ -769,6 +787,7 @@ async function runCountdown(index) {
  * enregistre l'aperçu du boîtier ; une webcam est filmée ici), puis « Veuillez patienter » pendant le montage.
  */
 async function recordClip() {
+  const gen = state.gen;
   const durationMs = state.template.boomerang.durationSec * 1000;
   enterLookMode();
   const cd = $('#countdown');
@@ -781,7 +800,7 @@ async function recordClip() {
     }
     await state.focusing;
     state.focusing = null;
-    if (state.screen !== 'capture') return;
+    if (!current(gen) || state.screen !== 'capture') return;
   }
   cd.textContent = state.boot.texts.boomerangGo || 'Bougez !';
   cd.classList.add('msg');
@@ -813,12 +832,14 @@ async function recordClip() {
     } else {
       result = await api(url, { method: 'POST' });
     }
+    if (!current(gen)) return;
     state.session = result.session;
     if (state.screen !== 'capture') return;
     bar.classList.add('hidden');
     showPleaseWait();
     await finishShots();
   } catch (e) {
+    if (!current(gen)) return;
     toast(e.message, 5000);
     prepareShot(0, true);
   }
@@ -898,6 +919,7 @@ async function grabFrame() {
 }
 
 async function takeShot(index) {
+  const gen = state.gen;
   state.shutterForce = true; // « clac » : l'obturateur se referme avec le flash, jusqu'à l'arrivée de la photo
   flash();
   $('#shotLabel').textContent = '…';
@@ -913,12 +935,14 @@ async function takeShot(index) {
     } else {
       result = await api(url, { method: 'POST' });
     }
+    if (!current(gen)) return;
     state.session = result.session;
     state.armedSession = null;
     const img = new Image();
     img.src = `${result.shot.url}?t=${Date.now()}`;
-    await img.decode();
-    state.shotImages[index] = img;
+    // Photo enregistrée sur la borne : une image qui ne se décode pas ici ne la fait pas reprendre
+    if (await img.decode().then(() => true, () => false)) state.shotImages[index] = img;
+    if (!current(gen)) return;
     const next = state.session.shots.findIndex((s) => !s);
     // GIF : plein écran jusqu'au bout (« Photo 2/3 » entre les poses, « Veuillez patienter » pendant l'assemblage)
     if (next < 0 && isAnimated(state.template)) showPleaseWait();
@@ -926,19 +950,39 @@ async function takeShot(index) {
     if (next >= 0) prepareShot(next, false);
     else await finishShots();
   } catch (e) {
+    if (!current(gen)) return;
     toast(e.message, 5000);
     prepareShot(index, true);
   }
 }
 
+/** Montage. Échec avec toutes les photos prises : nouvel essai (pas une reprise), puis bouton « Réessayer le montage ». */
 async function finishShots() {
+  const gen = state.gen;
+  $('#btnCompose').classList.add('hidden');
   if (!isAnimated(state.template)) $('#shotLabel').textContent = 'Montage…'; // GIF, boomerang : plein écran « Veuillez patienter »
-  try {
-    state.session = await api(`/api/session/${state.session.id}/compose`, { method: 'POST' });
-    showReview();
-  } catch (e) {
-    toast(e.message, 5000);
-    prepareShot(0, true);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const session = await api(`/api/session/${state.session.id}/compose`, { method: 'POST' });
+      if (!current(gen)) return;
+      state.session = session;
+      showReview();
+      return;
+    } catch (e) {
+      if (!current(gen)) return;
+      if (e.code === 'SESSION_NOT_FOUND' || e.code === 'SESSION_ABANDONED') { toast(e.message, 5000); return goIdle(); }
+      if (e.code === 'SHOTS_MISSING') { toast(e.message, 5000); return prepareShot(Math.max(0, state.session.shots.findIndex((x) => !x)), true); }
+      if (attempt < 2) { await sleep(1500); if (!current(gen)) return; continue; }
+      toast(e.message, 5000);
+      hideCountdown();
+      $('#shotLabel').textContent = 'Montage impossible';
+      $('#btnStart').classList.add('hidden');
+      $('#txtGetReady').classList.add('hidden');
+      $('#btnCompose').classList.remove('hidden');
+      const idleSec = state.boot.limits.captureTimeoutSec ?? 30;
+      if (idleSec > 0) setTimer('idleReturn', goIdle, idleSec * 1000);
+      return;
+    }
   }
 }
 
@@ -1014,6 +1058,7 @@ function renderFilterBar() {
 }
 
 async function chooseFilter(id) {
+  const gen = state.gen;
   const s = state.session;
   if (state.filtering || (s.filter || 'none') === id) return;
   state.filtering = true;
@@ -1021,26 +1066,33 @@ async function chooseFilter(id) {
   $('#btnKeep').disabled = true;
   $$('.filter-chip').forEach((b) => b.classList.toggle('active', b.dataset.filter === id));
   try {
-    state.session = await api(`/api/session/${s.id}/compose`, { method: 'POST', body: { filter: id } });
+    const session = await api(`/api/session/${s.id}/compose`, { method: 'POST', body: { filter: id } });
+    if (!current(gen)) return;
+    state.session = session;
     showMedia($('#finalImg'), $('#finalVideo'), `${state.session.final.url}?t=${Date.now()}`, state.session.final.video);
   } catch (e) {
-    toast(e.message, 5000);
+    if (current(gen)) toast(e.message, 5000);
   } finally {
     state.filtering = false;
     $('#screen-review').classList.remove('filtering');
     $('#btnKeep').disabled = false;
-    renderFilterBar();
-    if (state.keepAfterFilter && state.screen === 'review') keepPhoto();
+    if (current(gen)) {
+      renderFilterBar();
+      if (state.keepAfterFilter && state.screen === 'review') keepPhoto();
+    }
   }
 }
 
 /** GIF, plusieurs photos : toutes les poses sont reprises, depuis la 1re. */
 async function retakeAll() {
+  const gen = state.gen;
   clearTimer('reviewTimeout');
   try {
-    state.session = await api(`/api/session/${state.session.id}/restart`, { method: 'POST' });
+    const session = await api(`/api/session/${state.session.id}/restart`, { method: 'POST' });
+    if (!current(gen)) return;
+    state.session = session;
   } catch (e) {
-    toast(e.message, 5000);
+    if (current(gen)) toast(e.message, 5000);
     return;
   }
   state.shotImages = {};
@@ -1129,11 +1181,15 @@ function startCopiesTimeout() {
 }
 
 async function finishWithoutPrint() {
+  const gen = state.gen;
   clearTimer('copiesTimeout');
   clearInterval(state.copiesTick);
   try {
-    state.session = await api(`/api/session/${state.session.id}/print`, { method: 'POST', body: { copies: 0 } });
+    const session = await api(`/api/session/${state.session.id}/print`, { method: 'POST', body: { copies: 0 } });
+    if (!current(gen)) return;
+    state.session = session;
   } catch (e) {
+    if (!current(gen)) return;
     toast(e.message, 5000);
   }
   showDone();
@@ -1146,30 +1202,48 @@ function renderCopies() {
 }
 
 async function doPrint(copies) {
+  const gen = state.gen;
   clearTimer('copiesTimeout');
   clearInterval(state.copiesTick);
   try {
     showScreen('printing');
     $('#printStatus').textContent = copies ? `${copies} tirage${copies > 1 ? 's' : ''}` : '';
-    state.session = await api(`/api/session/${state.session.id}/print`, { method: 'POST', body: { copies } });
+    const session = await api(`/api/session/${state.session.id}/print`, { method: 'POST', body: { copies } });
+    if (!current(gen)) return;
+    state.session = session;
     if (state.session.status === 'done') showDone();
     else pollPrint();
   } catch (e) {
+    if (!current(gen)) return;
     toast(e.message, 5000);
+    // Limite atteinte entre-temps : l'écran des copies se met à jour (plus d'impression proposée)
     if (e.code === 'QUOTA_REACHED' || e.code === 'PRINTER_UNAVAILABLE' || e.code === 'PAPER_EMPTY') {
-      const b = await api('/api/bootstrap');
-      state.boot.counters = b.counters;
-      state.boot.printer = b.printer;
+      try {
+        const b = await api('/api/bootstrap');
+        if (!current(gen)) return;
+        state.boot.counters = b.counters;
+        state.boot.printer = b.printer;
+        return keepPhoto();
+      } catch { /* borne injoignable : on termine */ }
     }
-    keepPhoto();
+    // Échec d'impression (PRINT_FAILED…) : fin avec le QR code, jamais de nouvel essai automatique
+    if (current(gen)) finishWithoutPrint();
   }
 }
 
+/** « Impression en cours » : au plus PRINT_SCREEN_MAX_MS, puis la fin (QR) ; l'opérateur suit le tirage dans l'admin. */
+const PRINT_SCREEN_MAX_MS = 60000;
+
 function pollPrint() {
+  const gen = state.gen;
+  setTimer('printMax', () => { if (current(gen) && state.screen === 'printing') showDone(); }, PRINT_SCREEN_MAX_MS);
   // Filet de sécurité si le WebSocket rate l'événement de fin.
   setTimer('printPoll', async function poll() {
-    try { state.session = await api(`/api/session/${state.session.id}`); } catch { /* réessaie */ }
-    if (state.screen !== 'printing') return;
+    try {
+      const session = await api(`/api/session/${state.session.id}`);
+      if (current(gen)) state.session = session;
+    } catch { /* réessaie */ }
+    if (!current(gen) || state.screen !== 'printing') return;
     if (state.session.status === 'done') return showDone();
     if (state.session.status === 'error') {
       $('#printStatus').textContent = state.session.error || 'Erreur imprimante';
@@ -1182,7 +1256,9 @@ function pollPrint() {
 }
 
 async function showDone() {
+  const gen = state.gen;
   clearTimer('printPoll');
+  clearTimer('printMax');
   // QR code désactivé dans l'admin : rien à scanner, retour direct à l'accueil avec le remerciement en bandeau.
   const { texts } = state.boot;
   const gif = !!state.session?.gif;
@@ -1196,10 +1272,13 @@ async function showDone() {
   $('#txtThanks').textContent = (video ? texts.thanksVideo || texts.thanksGif : gif ? texts.thanksGif : null) || texts.thanks || '';
   try {
     const q = await api(`/api/session/${state.session.id}/qr`);
+    if (!current(gen)) return;
     $('#qrImg').src = q.dataUrl;
     $('#shareUrl').textContent = q.url;
   } catch { /* QR facultatif */ }
+  if (!current(gen)) return;
   showScreen('done');
+  state.doneAt = Date.now();
   const ms = (state.boot.booth.idleReturnSec || 20) * 1000;
   state.doneReturnAt = Date.now() + ms; // décompte affiché sur le Stream Deck
   setTimer('idleReturn', goIdle, ms);
@@ -1236,10 +1315,13 @@ function askPin(title) {
 }
 
 async function operatorUnlock() {
+  const gen = state.gen;
   const pin = await askPin('Code opérateur');
-  if (pin === null) return;
+  if (pin === null || !current(gen)) return;
   try {
-    state.session = await api(`/api/session/${state.session.id}/unlock`, { method: 'POST', body: { pin } });
+    const session = await api(`/api/session/${state.session.id}/unlock`, { method: 'POST', body: { pin } });
+    if (!current(gen)) return;
+    state.session = session;
     toast('Limite levée pour cette session');
     keepPhoto();
   } catch (e) {
@@ -1248,15 +1330,26 @@ async function operatorUnlock() {
 }
 
 async function adminAccess() {
-  if (state.boot.adminOpen) { location.href = '/admin.html'; return; } // code admin vide (tests)
+  if (state.boot.adminOpen) return openAdmin(); // code admin vide (tests)
   const pin = await askPin('Code admin');
   if (pin === null) return;
   try {
     await api('/api/admin/login', { method: 'POST', body: { pin } });
-    location.href = '/admin.html';
   } catch (e) {
     toast(e.message);
+    return;
   }
+  await openAdmin();
+}
+
+/** Départ vers l'admin : déclenchement programmé annulé et session non validée abandonnée avant de quitter la page. */
+async function openAdmin() {
+  const armed = state.armedSession;
+  state.armedSession = null;
+  const pending = [armed && api(`/api/session/${armed}/disarm`, { method: 'POST' }), state.session && dropSession()];
+  if (state.screen !== 'idle') showScreen('idle');
+  await Promise.allSettled(pending);
+  location.href = '/admin.html';
 }
 
 // ---------- Galerie : photos de l'événement, navigation, réimpression ----------
@@ -1461,7 +1554,7 @@ function deckKind(el) {
 
 // Pictogramme par bouton, dessiné par le serveur sur la touche.
 const DECK_ICONS = {
-  btnStart: 'camera', btnCancel: 'x', pinCancel: 'x', btnTemplateBack: 'back', btnTemplatePrev: 'chevronLeft', btnTemplateNext: 'chevronRight', btnCaptureBack: 'back', btnKeep: 'check', btnRetake: 'retake',
+  btnStart: 'camera', btnCancel: 'x', pinCancel: 'x', btnTemplateBack: 'back', btnTemplatePrev: 'chevronLeft', btnTemplateNext: 'chevronRight', btnCaptureBack: 'back', btnKeep: 'check', btnRetake: 'retake', btnCompose: 'retake',
   btnPrint: 'printer', btnNoPrint: 'qr', btnOperator: 'key', btnFinish: 'home', btnMinus: 'minus', btnPlus: 'plus',
   btnGallery: 'gallery', btnGalleryBack: 'back', btnGalleryPrev: 'chevronLeft', btnGalleryNext: 'chevronRight', btnPhotoBack: 'back', btnPhotoPrev: 'chevronLeft', btnPhotoNext: 'chevronRight', btnReprint: 'printer',
   btnPhotoMinus: 'minus', btnPhotoPlus: 'plus'
@@ -1633,7 +1726,7 @@ function onKeyDown(e) {
     const root = $('.screen.active');
     if (!root) return;
     if (root.id === 'screen-done' && !['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key)) {
-      goIdle(); // écran de fin : toute touche ramène à l'accueil, sans attendre le décompte
+      if (!doneJustShown()) goIdle(); // écran de fin : toute touche ramène à l'accueil, sans attendre le décompte
       e.preventDefault();
       return;
     }
@@ -1664,8 +1757,13 @@ function onKeyDown(e) {
   if (done) e.preventDefault(); // sinon Espace / Entrée recliqueraient le bouton qui a le focus
 }
 
+/** Écran de fin affiché à l'instant : un appui destiné à l'écran d'avant ne doit pas cacher le QR code. */
+const DONE_GUARD_MS = 1500;
+const doneJustShown = () => state.screen === 'done' && Date.now() - (state.doneAt || 0) < DONE_GUARD_MS;
+
 function onDeckPress(id) {
   menuActivity();
+  if (!id.startsWith('__') && doneJustShown()) return;
   if (id === '__admin') { // code secret G D G D du Stream Deck
     if ($('#pinDialog').open) return;
     // Session lancée par les premiers appuis du code (pas encore validée) : abandonnée avant l'admin
@@ -1748,6 +1846,7 @@ function bind() {
   $('#btnTemplatePrev').addEventListener('click', () => templatePageTurn(-1));
   $('#btnTemplateNext').addEventListener('click', () => templatePageTurn(1));
   $('#btnStart').addEventListener('click', () => runCountdown(state.currentShot));
+  $('#btnCompose').addEventListener('click', finishShots);
   $('#btnCancel').addEventListener('click', goIdle);
   $('#btnCaptureBack').addEventListener('click', backToTemplates);
   $('#btnRetake').addEventListener('click', onRetakeClick);

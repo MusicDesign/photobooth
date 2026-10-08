@@ -189,6 +189,26 @@ async function runSteps(app, camera) {
     assert.equal(r.data.status, 'done');
   });
 
+  await step('impression en échec : relecture gardée (pas de boucle), puis fin sans tirage', async () => {
+    const x = (await post('/api/session', { templateId: 'classic-10x15' })).data;
+    await shot(x.id, 0);
+    await post(`/api/session/${x.id}/compose`, {});
+    const printer = app.booth.printer;
+    const before = (await j('/api/bootstrap')).data.counters.printed;
+    printer.print = async () => { throw new Error('lp introuvable'); };
+    try {
+      const r = await post(`/api/session/${x.id}/print`, { copies: 1 });
+      assert.equal(r.data.error, 'PRINT_FAILED');
+    } finally {
+      delete printer.print;
+    }
+    const after = (await j(`/api/session/${x.id}`)).data;
+    assert.equal(after.status, 'review', 'nouvel essai ou fin sans tirage possibles');
+    assert.ok(after.error);
+    assert.equal((await post(`/api/session/${x.id}/print`, { copies: 0 })).data.status, 'done');
+    assert.equal((await j('/api/bootstrap')).data.counters.printed, before, 'rien de compté');
+  });
+
   await step('QR code et page galerie', async () => {
     const q = (await j(`/api/session/${s.id}/qr`)).data;
     assert.ok(q.url.endsWith(`/g/${s.id}`));
@@ -400,6 +420,54 @@ async function runSteps(app, camera) {
     app.booth.purgeUnvalidatedSessions();
     assert.equal((await j(`/api/session/${old}`)).status, 404);
     assert.equal((await j(`/api/session/${kept}`)).status, 200);
+  });
+
+  await step('sessions : annulée ou supprimée pendant la prise ou le montage, jamais recréée', async () => {
+    const dirOf = (id) => path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', id);
+    const until = async (cond) => {
+      for (const t0 = Date.now(); !cond();) {
+        if (Date.now() - t0 > 5000) throw new Error('attente trop longue');
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    };
+    // Montage en cours quand l'invité annule : supprimée à la fin, session.json pas réécrit
+    const x = (await post('/api/session', { templateId: 'strip-3' })).data;
+    for (let i = 0; i < 3; i++) await shot(x.id, i);
+    const composing = post(`/api/session/${x.id}/compose`, {});
+    await until(() => app.booth.composing.has(x.id));
+    assert.equal((await post(`/api/session/${x.id}/abandon`, {})).data.deleted, true);
+    assert.equal((await composing).data.error, 'SESSION_ABANDONED');
+    assert.equal((await j(`/api/session/${x.id}`)).status, 404);
+    assert.ok(!fs.existsSync(dirOf(x.id)), 'dossier recréé par le montage');
+    if (app.booth.camera.mode !== 'server') return;
+    // Photo en route (Canon : plusieurs secondes) : annulée par l'invité, puis supprimée par l'admin
+    const cam = app.booth.camera;
+    const cancels = [(id) => post(`/api/session/${id}/abandon`, {}), (id) => j(`/api/admin/sessions/${id}`, { method: 'DELETE', headers: ADMIN })];
+    for (const cancel of cancels) {
+      const y = (await post('/api/session', { templateId: 'strip-3' })).data;
+      let release;
+      const gate = new Promise((r) => { release = r; });
+      cam.capture = async (file) => { await gate; delete cam.capture; return cam.capture(file); };
+      const pending = post(`/api/session/${y.id}/shot/0`, {});
+      await until(() => app.booth.capturing.has(y.id));
+      assert.equal((await cancel(y.id)).status, 200);
+      release();
+      assert.equal((await pending).data.error, 'SESSION_ABANDONED');
+      assert.equal((await j(`/api/session/${y.id}`)).status, 404);
+      assert.ok(!fs.existsSync(dirOf(y.id)), 'photo arrivée après coup : effacée');
+    }
+    // Décompte armé puis borne quittée sans prévenir (admin) : l'entrée expire, la session redevient purgeable
+    app.booth.armedTtlMs = 50;
+    try {
+      const z = (await post('/api/session', { templateId: 'strip-3' })).data;
+      await post(`/api/session/${z.id}/arm`, { index: 0, fireInMs: 0 });
+      assert.ok(!app.booth.isUnvalidated(app.store.getSession(z.id)), 'protégée pendant le décompte');
+      await until(() => !app.booth.armed.has(z.id));
+      assert.ok(app.booth.isUnvalidated(app.store.getSession(z.id)));
+      await post(`/api/session/${z.id}/abandon`, {});
+    } finally {
+      app.booth.armedTtlMs = 30000;
+    }
   });
 
   await step('événements : création, rattachement, compteurs par événement, déplacement, export ZIP, suppression', async () => {
@@ -764,12 +832,12 @@ async function runSteps(app, camera) {
       assert.equal(meta.delay.reduce((a, x) => a + x, 0), (2 * n - 2) * 40, `aller-retour : ${meta.delay}`);
       assert.equal(meta.width, 480, 'GIF de secours réduit à 480 px');
     }
-    // Page téléphone : lecteur vidéo, flèches lisibles, pas de numéro de session
+    // Page téléphone (photo validée) : lecteur vidéo, flèches lisibles, pas de numéro de session
+    await post(`/api/session/${s.id}/keep`, {});
     const phone = await (await fetch(`${base}/g/${s.id}`)).text();
     if (c.final.video) {
       assert.ok(phone.includes('<video') && phone.includes('Enregistrer la vidéo'));
       // Bouton d'enregistrement : le fichier arrive en téléchargement (Safari ne propose pas d'enregistrer un MP4 ouvert)
-      await post(`/api/session/${s.id}/keep`, {});
       const dl = await fetch(`${base}/g/${s.id}/fichier`);
       assert.equal(dl.status, 200);
       assert.ok(/attachment/.test(dl.headers.get('content-disposition') || '') && /\.mp4/.test(dl.headers.get('content-disposition')), dl.headers.get('content-disposition'));
@@ -865,7 +933,7 @@ async function runSteps(app, camera) {
     const photo = await (await fetch(`${base}/g/${older}`)).text();
     assert.ok(!photo.includes('Télécharger la photo') && photo.includes('Photo suivante') && photo.includes('href="/galerie"'));
     assert.ok(photo.includes(`href="/g/${newer}"`), 'flèche vers la photo voisine');
-    assert.ok(!(await (await fetch(`${base}/g/${pending}`)).text()).includes('href="/galerie"'), 'photo hors galerie : pas de navigation');
+    assert.equal((await fetch(`${base}/g/${pending}`)).status, 404, 'photo pas validée : page introuvable, comme son fichier');
     assert.equal((await fetch(`${base}/galerie/${older}`, { redirect: 'manual' })).headers.get('location'), `/g/${older}`);
     await post(`/api/session/${pending}/abandon`, {});
     galleryIds = { older, newer };
@@ -896,6 +964,18 @@ async function runSteps(app, camera) {
     app.booth.resumePrintJobs();
     await waitStatus(older, 'done');
     assert.equal((await j('/api/gallery')).data.items.find((it) => it.id === older)?.printing, false, 'galerie : plus « en cours »');
+    // Tirage raté (remboursé) puis réimprimé : la photo redevient terminée, la borne ne se croit plus en impression
+    const failed = app.store.getSession(older);
+    failed.status = 'printing';
+    failed.printJobs.push({ jobId: 'rate-1', copies: 0, paperTaken: 0, origin: 'guest', status: 'queued', at: new Date().toISOString() });
+    app.store.saveSession(failed);
+    app.booth.jobToSession.set('rate-1', older);
+    app.booth.onPrinterJob({ jobId: 'rate-1', status: 'error', message: 'Suivi de l\'impression impossible', final: true });
+    assert.equal((await j(`/api/session/${older}`)).data.status, 'error');
+    assert.ok(!app.booth.jobToSession.has('rate-1'), 'suivi terminé : tirage oublié');
+    assert.equal((await reprint(older, { copies: 1, pin })).status, 200);
+    await waitStatus(older, 'done');
+    assert.equal(app.booth.printing(), false);
 
     await put('/api/admin/config', { gallery: { reprint: 'guest' } }, ADMIN);
     assert.equal((await reprint(newer, { copies: 3 })).data.error, 'COPIES_INVALID');
@@ -905,6 +985,14 @@ async function runSteps(app, camera) {
     assert.equal((await reprint(newer, { copies: 1 })).data.error, 'QUOTA_REACHED');
     await put('/api/admin/config', { limits: { eventQuota: 0 }, gallery: { booth: false, web: false, reprint: 'operator' } }, ADMIN);
     assert.equal((await reprint(newer, { copies: 1 })).status, 403, 'galerie fermée : plus de réimpression');
+  });
+
+  await step('CUPS : le suivi cherche l\'identifiant exact du tirage (DNP-4 ≠ DNP-42)', async () => {
+    const { jobListed } = await import('../server/printer/cups.js');
+    const out = 'DNP-42                  lucas          1024   jeu. 08 oct. 2026 10:00:00\n';
+    assert.equal(jobListed(out, 'DNP-42'), true);
+    assert.equal(jobListed(out, 'DNP-4'), false);
+    assert.equal(jobListed('', 'DNP-4'), false);
   });
 
   await step('écran : détecté (simulé), luminosité et volume réglés depuis l\'admin, valeurs hors bornes refusées', async () => {
