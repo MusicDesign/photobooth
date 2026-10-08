@@ -128,12 +128,14 @@ if [ "$KIOSK" = 1 ]; then
     fi
     # Menu de démarrage (GRUB) masqué : démarrage direct, menu toujours joignable en maintenant Échap ou Maj.
     # « splash » sur la ligne du noyau : Plymouth affiche le logo au lieu des messages de démarrage.
+    # plymouth.ignore-serial-consoles : avec une console série (VM UTM : ttyAMA0), Plymouth forcerait le texte.
     # update-grub et grub2-mkconfig sont dans /usr/sbin, hors du PATH d'un utilisateur Debian : chemins complets.
     # Le menu est régénéré tant qu'il est plus ancien que le réglage (une régénération ratée est retentée).
     if [ -f /etc/default/grub ]; then
       if ! grep -qx 'GRUB_TIMEOUT=0' /etc/default/grub || ! grep -qx 'GRUB_TIMEOUT_STYLE=hidden' /etc/default/grub \
-        || ! grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=.*splash' /etc/default/grub; then
-        sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/; /^GRUB_TIMEOUT_STYLE=/d; /^GRUB_CMDLINE_LINUX_DEFAULT=/{/splash/!s/"$/ splash"/}' /etc/default/grub
+        || ! grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=.*splash' /etc/default/grub \
+        || ! grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=.*plymouth.ignore-serial-consoles' /etc/default/grub; then
+        sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/; /^GRUB_TIMEOUT_STYLE=/d; /^GRUB_CMDLINE_LINUX_DEFAULT=/{/splash/!s/"$/ splash"/}; /^GRUB_CMDLINE_LINUX_DEFAULT=/{/plymouth.ignore-serial-consoles/!s/"$/ plymouth.ignore-serial-consoles"/}' /etc/default/grub
         echo 'GRUB_TIMEOUT_STYLE=hidden' | sudo tee -a /etc/default/grub >/dev/null
       fi
       GRUB_CFG=/boot/grub/grub.cfg; [ -d /boot/grub2 ] && GRUB_CFG=/boot/grub2/grub.cfg
