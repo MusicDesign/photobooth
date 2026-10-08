@@ -663,7 +663,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   r.get('/templates/:id/export', (req, res) => {
     const t = templates.get(req.params.id); // inconnu : 404
     const { boothName, appVersion } = bundleInfo();
-    const base = `${t.name || t.id} - template`.replace(/[\\/:*?"<>|]+/g, '-');
+    const base = String(t.name || t.id).replace(/[\\/:*?"<>|]+/g, '-').trim() || t.id; // fichier au nom du template
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="template.zip"; filename*=UTF-8''${encodeURIComponent(`${base}.zip`)}`);
     const zip = buildBundle({ config, templates, parts: { settings: false, templates: true }, templateIds: [t.id], boothName, appVersion });

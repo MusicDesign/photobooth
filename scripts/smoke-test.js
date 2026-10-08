@@ -1434,6 +1434,7 @@ async function runSteps(app, camera) {
     const [tplOne, tplOther] = app.templates.all();
     const one = await fetch(`${base}/api/admin/templates/${tplOne.id}/export`, { headers: ADMIN });
     assert.equal(one.status, 200);
+    assert.ok(decodeURIComponent(one.headers.get('content-disposition')).endsWith(`${tplOne.name}.zip`), one.headers.get('content-disposition'));
     const oneZip = new AdmZip(Buffer.from(await one.arrayBuffer()));
     const names = oneZip.getEntries().map((e) => e.entryName);
     assert.ok(names.includes(`templates/${tplOne.id}/template.json`) && !names.includes('settings.json'), names.join(', '));
