@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import multer from 'multer';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import { UPLOADS_DIR, OUTPUT_DIR } from '../paths.js';
 import { samplePhotos } from '../samples.js';
 import { HttpError, parseCookies } from '../util.js';
@@ -526,7 +526,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="export.zip"; filename*=UTF-8''${encodeURIComponent(`${base} - ${label}.zip`)}`);
     // Les JPEG sont déjà compressés : stockés tels quels, l'archive part tout de suite et la borne ne peine pas
-    const zip = archiver('zip', { store: true });
+    const zip = new ZipArchive({ store: true });
     zip.on('warning', (e) => console.warn(`[export] ${e.message}`));
     zip.on('error', (e) => { console.warn(`[export] ${e.message}`); res.destroy(e); });
     res.on('close', () => { if (!res.writableFinished) zip.abort(); }); // téléchargement annulé

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import AdmZip from 'adm-zip';
 import { UPLOADS_DIR } from './paths.js';
 import { DEFAULTS, coerceNumbers } from './config.js';
@@ -78,7 +78,7 @@ const templateDirs = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((
  * parts : { settings, templates } (booléens) ; secrets : codes et mots de passe inclus ou non.
  */
 export function buildBundle({ config, templates, parts = {}, secrets = false, boothName = '', appVersion = '' }) {
-  const zip = archiver('zip', { zlib: { level: 6 } });
+  const zip = new ZipArchive({ zlib: { level: 6 } });
   const settings = parts.settings === false ? null : (secrets ? clone(config.data) : stripSecrets(config.data));
   zip.append(JSON.stringify({
     app: 'photobooth-config', format: FORMAT, appVersion, boothName, exportedAt: new Date().toISOString(),
