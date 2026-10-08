@@ -237,7 +237,7 @@ function updateCard() {
         ${u.available ? `<div class="cell-sub">${when(u.date)} · <code>${esc(u.commit || '?')}</code>${u.branch && u.branch !== 'main' ? ` · branche ${esc(u.branch)}` : ''}${u.checkedAt ? ` · vérifié ${when(u.checkedAt)}` : ''}</div>` : ''}
       </div>
       ${u.available ? `<div class="cell-actions">
-        ${u.needRestart && u.canRestart ? '<button class="btn small secondary" id="btnUpdateRestart">Redémarrer la borne</button>' : ''}
+        ${u.needRestart && u.canRestart ? '<button class="btn small secondary" id="btnUpdateRestart">Relancer le logiciel</button>' : ''}
         ${u.behind && !u.updating ? '<button class="btn small primary" id="btnUpdateInstall">Mettre à jour</button>' : ''}
         <button class="btn small" id="btnUpdateCheck" ${u.updating ? 'disabled' : ''}>Rechercher une mise à jour</button>
       </div>` : ''}
@@ -3134,9 +3134,7 @@ async function boot() {
   }
   $('#login').classList.add('hidden');
   $('#shell').classList.remove('hidden');
-  $('#btnQuit').classList.toggle('hidden', !S.canShutdown);
-  $('#btnShutdown').classList.toggle('hidden', !S.canPowerOff);
-  $('#btnRestart').classList.toggle('hidden', !S.canRestart);
+  updatePowerButtons();
   sendDeckUi();
   if (!S.formats || !S.theme || S.templates.some((t) => !t.layers)) {
     $('#main').innerHTML = `<h2>Serveur à redémarrer</h2>
@@ -3155,31 +3153,37 @@ window.addEventListener('beforeunload', (e) => { if (currentSection() === 'edito
 $('#btnLogout').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }); location.reload(); };
 // Retour à la borne dans la même fenêtre : on se déconnecte, sinon la zone cachée rouvrirait l'admin sans code.
 $('#btnBooth').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }).catch(() => {}); location.href = '/'; };
-/** Quitter (le logiciel se ferme) ou éteindre (l'ordinateur aussi) : confirmation, puis impression en cours à confirmer. */
-async function stopBooth(url, question, ok, title, sub) {
-  if (!await askConfirm(question, ok)) return;
+// ---------- Arrêt : relancer ou quitter le logiciel, redémarrer ou éteindre l'ordinateur ----------
+// Un bouton « Arrêt… » ouvre la fenêtre des choix (elle tient lieu de confirmation) ; seuls les choix permis
+// sur cette machine y figurent.
+const POWER = [['btnRestart', 'canRestart'], ['btnQuit', 'canShutdown'], ['btnReboot', 'canReboot'], ['btnShutdown', 'canPowerOff']];
+function updatePowerButtons() {
+  for (const [id, can] of POWER) $(`#${id}`).classList.toggle('hidden', !S[can]);
+  $('#btnPower').classList.toggle('hidden', !POWER.some(([, can]) => S[can]));
+}
+$('#btnPower').onclick = () => { $('#powerDialog').showModal(); sendDeckUi(); };
+$('#pwCancel').onclick = () => $('#powerDialog').close();
+$('#powerDialog').addEventListener('close', () => sendDeckUi());
+
+/** Envoie l'ordre (impression en cours : confirmée à part), puis affiche l'écran d'attente. */
+async function powerAction(url, ok, title, sub) {
+  $('#powerDialog').close();
   try {
     await api(url, { method: 'POST', body: {} });
   } catch (e) {
-    if (e.code !== 'PRINTING' || !await askConfirm(`${e.message}\n\n${ok} quand même ?`, `${ok} quand même`)) return toast(e.message, true);
+    if (e.code !== 'PRINTING' || !await askConfirm(`${e.message}\n\n${ok} quand même ?`, `${ok} quand même`)) { toast(e.message, true); return false; }
     await api(url, { method: 'POST', body: { force: true } });
   }
   // Le lanceur ferme la fenêtre ; ce message ne reste visible que dans un navigateur ordinaire.
   document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>${title}</h1><p class="sub">${sub}</p></div></div>`;
+  return true;
 }
-$('#btnQuit').onclick = () => stopBooth('/api/admin/shutdown', 'Quitter la borne ?\n\nPour la relancer : icône « Cheeesy » sur le bureau.', 'Quitter', 'Borne fermée', 'Pour la relancer : icône « Cheeesy » sur le bureau.');
-$('#btnShutdown').onclick = () => stopBooth('/api/admin/poweroff', 'Éteindre la borne ?\n\nL\'ordinateur s\'éteint.', 'Éteindre', 'Extinction…', 'L\'ordinateur s\'éteint.');
-// Redémarrer : le logiciel se ferme proprement (caméra, Stream Deck) et se relance tout seul sur l'accueil.
+$('#btnQuit').onclick = () => powerAction('/api/admin/shutdown', 'Quitter', 'Borne fermée', 'Pour la relancer : icône « Cheeesy » sur le bureau.');
+$('#btnReboot').onclick = () => powerAction('/api/admin/reboot', 'Redémarrer', 'Redémarrage…', 'L\'ordinateur redémarre.');
+$('#btnShutdown').onclick = () => powerAction('/api/admin/poweroff', 'Éteindre', 'Extinction…', 'L\'ordinateur s\'éteint.');
+// Relancer : le logiciel se ferme proprement (caméra, Stream Deck) et se relance tout seul sur l'accueil.
 $('#btnRestart').onclick = async () => {
-  if (!await askConfirm('Redémarrer la borne ?\n\nLe logiciel se ferme puis se relance tout seul, en quelques secondes. Utile si la caméra ou le Stream Deck ne répond plus.', 'Redémarrer', 'retake')) return;
-  try {
-    await api('/api/admin/restart', { method: 'POST', body: {} });
-  } catch (e) {
-    if (e.code !== 'PRINTING' || !await askConfirm(`${e.message}\n\nRedémarrer quand même ?`, 'Redémarrer quand même', 'retake')) return toast(e.message, true);
-    await api('/api/admin/restart', { method: 'POST', body: { force: true } });
-  }
-  document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>Redémarrage…</h1>
-    <p class="sub">La borne revient dans quelques secondes.</p></div></div>`;
+  if (!await powerAction('/api/admin/restart', 'Relancer', 'Relance…', 'La borne revient dans quelques secondes.')) return;
   // Lanceur Chromium : la fenêtre reste ouverte, on revient à l'accueil dès que le serveur relancé répond
   // (l'app Electron, elle, se relance entièrement).
   let down = false;
@@ -3271,19 +3275,22 @@ function sendDeckUi() {
     return;
   }
   let items;
-  if (dlg.open) {
+  if (!dlg.open && $('#powerDialog').open) {
+    // Fenêtre d'arrêt : ses choix sur les touches, dans le même ordre
+    const pw = { btnRestart: ['Relancer', 'retake', 'primary'], btnQuit: ['Quitter', 'x', 'ghost'], btnReboot: ['Redémarrer', 'retake', 'ghost'], btnShutdown: ['Éteindre', 'power', 'primary'] };
+    items = POWER.filter(([id]) => !$(`#${id}`).classList.contains('hidden'))
+      .map(([id]) => ({ id, label: pw[id][0], icon: pw[id][1], kind: pw[id][2], ...(id === 'btnShutdown' ? { style: DECK_DANGER } : {}) }));
+    items.push({ id: 'pwCancel', label: 'Annuler', icon: 'x', kind: 'ghost' });
+  } else if (dlg.open) {
     items = [{ id: 'cfOk', label: $('#cfOk').textContent, icon: $('#cfOk').dataset.icon || 'power', kind: 'primary', style: DECK_DANGER }, { id: 'cfCancel', label: 'Annuler', icon: 'x', kind: 'ghost' }];
   } else {
     items = [{ id: 'btnBooth', label: 'Retour à la borne', icon: 'back', kind: 'ghost' }];
     if (shell) items.push({ id: 'btnLogout', label: 'Déconnexion', icon: 'logout', kind: 'ghost' });
     // Calibrage du boîtier lançable depuis le Stream Deck : toujours là, grisé tant qu'aucun boîtier n'est branché
     if (shell) items.push({ id: 'deckCalib', label: 'Calibrer', icon: 'camera', kind: 'ghost', disabled: !calibReady() });
-    // Redémarrer et éteindre sur la rangée du haut, retour et déconnexion en bas
-    if (shell && !$('#btnRestart').classList.contains('hidden')) items.push({ id: 'btnRestart', label: 'Redémarrer', icon: 'retake', kind: 'primary', style: { bg: '#2f6fdd', fg: '#ffffff', border: null } });
-    if (shell && !$('#btnQuit').classList.contains('hidden')) items.push({ id: 'btnQuit', label: 'Quitter', icon: 'x', kind: 'ghost' });
-    if (shell && !$('#btnShutdown').classList.contains('hidden')) items.push({ id: 'btnShutdown', label: 'Éteindre', icon: 'power', kind: 'primary', style: DECK_DANGER });
+    if (shell && !$('#btnPower').classList.contains('hidden')) items.push({ id: 'btnPower', label: 'Arrêt', icon: 'power', kind: 'primary', style: DECK_DANGER });
   }
-  deckSock.send(JSON.stringify({ type: 'ui', screen: dlg.open ? 'admin-confirm' : 'admin', items, colors: S?.theme?.colors || {} }));
+  deckSock.send(JSON.stringify({ type: 'ui', screen: dlg.open ? 'admin-confirm' : $('#powerDialog').open ? 'admin-power' : 'admin', items, colors: S?.theme?.colors || {} }));
 }
 
 /** Boîtier gphoto2 branché et joignable : le calibrage peut se lancer. */

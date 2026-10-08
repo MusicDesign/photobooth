@@ -33,7 +33,8 @@ import { ROOT, OUTPUT_DIR, PUBLIC_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, 
  * BOOTH_PRINTER forcent un pilote sans toucher au fichier de config (tests).
  * onShutdown : appelé quand l'admin quitte la borne, après fermeture du serveur
  * (le lanceur quitte alors le processus, l'app Electron ferme sa fenêtre).
- * « Éteindre » arrête en plus l'ordinateur (Linux, si la session a le droit de l'éteindre sans mot de passe).
+ * « Éteindre » et « Redémarrer l'ordinateur » arrêtent en plus la machine (Linux, si la session en a le droit sans
+ * mot de passe).
  * onRestart : pareil pour « Redémarrer » ; seul un lanceur capable de se relancer le fournit (app Electron).
  */
 export async function createApp({ port = Number(process.env.PORT) || 3000, onShutdown = null, onRestart = null, remoteScreen = null, backgroundCamera = false } = {}) {
@@ -196,23 +197,27 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
     }, 300);
   });
   const shutdown = stopThen(onShutdown, 'arrêt');
-  // Éteindre l'ordinateur : systemctl poweroff, permis sans mot de passe à la session ouverte devant l'écran
-  // (logind répond « yes »). Vérifié au démarrage : sinon le bouton n'est pas proposé.
-  let canPowerOff = false;
+  // Éteindre ou redémarrer l'ordinateur : systemctl poweroff / reboot, permis sans mot de passe à la session ouverte
+  // devant l'écran (logind répond « yes »). Vérifié au démarrage : sinon le bouton n'est pas proposé.
+  const machineOk = { poweroff: false, reboot: false };
   if (process.platform === 'linux') {
-    promisify(execFile)('busctl', ['call', 'org.freedesktop.login1', '/org/freedesktop/login1', 'org.freedesktop.login1.Manager', 'CanPowerOff'], { timeout: 5000 })
-      .then(({ stdout }) => { canPowerOff = /"yes"/.test(stdout); }, () => {});
+    for (const [verb, method] of [['poweroff', 'CanPowerOff'], ['reboot', 'CanReboot']]) {
+      promisify(execFile)('busctl', ['call', 'org.freedesktop.login1', '/org/freedesktop/login1', 'org.freedesktop.login1.Manager', method], { timeout: 5000 })
+        .then(({ stdout }) => { machineOk[verb] = /"yes"/.test(stdout); }, () => {});
+    }
   }
-  const powerOff = stopThen(async () => {
-    try { await promisify(execFile)('systemctl', ['poweroff'], { timeout: 10000 }); } catch (e) { console.error(`[booth] extinction : ${e.message}`); }
+  const machine = (verb, what) => stopThen(async () => {
+    try { await promisify(execFile)('systemctl', [verb], { timeout: 10000 }); } catch (e) { console.error(`[booth] ${what} : ${e.message}`); }
     await onShutdown?.();
-  }, 'extinction');
+  }, what);
+  const powerOff = machine('poweroff', 'extinction');
+  const reboot = machine('reboot', 'redémarrage de l\'ordinateur');
   const restart = stopThen(onRestart, 'redémarrage');
   // Mise à jour depuis l'admin (dépôt git) : version en cours lue au démarrage
   const updater = new Updater({ setup, restart });
   updater.version().catch(() => {});
 
-  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, lights, screen, setup, updater, usb, shutdown, restart, powerOff, canPowerOff: () => canPowerOff, kioskScreen, remoteScreen }));
+  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, lights, screen, setup, updater, usb, shutdown, restart, powerOff, reboot, canMachine: (verb) => machineOk[verb], kioskScreen, remoteScreen }));
   // Écran déporté (iPad…) : l'écran de la borne et son toucher, avec le code admin (voir electron/remote-screen.js)
   app.get('/remote', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'remote.html')));
   // API de l'écran de la borne : seulement depuis la borne (les téléphones n'ont besoin que de ping et de la galerie)

@@ -47,9 +47,7 @@
     <div class="nav-foot">
       <button id="btnBooth" class="btn primary small"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Retour à la borne</button>
       <button id="btnLogout" class="btn ghost small">Déconnexion</button>
-      <button id="btnRestart" class="btn ghost small hidden">Redémarrer la borne</button>
-      <button id="btnQuit" class="btn ghost small hidden">Quitter la borne</button>
-      <button id="btnShutdown" class="btn danger small hidden">Éteindre la borne</button>
+      <button id="btnPower" class="btn ghost small hidden"><i class="fa-solid fa-power-off" aria-hidden="true"></i> Arrêt…</button>
     </div>
   </nav>
   <div id="navBackdrop" class="nav-backdrop"></div>
@@ -63,6 +61,15 @@
 <dialog id="confirmDialog" class="confirm-dialog">
   <p id="confirmText"></p>
   <div class="row"><button id="cfCancel" class="btn" type="button">Annuler</button><button id="cfOk" class="btn danger" type="button"></button></div>
+</dialog>
+<!-- Arrêt : relancer ou quitter le logiciel, redémarrer ou éteindre l'ordinateur (choix permis sur cette machine) -->
+<dialog id="powerDialog" class="confirm-dialog power-dialog">
+  <h3>Arrêt</h3>
+  <button id="btnRestart" class="power-choice hidden" type="button"><i class="fa-solid fa-rotate-right" aria-hidden="true"></i> Relancer le logiciel</button>
+  <button id="btnQuit" class="power-choice hidden" type="button"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Quitter le logiciel</button>
+  <button id="btnReboot" class="power-choice hidden" type="button"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Redémarrer l'ordinateur</button>
+  <button id="btnShutdown" class="power-choice danger hidden" type="button"><i class="fa-solid fa-power-off" aria-hidden="true"></i> Éteindre l'ordinateur</button>
+  <div class="row"><button id="pwCancel" class="btn" type="button" autofocus>Annuler</button></div>
 </dialog>
 <script type="module" src="/admin.js"></script>
 </body>
