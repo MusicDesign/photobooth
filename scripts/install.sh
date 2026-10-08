@@ -114,12 +114,22 @@ if [ "$KIOSK" = 1 ]; then
       break
     done
     # Menu de démarrage (GRUB) masqué : démarrage direct, menu toujours joignable en maintenant Échap ou Maj.
-    if [ -f /etc/default/grub ] && ! grep -q '^GRUB_TIMEOUT_STYLE=hidden' /etc/default/grub; then
-      sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/; /^GRUB_TIMEOUT_STYLE=/d' /etc/default/grub
-      echo 'GRUB_TIMEOUT_STYLE=hidden' | sudo tee -a /etc/default/grub >/dev/null
-      if have update-grub; then sudo update-grub >/dev/null 2>&1
-      elif have grub2-mkconfig; then sudo grub2-mkconfig -o /boot/grub2/grub.cfg >/dev/null 2>&1; fi
-      echo "Menu de démarrage masqué (Échap ou Maj au démarrage pour l'afficher)"
+    # update-grub et grub2-mkconfig sont dans /usr/sbin, hors du PATH d'un utilisateur Debian : chemins complets.
+    # Le menu est régénéré tant qu'il est plus ancien que le réglage (une régénération ratée est retentée).
+    if [ -f /etc/default/grub ]; then
+      if ! grep -qx 'GRUB_TIMEOUT=0' /etc/default/grub || ! grep -qx 'GRUB_TIMEOUT_STYLE=hidden' /etc/default/grub; then
+        sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/; /^GRUB_TIMEOUT_STYLE=/d' /etc/default/grub
+        echo 'GRUB_TIMEOUT_STYLE=hidden' | sudo tee -a /etc/default/grub >/dev/null
+      fi
+      GRUB_CFG=/boot/grub/grub.cfg; [ -d /boot/grub2 ] && GRUB_CFG=/boot/grub2/grub.cfg
+      if ! sudo test "$GRUB_CFG" -nt /etc/default/grub; then # sudo : /boot/grub2 n'est lisible que par root (Fedora)
+        if [ -x /usr/sbin/update-grub ]; then GRUB_MK=(/usr/sbin/update-grub)
+        elif [ -x /usr/sbin/grub2-mkconfig ]; then GRUB_MK=(/usr/sbin/grub2-mkconfig -o "$GRUB_CFG")
+        else GRUB_MK=(); fi
+        if [ ${#GRUB_MK[@]} = 0 ]; then echo "Menu de démarrage : update-grub introuvable, réglage non appliqué"
+        elif GRUB_ERR="$(sudo "${GRUB_MK[@]}" 2>&1 >/dev/null)"; then echo "Menu de démarrage masqué (Échap ou Maj au démarrage pour l'afficher)"
+        else echo "Menu de démarrage : échec de ${GRUB_MK[0]##*/}"; echo "$GRUB_ERR" | tail -5; fi
+      fi
     fi
     # Version des réglages système appliqués : l'admin (page Installation) demande de relancer ce script quand une
     # mise à jour en apporte de nouveaux (server/setup.js, scripts/kiosk/SETUP_VERSION).
