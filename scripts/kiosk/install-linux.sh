@@ -42,6 +42,7 @@ if [ $UNINSTALL -eq 1 ]; then
     gsettings reset org.gnome.mutter overlay-key
     for k in toggle-overview toggle-application-view toggle-message-tray toggle-quick-settings; do gsettings reset org.gnome.shell.keybindings "$k" 2>/dev/null || true; done
     gsettings reset org.gnome.desktop.notifications show-banners
+    for k in automount-open autorun-never; do gsettings reset org.gnome.desktop.media-handling "$k"; done
     for k in picture-uri picture-uri-dark picture-options; do gsettings reset org.gnome.desktop.background "$k"; done
   fi
   echo "Icônes et lancement automatique retirés."
@@ -131,6 +132,9 @@ if [ $NOSLEEP -eq 1 ] && command -v gsettings >/dev/null; then
     gsettings set org.gnome.shell.keybindings "$k" "[]" 2>/dev/null || true
   done
   gsettings set org.gnome.desktop.notifications show-banners false
+  # Clé USB branchée : montée (la borne y copie les photos) mais sans fenêtre Fichiers ouverte par-dessus la borne.
+  gsettings set org.gnome.desktop.media-handling automount-open false
+  gsettings set org.gnome.desktop.media-handling autorun-never true
   # Fond d'écran Cheeesy, clair et sombre selon le style du bureau (public/assets/wallpapers).
   gsettings set org.gnome.desktop.background picture-uri "file://$DIR/public/assets/wallpapers/wall_light.png"
   gsettings set org.gnome.desktop.background picture-uri-dark "file://$DIR/public/assets/wallpapers/wall_dark.png"

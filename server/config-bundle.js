@@ -108,6 +108,8 @@ export function writeBundle(zip, file) {
   });
 }
 
+const UPLOAD_EXTS = /^[^.][^/]*\.(png|jpe?g|webp|gif|svg|ttf|otf|woff2?)$/i;
+
 const safeName = (n) => {
   const p = path.posix.normalize(String(n).replace(/\\/g, '/'));
   return !p.startsWith('/') && !p.startsWith('../') && p !== '..' && !p.includes('\0') ? p : null;
@@ -135,7 +137,7 @@ export function readBundle(buffer) {
       t.files.push({ rel: m[2], entry: e });
       if (m[2] === 'template.json') t.name = json(name)?.name || m[1];
       templates.set(m[1], t);
-    } else if ((m = /^uploads\/([^/]+)$/.exec(name))) uploads.set(m[1], e);
+    } else if ((m = /^uploads\/([^/]+)$/.exec(name)) && UPLOAD_EXTS.test(m[1])) uploads.set(m[1], e); // images et polices seulement : servies telles quelles par /uploads
   }
   for (const [id, t] of [...templates]) if (!t.files.some((f) => f.rel === 'template.json')) templates.delete(id);
   return { manifest, settings: settings && typeof settings === 'object' ? settings : null, templates, uploads };

@@ -61,6 +61,22 @@ export function deepMerge(target, patch) {
 
 export const clone = (o) => structuredClone(o);
 
+const pad2 = (n) => String(n).padStart(2, '0');
+/** Date du jour à l'heure de la borne (AAAA-MM-JJ), pas celle de Greenwich : après minuit UTC, c'est encore « aujourd'hui ». */
+export const localDate = (d = new Date()) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+/** Horodatage local triable pour les noms de fichiers : 2026-10-08_20h34m05. */
+export const localStamp = (d = new Date()) => `${localDate(d)}_${pad2(d.getHours())}h${pad2(d.getMinutes())}m${pad2(d.getSeconds())}`;
+
+/**
+ * Nom de fichier ou de dossier valable partout, clés FAT/exFAT et Windows compris : ni caractères interdits ni
+ * caractères de contrôle, pas de point ni d'espace final, longueur bornée.
+ */
+export function safeName(s, max = 120) {
+  let out = String(s ?? '').replace(/[\x00-\x1f\x7f]+/g, ' ').replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim();
+  out = [...out].slice(0, max).join('').replace(/[. ]+$/, '');
+  return out || 'sans nom';
+}
+
 /**
  * Écriture sûre : fichier temporaire forcé sur le disque (fsync), puis renommé d'un coup. Une coupure de
  * courant laisse l'ancienne version ou la nouvelle, jamais un fichier vide ou à moitié écrit.
@@ -68,14 +84,19 @@ export const clone = (o) => structuredClone(o);
 export function writeJsonAtomic(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
-  const fd = fs.openSync(tmp, 'w');
   try {
-    fs.writeSync(fd, JSON.stringify(data, null, 2));
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
+    const fd = fs.openSync(tmp, 'w');
+    try {
+      fs.writeSync(fd, JSON.stringify(data, null, 2));
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch { /* jamais créé */ } // disque plein : pas de .tmp abandonné qui l'encombre
+    throw e;
   }
-  fs.renameSync(tmp, file);
   try { const dir = fs.openSync(path.dirname(file), 'r'); fs.fsyncSync(dir); fs.closeSync(dir); } catch { /* dossier : pas partout (Windows) */ }
 }
 

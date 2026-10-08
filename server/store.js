@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DB_FILE, SESSIONS_DIR } from './paths.js';
-import { loadJsonSafe, writeJsonAtomic, backupJson } from './util.js';
+import { loadJsonSafe, writeJsonAtomic, backupJson, localDate } from './util.js';
 
 const SESSION_FILE = 'session.json';
 
@@ -159,7 +159,7 @@ export class Store {
     const base = slug(`${date || ''} ${name}`);
     let id = base;
     for (let i = 2; this.data.events[id]; i++) id = `${base}-${i}`;
-    const ev = { id, name: String(name).trim(), date: date || new Date().toISOString().slice(0, 10), createdAt: new Date().toISOString(), printed: 0 };
+    const ev = { id, name: String(name).trim().slice(0, 80), date: date || localDate(), createdAt: new Date().toISOString(), printed: 0 };
     this.data.events[id] = ev;
     this.save();
     return ev;

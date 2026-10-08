@@ -215,7 +215,13 @@ function installSection() {
   <h2>Installation</h2>
   <p class="sub">${esc(os)}${pm ? ` · ${esc(pm)}` : ''}</p>
   ${updateCard()}
-  ${setupCard()}`;
+  ${setupCard()}
+  <div class="card">
+    <div class="inst-head">
+      <div><div class="inst-kicker">Journal</div></div>
+      <div class="cell-actions"><a class="btn small" href="/api/admin/logs" download>Télécharger le journal</a></div>
+    </div>
+  </div>`;
 }
 
 /** Version en cours et mise à jour depuis GitHub (dépôt git). */
@@ -441,8 +447,16 @@ const HW_ICONS = {
   lights: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9V16h7v-2.1A6 6 0 0 0 12 3z"/>',
   screen: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
   setup: '<path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/>',
-  usb: '<path d="M9 3h6v6H9z"/><path d="M7 9h10v9a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3z"/><path d="M11 5h.01M13 5h.01"/>'
+  usb: '<path d="M9 3h6v6H9z"/><path d="M7 9h10v9a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3z"/><path d="M11 5h.01M13 5h.01"/>',
+  disk: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 14h18M7 16.5h.01M11 16.5h.01"/>'
 };
+/** Place libre pour les photos : alerte sous 5 Go, erreur sous 1 Go. */
+function diskRow() {
+  const d = S.disk;
+  if (!d) return '';
+  const state = d.free < 1e9 ? 'err' : d.low ? 'warn' : 'ok';
+  return hwRow('disk', 'Stockage', state, gb(d.free), `${Math.round(d.total / 1e9)} Go au total`, '#events');
+}
 /** Clé USB au tableau de bord : seulement quand une clé est branchée ou qu'une copie tourne. */
 function usbRow() {
   const u = S.usb;
@@ -516,7 +530,7 @@ function hardwareList() {
   return `<div class="hw-list">
     ${hwRow('camera', 'Appareil photo', camState, camName, camDetail, '#camera')}
     ${hwRow('printer', 'Imprimante', prState, prName, prDetail, '#printing')}
-    ${screen}${wifi}${deck}${lights}${usbRow()}${install}
+    ${screen}${wifi}${deck}${lights}${usbRow()}${diskRow()}${install}
   </div>`;
 }
 
@@ -3021,7 +3035,8 @@ function bindSection(sec) {
     $('#btnNewEvent').onclick = async () => {
       const name = prompt('Nom de l\'événement ?', '');
       if (!name?.trim()) return;
-      const date = prompt('Date (AAAA-MM-JJ) ?', new Date().toISOString().slice(0, 10));
+      const now = new Date();
+      const date = prompt('Date (AAAA-MM-JJ) ?', `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`);
       if (!date) return;
       try {
         const created = await api('/api/admin/events', { method: 'POST', body: { name, date, activate: true } });

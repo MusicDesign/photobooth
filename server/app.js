@@ -180,7 +180,8 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   app.use(express.static(PUBLIC_DIR, { index: 'index.html' }));
   app.use('/output', express.static(OUTPUT_DIR, { maxAge: '1h' }));
   app.use('/templates', express.static(TEMPLATES_DIR, { maxAge: '1h' }));
-  app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '1h' }));
+  // Fichiers venus de l'admin ou d'un import : jamais interprétés comme une page (type deviné, SVG ouvert seul)
+  app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '1h', setHeaders: (res) => { res.set('X-Content-Type-Options', 'nosniff'); res.set('Content-Security-Policy', 'sandbox'); } }));
   app.use('/samples', express.static(SAMPLES_DIR, { maxAge: '1h' }));
   // Détourage IA de l'aperçu : MediaPipe (script + wasm) servi en local, la borne est hors ligne.
   app.use('/vendor/mediapipe', express.static(path.join(ROOT, 'node_modules', '@mediapipe', 'tasks-vision'), { maxAge: '1d' }));

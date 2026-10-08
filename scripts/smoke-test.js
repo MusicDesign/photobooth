@@ -18,6 +18,7 @@ process.env.BOOTH_UPLOADS_DIR = path.join(tmp, 'uploads'); // logos envoyés pen
 process.env.BOOTH_THEMES_DIR = path.join(tmp, 'themes'); // copie des thèmes : un import de test n'écrit jamais dans data/themes
 fs.cpSync(new URL('../data/themes', import.meta.url).pathname, process.env.BOOTH_THEMES_DIR, { recursive: true });
 process.env.BOOTH_AUTO_INSTALL = 'off';  // pas d'installation (Homebrew, modèle IA) pendant un test
+process.env.BOOTH_LOG_FILE = path.join(tmp, 'logs', 'booth.log'); // journal de test : jamais data/logs
 process.env.BOOTH_USB_DIRS = path.join(tmp, 'cle-usb'); // clé USB simulée : ce dossier, quand il existe (jamais les vraies clés)
 process.env.BOOTH_CAMERA = 'mock';
 process.env.BOOTH_PRINTER = 'mock';
@@ -364,6 +365,7 @@ async function runSteps(app, camera) {
     assert.equal(after.counters.sessions, 0);
     assert.equal(after.sessions.length, 0);
     // Seules les sessions de l'événement sont effacées (pas les dossiers laissés par la passe précédente)
+    await app.booth.removing; // dossiers supprimés en arrière-plan
     const left = fs.readdirSync(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions'));
     assert.ok(!before.sessions.some((x) => left.includes(x.id)), 'les dossiers des sessions de l\'événement doivent être effacés');
     assert.ok(after.prints.length > 0, 'l\'historique des tirages est conservé');
@@ -425,6 +427,11 @@ async function runSteps(app, camera) {
     const evs = (await j(`/api/admin/events/${ev.id}/sessions`, { headers: ADMIN })).data;
     assert.deepEqual(evs.sessions.map((x) => x.id), [s2.id]);
     assert.deepEqual([evs.page, evs.pages, evs.total], [1, 1, 1]);
+    // Session en relecture pas encore validée par l'invité : jamais exportée (il peut encore la refuser)
+    const pending = (await post('/api/session', { templateId: 'strip-3' })).data;
+    for (let i = 0; i < 3; i++) await shot(pending.id, i);
+    await post(`/api/session/${pending.id}/compose`, {});
+    assert.ok(!app.booth.exportFiles(ev.id, 'both').files.some((f) => f.name.includes(pending.id)), 'session non validée exclue de l\'export');
     // Clé USB : branchée → copie automatique de l'événement en cours ; rebranchée → rien à recopier
     const key = process.env.BOOTH_USB_DIRS;
     fs.mkdirSync(key, { recursive: true });
@@ -432,11 +439,42 @@ async function runSteps(app, camera) {
     await new Promise((r) => setTimeout(r, 20));
     await app.usb.queue;
     const usbDir = path.join(key, 'Cheeesy', `${ev.date} ${ev.name}`);
-    assert.ok(fs.existsSync(path.join(usbDir, 'montages', `${s2.id}.jpg`)), 'montage copié sur la clé');
-    assert.equal(fs.readdirSync(path.join(usbDir, 'originaux', s2.id)).length, 3, 'trois originaux copiés');
+    const { localStamp, localDate, safeName, writeJsonAtomic } = await import('../server/util.js');
+    const stamped = `${localStamp(new Date(app.store.getSession(s2.id).createdAt))}_${s2.id}`;
+    assert.match(stamped, /^\d{4}-\d{2}-\d{2}_\d{2}h\d{2}m\d{2}_/);
+    assert.ok(fs.existsSync(path.join(usbDir, 'montages', `${stamped}.jpg`)), 'montage copié sur la clé, préfixé de l\'heure');
+    assert.equal(fs.readdirSync(path.join(usbDir, 'originaux', stamped)).length, 3, 'trois originaux copiés');
+    assert.ok(fs.existsSync(path.join(usbDir, `.cheeesy-event-${ev.id}`)), 'dossier marqué pour l\'événement');
+    const src = app.store.getSession(s2.id).shots[0].file;
+    assert.equal(Math.round(fs.statSync(path.join(usbDir, 'originaux', stamped, 'photo-1.jpg')).mtimeMs / 1000), Math.round(fs.statSync(src).mtimeMs / 1000), 'date de la photo gardée');
     assert.equal(app.usb.status().lastExport.copied, 4);
+    // Événement renommé : même dossier sur la clé, rien de recopié
+    await put(`/api/admin/events/${ev.id}`, { name: 'Mariage Léa & Tom (soirée)' }, ADMIN);
     await app.usb.export(ev.id);
     assert.deepEqual([app.usb.status().lastExport.copied, app.usb.status().lastExport.skipped], [0, 4], 'deuxième copie : tout est déjà là');
+    assert.equal(app.usb.status().lastExport.dest, usbDir, 'renommé : même dossier');
+    assert.deepEqual(fs.readdirSync(path.join(key, 'Cheeesy')), [path.basename(usbDir)]);
+    await put(`/api/admin/events/${ev.id}`, { name: 'Mariage Léa & Tom' }, ADMIN);
+    assert.equal((await post(`/api/session/${pending.id}/abandon`, {})).data.deleted, true);
+    // Nom d'événement borné ; noms de fichiers valables sur une clé FAT/exFAT
+    assert.equal((await put(`/api/admin/events/${ev.id}`, { name: 'x'.repeat(81) }, ADMIN)).status, 400);
+    assert.equal((await post('/api/admin/events', { name: 'y'.repeat(81) }, ADMIN)).status, 400);
+    assert.equal(safeName('  Soirée\u0007 a/b:c.. '), 'Soirée a-b-c');
+    assert.equal(safeName('z'.repeat(300)).length, 120);
+    assert.match(localDate(), /^\d{4}-\d{2}-\d{2}$/);
+    assert.equal(localDate(new Date(2026, 0, 2, 0, 30)), '2026-01-02', 'date locale, pas UTC');
+    // Écriture sûre qui échoue : pas de .tmp laissé
+    const blocked = path.join(tmp, 'bloque');
+    fs.mkdirSync(path.join(blocked, 'x.json'), { recursive: true }); // un dossier à la place du fichier : rename refusé
+    assert.throws(() => writeJsonAtomic(path.join(blocked, 'x.json'), { a: 1 }));
+    assert.deepEqual(fs.readdirSync(blocked), ['x.json'], 'fichier temporaire retiré');
+    // Export en cours : l'événement ne peut être ni vidé ni supprimé
+    app.booth.beginExport(ev.id);
+    const busy = await post('/api/admin/sessions/reset', { eventId: ev.id }, ADMIN);
+    assert.equal(busy.status, 409);
+    assert.equal(busy.data.error, 'EVENT_EXPORTING');
+    assert.equal((await j(`/api/admin/sessions/${s2.id}`, { method: 'DELETE', headers: ADMIN })).status, 409);
+    app.booth.endExport(ev.id);
     assert.equal((await post('/api/admin/usb/eject', {}, ADMIN)).status, 200);
     fs.rmSync(key, { recursive: true, force: true });
     app.usb.tick();
@@ -454,10 +492,22 @@ async function runSteps(app, camera) {
     };
     const o = await zipNames('originals');
     assert.equal(o.length, 3);
-    assert.ok(o.every((n) => n.includes(`/originaux/${s2.id}/photo-`)), o.join());
+    assert.ok(o.every((n) => n.includes(`/originaux/${stamped}/photo-`)), o.join());
     const f = await zipNames('finals');
-    assert.deepEqual(f.map((n) => n.split('/').slice(1).join('/')), [`montages/${s2.id}.jpg`]);
+    assert.deepEqual(f.map((n) => n.split('/').slice(1).join('/')), [`montages/${stamped}.jpg`]);
     assert.equal((await zipNames('both')).length, 4);
+    for (let i = 0; i < 50 && app.booth.exports.size; i++) await new Promise((r) => setTimeout(r, 20));
+    assert.equal(app.booth.exports.size, 0, 'téléchargements terminés : plus d\'export en cours');
+    // Place disque au tableau de bord, journal téléchargeable
+    const disk = (await j('/api/admin/state', { headers: ADMIN })).data.disk;
+    assert.ok(disk.free > 0 && disk.total >= disk.free && typeof disk.low === 'boolean', JSON.stringify(disk));
+    fs.mkdirSync(path.dirname(process.env.BOOTH_LOG_FILE), { recursive: true });
+    fs.writeFileSync(process.env.BOOTH_LOG_FILE, 'ligne\n');
+    fs.writeFileSync(`${process.env.BOOTH_LOG_FILE}.1`, 'ancienne\n');
+    const logs = await fetch(`${base}/api/admin/logs`, { headers: ADMIN });
+    assert.equal(logs.status, 200);
+    const { default: AdmZip } = await import('adm-zip');
+    assert.deepEqual(new AdmZip(Buffer.from(await logs.arrayBuffer())).getEntries().map((e) => e.entryName).sort(), ['booth.log', 'booth.log.1']);
     // Déplacement vers « Tests » : la session et ses tirages suivent
     await post(`/api/admin/sessions/${s2.id}/move`, { eventId: first }, ADMIN);
     b = (await j('/api/bootstrap')).data.counters;
@@ -555,6 +605,8 @@ async function runSteps(app, camera) {
     assert.equal((await up()).status, 200);
     const logos = () => fs.readdirSync(process.env.BOOTH_UPLOADS_DIR).filter((f) => f.startsWith('logo-'));
     assert.equal(logos().length, 1, 'l\'ancien logo est supprimé quand il est remplacé');
+    const served = await fetch(`${base}/uploads/${logos()[0]}`);
+    assert.equal(served.headers.get('x-content-type-options'), 'nosniff', 'type jamais deviné sur /uploads');
     assert.equal((await put('/api/admin/config', { booth: { logo: '' }, theme: { custom: { logo: '' } } }, ADMIN)).status, 200);
     assert.equal(logos().length, 0, 'logo par défaut : plus de fichier envoyé');
     // Référence vers un fichier disparu : remise à vide au démarrage
@@ -785,6 +837,11 @@ async function runSteps(app, camera) {
     await post(`/api/session/${s.id}/compose`, {});
     assert.equal((await post(`/api/session/${s.id}/print`, { copies: 1 })).data.error, 'GIF_NO_PRINT');
     assert.equal((await post(`/api/session/${s.id}/print`, { copies: 0 })).data.status, 'done');
+    // Export des originaux : toutes les images de la vidéo, pas seulement la première
+    const frames = app.store.getSession(s.id).shots[0].frames;
+    const clipFiles = app.booth.exportFiles(app.store.getSession(s.id).eventId, 'originals').files.filter((f) => f.name.includes(s.id));
+    assert.equal(clipFiles.length, frames.length);
+    assert.ok(clipFiles.every((f) => /\/clip\/f-\d{3}\.jpg$/.test(f.name)), clipFiles.map((f) => f.name).join());
     assert.ok((await j('/api/gallery', { headers: ADMIN })).status !== 500);
     await put('/api/admin/config', { templates: { gifEnabled: false } }, ADMIN);
     assert.equal((await j(`/api/admin/templates/${b.id}`, { method: 'DELETE', headers: ADMIN })).status, 200);
@@ -1169,6 +1226,12 @@ async function runSteps(app, camera) {
     assert.ok((await j('/api/admin/config/import/backup', { headers: ADMIN })).data.backup, 'sauvegarde listée');
     // Fichiers invalides ou périmés refusés
     assert.equal((await preview(Buffer.from('pas un zip'))).status, 400);
+    // Fichiers de uploads/ : images et polices seulement (servis tels quels par /uploads)
+    const { readBundle } = await import('../server/config-bundle.js');
+    const tricked = new AdmZip(plain);
+    tricked.addFile('uploads/page.html', Buffer.from('<script>alert(1)</script>'));
+    tricked.addFile('uploads/logo-x.png', Buffer.from('png'));
+    assert.deepEqual([...readBundle(tricked.toBuffer()).uploads.keys()].filter((n) => ['page.html', 'logo-x.png'].includes(n)), ['logo-x.png']);
     const bad = new AdmZip(); bad.addFile('hello.txt', Buffer.from('x'));
     assert.equal((await preview(bad.toBuffer())).status, 400, 'zip qui n\'est pas un export');
     assert.equal((await apply({ id: 'perime', sections: ['booth'] })).status, 409);
