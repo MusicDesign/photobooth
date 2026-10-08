@@ -3154,7 +3154,7 @@ $('#btnLogout').onclick = async () => { await api('/api/admin/logout', { method:
 // Retour à la borne dans la même fenêtre : on se déconnecte, sinon la zone cachée rouvrirait l'admin sans code.
 $('#btnBooth').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }).catch(() => {}); location.href = '/'; };
 // ---------- Arrêt : relancer ou quitter le logiciel, redémarrer ou éteindre l'ordinateur ----------
-// Un bouton « Arrêt… » ouvre la fenêtre des choix (elle tient lieu de confirmation) ; seuls les choix permis
+// Un bouton « Arrêt » ouvre la fenêtre des choix (elle tient lieu de confirmation) ; seuls les choix permis
 // sur cette machine y figurent.
 const POWER = [['btnRestart', 'canRestart'], ['btnQuit', 'canShutdown'], ['btnReboot', 'canReboot'], ['btnShutdown', 'canPowerOff']];
 function updatePowerButtons() {
