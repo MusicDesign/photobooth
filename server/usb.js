@@ -4,6 +4,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { safeName } from './util.js';
 
 const execFileP = promisify(execFile);
 
@@ -11,7 +12,8 @@ const execFileP = promisify(execFile);
  * Clé USB branchée sur la borne : les photos de l'événement en cours y sont copiées, automatiquement au branchement
  * (usb.autoExport) ou à la demande depuis l'admin. Dossier <clé>/Cheeesy/<date nom de l'événement>/ avec montages/
  * et originaux/ selon usb.content (originals | finals | both), mêmes fichiers que l'export ZIP. Un fichier déjà là
- * (même taille) n'est pas recopié : rebrancher la clé plus tard n'ajoute que les nouvelles photos.
+ * (même taille) n'est pas recopié : rebrancher la clé plus tard n'ajoute que les nouvelles photos. Le dossier porte
+ * un marqueur .cheeesy-event-<id> : l'événement renommé ensuite continue d'aller dans le même dossier.
  * Détection toutes les POLL_MS : volumes de /Volumes hors disque système (macOS), /media/<utilisateur> et
  * /run/media/<utilisateur> (Linux, montage automatique du bureau). Tests : BOOTH_USB_DIRS (dossiers pris pour des
  * clés) ; BOOTH_USB=off coupe tout.
@@ -19,7 +21,27 @@ const execFileP = promisify(execFile);
 const POLL_MS = 3000;
 const EJECT_TRIES = 5;
 const CONTENTS = ['originals', 'finals', 'both'];
-export const safeName = (s) => String(s).replace(/[\\/:*?"<>|]+/g, '-').trim();
+const MARKER = (eventId) => `.cheeesy-event-${eventId}`;
+
+/** Dossier de l'événement sur la clé : celui qui porte son marqueur, sinon un nouveau (date + nom), marqué. */
+async function eventFolder(root, event) {
+  let names = [];
+  try { names = await fs.promises.readdir(root); } catch { /* première copie sur cette clé */ }
+  for (const n of names) {
+    try { await fs.promises.access(path.join(root, n, MARKER(event.id))); return path.join(root, n); } catch { /* pas lui */ }
+  }
+  const base = safeName(`${event.date} ${event.name}`);
+  for (let i = 1; ; i++) {
+    const dir = path.join(root, i === 1 ? base : `${base} (${i})`);
+    // Dossier d'une copie d'avant les marqueurs (aucun marqueur) : repris ; marqué pour un autre événement : suivant
+    let taken = false;
+    try { taken = (await fs.promises.readdir(dir)).some((f) => f.startsWith('.cheeesy-event-')); } catch { /* libre */ }
+    if (taken) continue;
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(path.join(dir, MARKER(event.id)), '');
+    return dir;
+  }
+}
 
 export class Usb extends EventEmitter {
   constructor({ config, booth, store, driver = process.env.BOOTH_USB || 'auto' }) {
@@ -110,14 +132,16 @@ export class Usb extends EventEmitter {
     if (!vol) throw new Error('Aucune clé USB branchée');
     const content = CONTENTS.includes(this.cfg().content) ? this.cfg().content : 'both';
     const { event, files } = this.booth.exportFiles(eventId, content);
-    const dest = path.join(vol.path, 'Cheeesy', safeName(`${event.date} ${event.name}`));
     if (process.platform === 'darwin') { try { fs.writeFileSync(path.join(vol.path, '.metadata_never_index'), ''); } catch { /* lecture seule */ } }
-    const prog = { eventId, eventName: event.name, dest, total: files.length, done: 0, copied: 0, skipped: 0, startedAt: new Date().toISOString() };
+    const prog = { eventId, eventName: event.name, dest: null, total: files.length, done: 0, copied: 0, skipped: 0, startedAt: new Date().toISOString() };
     this.state.exporting = prog;
     this.state.error = null;
     this.abort = false;
+    this.booth.beginExport(eventId); // pas de suppression de l'événement pendant la copie
     this.emit('change');
+    let dest = null;
     try {
+      dest = prog.dest = await eventFolder(path.join(vol.path, 'Cheeesy'), event);
       for (const f of files) {
         if (this.abort) throw new Error('clé retirée pendant la copie');
         const target = path.join(dest, f.name);
@@ -126,6 +150,7 @@ export class Usb extends EventEmitter {
         } catch { /* pas encore copié */ }
         await fs.promises.mkdir(path.dirname(target), { recursive: true });
         await fs.promises.copyFile(f.file, target); // asynchrone : la borne ne bloque pas pendant la copie
+        try { const st = await fs.promises.stat(f.file); await fs.promises.utimes(target, st.atime, st.mtime); } catch { /* date de la copie gardée */ }
         prog.copied++;
         prog.done++;
       }
@@ -138,6 +163,7 @@ export class Usb extends EventEmitter {
       console.warn(`[usb] ${this.state.error}`);
       throw new Error(this.state.error);
     } finally {
+      this.booth.endExport(eventId);
       this.state.exporting = null;
       this.emit('change');
     }

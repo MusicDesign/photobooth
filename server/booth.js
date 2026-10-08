@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import QRCode from 'qrcode';
 import { SESSIONS_DIR, PUBLIC_DIR } from './paths.js';
-import { HttpError, newId, lanIp } from './util.js';
+import { HttpError, newId, lanIp, localStamp } from './util.js';
 import { wifiStatus } from './network.js';
 import { samplePhotos } from './samples.js';
 import { compose, composeGif, composeBoomerang, thumbnail, normalizeShot } from './compositor.js';
@@ -26,6 +26,8 @@ export function completeUrl(raw, { scheme = 'http', port = null } = {}) {
     return u.toString().replace(/\/+$/, '');
   } catch { return s; }
 }
+
+export const EVENT_NAME_MAX = 80; // nom repris dans les dossiers d'export (clé USB, ZIP)
 
 /** Fichiers d'une prise : la photo, ou les images d'une vidéo (boomerang). */
 function removeShotFiles(sh) {
@@ -66,6 +68,8 @@ export class Booth {
     this.armed = new Map(); // sessionId → { index, file } : photo programmée pendant le décompte
     this.capturing = new Set(); // sessionId dont une photo est en cours d'arrivée
     this.focusing = new Map(); // sessionId → mise au point en cours avant un boomerang
+    this.exports = new Map(); // eventId → nombre d'exports en cours (ZIP téléchargé, copie sur clé USB)
+    this.removing = Promise.resolve(); // suppression des dossiers de session, en arrière-plan
     // Seules les sessions validées par l'invité (« Je la garde ») sont conservées. La borne supprime les autres
     // en revenant à l'accueil ; ce passage rattrape celles qu'elle n'a pas pu signaler (page rechargée, coupure).
     this.purgeUnvalidatedSessions();
@@ -219,6 +223,7 @@ export class Booth {
   deleteSession(id) {
     const s = this.load(id);
     if (s.status === 'printing') throw new HttpError(409, 'SESSION_PRINTING', 'Impression en cours : réessayez quand elle sera terminée');
+    if (!this.isUnvalidated(s)) this.assertNotExporting(s.eventId); // une session non validée n'est jamais exportée
     this.store.deleteSession(id);
     fs.rmSync(this.sessionDir(id), { recursive: true, force: true });
     this.forgetJobs([id]);
@@ -278,12 +283,40 @@ export class Booth {
   resetSessions(eventId = this.store.data.activeEventId) {
     const all = this.store.sessionsOfEvent(eventId);
     if (all.some((s) => s.status === 'printing')) throw new HttpError(409, 'SESSION_PRINTING', 'Impression en cours : réessayez quand elle sera terminée');
+    this.assertNotExporting(eventId);
     this.store.resetEventSessions(eventId);
-    for (const s of all) fs.rmSync(this.sessionDir(s.id), { recursive: true, force: true });
+    this.removeDirs(all.map((s) => this.sessionDir(s.id)));
     this.forgetJobs(all.map((s) => s.id));
     this.broadcast({ type: 'counters', counters: this.publicCounters() });
     this.broadcast({ type: 'sessions' });
     return all.length;
+  }
+
+  /**
+   * Dossiers supprimés en arrière-plan, un par un : des milliers de photos effacées d'un coup bloqueraient la
+   * borne (aperçu, déclencheur) le temps de la suppression. Les fiches, elles, sont déjà parties.
+   */
+  removeDirs(dirs) {
+    this.removing = this.removing.then(async () => {
+      for (const dir of dirs) {
+        try { await fs.promises.rm(dir, { recursive: true, force: true }); } catch (e) { console.warn(`[booth] suppression de ${dir} : ${e.message}`); }
+      }
+    });
+    return this.removing;
+  }
+
+  // ---------- Exports en cours ----------
+
+  /** Un export (ZIP ou clé USB) lit les photos de l'événement : on ne les supprime pas sous ses pieds. */
+  beginExport(eventId) { this.exports.set(eventId, (this.exports.get(eventId) || 0) + 1); }
+
+  endExport(eventId) {
+    const n = (this.exports.get(eventId) || 0) - 1;
+    if (n > 0) this.exports.set(eventId, n); else this.exports.delete(eventId);
+  }
+
+  assertNotExporting(eventId) {
+    if (this.exports.get(eventId)) throw new HttpError(409, 'EVENT_EXPORTING', 'Export des photos en cours : réessayez quand il sera terminé');
   }
 
   // ---------- Événements ----------
@@ -308,6 +341,7 @@ export class Booth {
 
   createEvent({ name, date, activate }) {
     if (!String(name || '').trim()) throw new HttpError(400, 'EVENT_NAME', 'Nom de l\'événement obligatoire');
+    if (String(name).trim().length > EVENT_NAME_MAX) throw new HttpError(400, 'EVENT_NAME', `Nom trop long (${EVENT_NAME_MAX} caractères au plus)`);
     if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new HttpError(400, 'EVENT_DATE', 'Date invalide (AAAA-MM-JJ)');
     const ev = this.store.createEvent({ name, date });
     if (activate) this.activateEvent(ev.id);
@@ -319,6 +353,7 @@ export class Booth {
     const patch = {};
     if (name !== undefined) {
       if (!String(name).trim()) throw new HttpError(400, 'EVENT_NAME', 'Nom de l\'événement obligatoire');
+      if (String(name).trim().length > EVENT_NAME_MAX) throw new HttpError(400, 'EVENT_NAME', `Nom trop long (${EVENT_NAME_MAX} caractères au plus)`);
       patch.name = String(name).trim();
     }
     if (date !== undefined) {
@@ -341,6 +376,7 @@ export class Booth {
   deleteEvent(id) {
     this.event(id);
     if (id === this.store.data.activeEventId) throw new HttpError(409, 'EVENT_ACTIVE', 'C\'est l\'événement en cours : activez-en un autre avant de le supprimer');
+    this.assertNotExporting(id);
     const removed = this.resetSessions(id);
     this.store.deleteEvent(id);
     return removed;
@@ -362,18 +398,27 @@ export class Booth {
 
   /**
    * Fichiers à exporter pour un événement : content = 'originals' (photos du boîtier), 'finals' (montages
-   * avec le template) ou 'both'. Retourne [{ file, name }] avec name = chemin dans l'archive.
+   * avec le template) ou 'both'. Retourne [{ file, name }] avec name = chemin dans l'archive, préfixé de l'heure
+   * locale de la session (2026-10-08_20h34m05_<id>) pour que les fichiers se rangent dans l'ordre de la soirée.
+   * Sessions encore en cours ou que l'invité n'a pas validées : pas exportées (il peut encore les refuser).
    */
   exportFiles(id, content) {
     const ev = this.event(id);
     if (!['originals', 'finals', 'both'].includes(content)) throw new HttpError(400, 'EXPORT_CONTENT', 'Contenu attendu : originals, finals ou both');
     const files = [];
     for (const s of this.store.sessionsOfEvent(ev.id).reverse()) { // ordre chronologique
+      if (s.status === 'shooting' || (s.status === 'review' && !s.kept) || this.capturing.has(s.id) || this.armed.has(s.id)) continue;
+      const name = `${localStamp(new Date(s.createdAt))}_${s.id}`;
       if (content !== 'finals') {
-        s.shots.forEach((sh, i) => { if (sh && fs.existsSync(sh.file)) files.push({ file: sh.file, name: `originaux/${s.id}/photo-${i + 1}${path.extname(sh.file)}` }); });
+        s.shots.forEach((sh, i) => {
+          if (!sh) return;
+          if (sh.frames?.length) { // boomerang : toutes les images de la vidéo
+            for (const f of sh.frames) if (fs.existsSync(f)) files.push({ file: f, name: `originaux/${name}/clip/${path.basename(f)}` });
+          } else if (fs.existsSync(sh.file)) files.push({ file: sh.file, name: `originaux/${name}/photo-${i + 1}${path.extname(sh.file)}` });
+        });
       }
       if (content !== 'originals' && s.final && fs.existsSync(s.final.file)) {
-        files.push({ file: s.final.file, name: `montages/${s.id}${path.extname(s.final.file)}` });
+        files.push({ file: s.final.file, name: `montages/${name}${path.extname(s.final.file)}` });
       }
     }
     return { event: ev, files };

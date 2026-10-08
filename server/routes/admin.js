@@ -6,7 +6,8 @@ import multer from 'multer';
 import { ZipArchive } from 'archiver';
 import { UPLOADS_DIR, OUTPUT_DIR } from '../paths.js';
 import { samplePhotos } from '../samples.js';
-import { HttpError, parseCookies } from '../util.js';
+import { HttpError, parseCookies, safeName, localDate } from '../util.js';
+import { LOG_FILE } from '../log.js';
 import { coerceNumbers } from '../config.js';
 import { CAMERA_DRIVERS, CAMERA_FALLBACKS } from '../camera/index.js';
 import { MANUAL_SETTINGS, MAX_SHOTS } from '../camera/control.js';
@@ -36,6 +37,17 @@ function screenPatch(body = {}) {
   if ('display' in body) out.display = String(body.display || '').slice(0, 120);
   return out;
 }
+const DISK_LOW = 5 * 1024 ** 3; // sous 5 Go libres : alerte au tableau de bord
+
+/** Place libre sur le disque des photos (output/). */
+async function diskStatus() {
+  try {
+    const st = await fs.promises.statfs(OUTPUT_DIR);
+    const free = Number(st.bavail) * Number(st.bsize);
+    return { free, total: Number(st.blocks) * Number(st.bsize), low: free < DISK_LOW };
+  } catch { return null; }
+}
+
 const IMAGE_EXT = { 'image/png': '.png', 'image/svg+xml': '.svg', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
 
 export function adminRouter({ booth, config, store, templates, themes, devices, deck, lights = null, screen = null, setup = null, updater = null, usb = null, shutdown, restart, powerOff = null, reboot = null, canMachine = () => false, kioskScreen = () => null, remoteScreen = null }) {
@@ -222,6 +234,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       setup: setup?.status() || null, // installation : dépendances présentes ou manquantes
       update: updater?.status() || null, // version en cours, mise à jour disponible
       usb: usb?.status() || null, // clé USB branchée, copie en cours ou dernière copie
+      disk: await diskStatus(), // place libre pour les photos
       cameraSettings: MANUAL_SETTINGS, // réglages du mode manuel, dans l'ordre, avec leur libellé
       canShutdown: !!shutdown,
       canPowerOff: !!powerOff && canMachine('poweroff'),
@@ -522,16 +535,35 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     const { event, files } = booth.exportFiles(req.params.id, content);
     if (!files.length) throw new HttpError(404, 'EXPORT_EMPTY', 'Aucune photo à exporter pour cet événement');
     const label = { originals: 'originaux', finals: 'montages', both: 'complet' }[content];
-    const base = `${event.date} ${event.name}`.replace(/[\\/:*?"<>|]+/g, '-').trim();
+    const base = safeName(`${event.date} ${event.name}`);
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="export.zip"; filename*=UTF-8''${encodeURIComponent(`${base} - ${label}.zip`)}`);
     // Les JPEG sont déjà compressés : stockés tels quels, l'archive part tout de suite et la borne ne peine pas
     const zip = new ZipArchive({ store: true });
     zip.on('warning', (e) => console.warn(`[export] ${e.message}`));
     zip.on('error', (e) => { console.warn(`[export] ${e.message}`); res.destroy(e); });
-    res.on('close', () => { if (!res.writableFinished) zip.abort(); }); // téléchargement annulé
+    booth.beginExport(event.id); // l'événement ne peut pas être vidé ni supprimé pendant le téléchargement
+    res.once('close', () => {
+      booth.endExport(event.id);
+      if (!res.writableFinished) zip.abort(); // téléchargement annulé
+    });
     zip.pipe(res);
     for (const f of files) zip.file(f.file, { name: `${base}/${f.name}` });
+    zip.finalize();
+  });
+
+  /** Journal du serveur (data/logs/booth.log et l'ancien booth.log.1), en ZIP : lisible sans terminal sur la borne. */
+  r.get('/logs', (req, res) => {
+    const files = [LOG_FILE, `${LOG_FILE}.1`].filter((f) => fs.existsSync(f));
+    if (!files.length) throw new HttpError(404, 'LOG_EMPTY', 'Aucun journal enregistré');
+    const base = safeName(`${config.get().booth.name || 'Borne'} - journal ${localDate()}`);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="journal.zip"; filename*=UTF-8''${encodeURIComponent(`${base}.zip`)}`);
+    const zip = new ZipArchive({ zlib: { level: 6 } });
+    zip.on('error', (e) => { console.warn(`[logs] ${e.message}`); res.destroy(e); });
+    res.on('close', () => { if (!res.writableFinished) zip.abort(); });
+    zip.pipe(res);
+    for (const f of files) zip.file(f, { name: path.basename(f) });
     zip.finalize();
   });
 
