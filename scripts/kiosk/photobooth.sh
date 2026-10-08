@@ -41,6 +41,8 @@ if [ ${#BROWSER[@]} -eq 0 ]; then log "Chromium introuvable"; notify-send "Cheee
 run_server() {
   cd "$DIR" || exit 1
   while :; do
+    # Relance : même port qu'avant s'il est libre, la page ouverte dans Chromium s'y reconnecte
+    [ -s "$BOOTH_PORT_FILE" ] && export PORT="$(cat "$BOOTH_PORT_FILE")"
     BOOTH_LAUNCHER=1 "$NODE" server/index.js >>"$LOG" 2>&1 &
     echo $! >"$RUN_DIR/server.pid"
     wait $!

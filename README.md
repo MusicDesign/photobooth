@@ -1,9 +1,9 @@
 # Cheeesy
 
 Borne photo tactile pensée pour tourner **hors ligne sur un PC Linux** (tablette ou
-mini-PC tactile, Fedora ou Ubuntu), avec un **Canon EOS 2000D** piloté par gphoto2 et une
-imprimante photo via CUPS. Interface web plein écran (Chromium en kiosque ou app Electron),
-backend Node.js.
+mini-PC tactile, Debian, Ubuntu ou Fedora), avec un **Canon EOS 2000D** piloté par gphoto2 et une
+imprimante photo via CUPS. Interface web plein écran (app Electron, ou Chromium en kiosque),
+backend Node.js 22.12 ou plus.
 
 État : **borne fonctionnelle**, mise au point sur Mac avec le vrai matériel : Canon EOS 2000D
 piloté et calibré par gphoto2 (aperçu en direct, flash, détourage IA), Stream Deck, lumières
@@ -30,7 +30,7 @@ Camera, ou webcam USB) et l'imprimante est **simulée** : les tirages sont écri
 navigateur) : ouvrez la borne en local, pas via l'adresse IP.
 
 ```bash
-npm run smoke                 # test de bout en bout, sans matériel (51 étapes, données temporaires)
+npm run smoke                 # test de bout en bout, sans matériel (données temporaires)
 npm run app                   # la borne en app de bureau plein écran (Electron), Ctrl+Maj+Q pour quitter
 npm run remote                # page distante de l'adresse publique → output/remote (TUTORIEL.md, étape 10.8)
 scripts/make-mac-app.sh       # régénère « Cheeesy.app » (raccourci Mac : double-clic = npm run app, ou scripts/install.sh si rien n'est installé)
@@ -43,17 +43,22 @@ BOOTH_CAMERA=mock npm start   # caméra simulée côté serveur (flux MJPEG), ut
 ```bash
 sudo apt install -y git                     # Debian/Ubuntu neuves (Fedora : sudo dnf install -y git)
 git clone https://github.com/MusicDesign/photobooth.git && cd photobooth
-scripts/install.sh --kiosk                  # Node.js, dépendances npm, gphoto2, CUPS, ddcutil, NetworkManager, Chromium (sudo), modèle IA,
-                                            # icône bureau + lancement auto en plein écran (écran jamais éteint), puis lance la borne
+scripts/install.sh --kiosk                  # Node.js 22.12+, dépendances npm et app Electron, gphoto2, CUPS, ddcutil, NetworkManager (sudo),
+                                            # modèle IA, icône bureau + lancement auto en plein écran (écran jamais éteint), puis lance la borne
 ```
+
+Debian installée avec un mot de passe root : l'utilisateur n'a pas le droit `sudo`. Une fois, puis fermer
+et rouvrir la session : `su -c 'usermod -aG sudo VOTRE_UTILISATEUR'` (mot de passe root demandé).
+Cloner le dépôt sans `sudo` : un dépôt appartenant à root bloque les mises à jour depuis l'admin.
 
 Au démarrage de la session, la borne s'ouvre seule en plein écran. **Éteindre la borne**
 (admin, en bas du menu) ferme le logiciel ; l'icône **Cheeesy** du bureau le relance.
 Deux lanceurs au choix, même comportement :
 
-- **Chromium en kiosque** (défaut) : `scripts/kiosk/photobooth.sh`, serveur relancé s'il plante.
-- **App Electron** : `install-linux.sh --electron` (depuis le dépôt) ou `--exec` vers
-  l'AppImage construite par `npm run app:build` sur la borne elle-même.
+- **App Electron** (défaut, installée par `scripts/install.sh --kiosk`) : `scripts/kiosk/photobooth-electron.sh`,
+  ou `install-linux.sh --exec` vers l'AppImage construite par `npm run app:build` sur la borne elle-même.
+- **Chromium en kiosque** : `scripts/kiosk/install-linux.sh` sans option (lanceur `scripts/kiosk/photobooth.sh`,
+  serveur relancé s'il plante), Chromium à installer soi-même.
 
 Détails, connexion automatique, pare-feu et hotspot : [TUTORIEL.md, étape 10](TUTORIEL.md#10-installer-sur-le-pc-de-la-borne-linux).
 

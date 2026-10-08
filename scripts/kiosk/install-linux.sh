@@ -44,6 +44,7 @@ if [ $UNINSTALL -eq 1 ]; then
     gsettings reset org.gnome.desktop.notifications show-banners
     for k in picture-uri picture-uri-dark picture-options; do gsettings reset org.gnome.desktop.background "$k"; done
   fi
+  systemctl --user unmask gvfs-gphoto2-volume-monitor.service >/dev/null 2>&1 || true
   echo "Icônes et lancement automatique retirés."
   exit 0
 fi
@@ -118,6 +119,9 @@ if [ $NOSLEEP -eq 1 ] && command -v gsettings >/dev/null; then
   gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
   gsettings set org.gnome.settings-daemon.plugins.power idle-dim false
   echo "Mise en veille et verrouillage désactivés."
+  # GNOME (gvfs) monte le boîtier branché comme un disque et le garde : « Could not claim the USB device ».
+  systemctl --user mask --now gvfs-gphoto2-volume-monitor.service >/dev/null 2>&1 || true
+  pkill -x gvfsd-gphoto2 2>/dev/null || true
   # GNOME ouvre la session sur la vue Activités, devant la borne : petite extension qui la saute au démarrage.
   mkdir -p "$EXT_DIR"
   cp "$DIR/scripts/kiosk/gnome/$EXT_UUID/"* "$EXT_DIR/"
