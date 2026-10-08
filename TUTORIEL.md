@@ -69,7 +69,9 @@ npm start       # production : pas de surveillance, c'est celle de la borne
 npm run app     # app de bureau plein écran (Electron), Ctrl+Maj+Q pour quitter
 ```
 
-Le port par défaut est 3000 (`PORT=8080 npm start` pour en changer). Deux
+Le port par défaut est 3000 (`PORT=8080 npm start` pour en changer) ; s'il est
+pris par une autre application, la borne prend le suivant libre (3001… 3009),
+affiché au démarrage. Deux
 variables permettent de forcer un pilote sans toucher à la config, pratique
 quand le serveur refuse de démarrer :
 
@@ -711,8 +713,8 @@ automatique. Un iPad trop ancien (iOS 9 et avant) ne convient pas.
 | Admin ou QR code inaccessibles depuis un téléphone | Pare-feu ou mauvais réseau | Port 3000 ouvert (étape 10.6), même Wi-Fi que la borne, adresse affichée au démarrage du serveur |
 | L'icône du bureau n'apparaît pas | GNOME sans icônes de bureau | Extension Desktop Icons NG, ou lancer Cheeesy depuis Activités (étape 10.5) |
 | L'icône du bureau ouvre un éditeur de texte | Lanceur non autorisé | Clic droit sur l'icône → Autoriser l'exécution |
-| Rien ne s'ouvre au clic sur l'icône | Node ou Chromium introuvable, port 3000 pris | Lire `data/logs/launcher.log` |
-| Le port 3000 est déjà utilisé | Une autre application écoute dessus | `PORT=3001` dans le lanceur, ou arrêter l'autre application |
+| Rien ne s'ouvre au clic sur l'icône | Node ou Chromium introuvable, ports 3000 à 3009 pris | Lire `data/logs/launcher.log` |
+| Les téléphones n'ouvrent plus les QR codes | Port 3000 pris par une autre application : la borne est passée sur 3001 ou suivant, fermé par le pare-feu | Arrêter l'autre application, ou ouvrir ce port aussi (étape 10.6) |
 | Une session reste en `shooting` ou `review` | Invité parti en cours de route | Normal ; elle se supprime dans Événements & photos, et la validation automatique limite le phénomène |
 
 Journal du serveur : la sortie du terminal sur Mac, `data/logs/booth.log` partout

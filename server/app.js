@@ -61,6 +61,7 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   const app = express();
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws' });
+  wss.on('error', () => {}); // erreurs du serveur http répétées ici (port pris) : traitées par listenFree
   const broadcast = (msg) => {
     const data = JSON.stringify(msg);
     for (const client of wss.clients) if (client.readyState === 1) client.send(data);

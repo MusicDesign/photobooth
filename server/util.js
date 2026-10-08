@@ -14,6 +14,28 @@ export class HttpError extends Error {
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Ouvre le serveur sur port, ou le suivant libre si une autre application l'occupe (3000, 3001… tries ports).
+ * Retourne le port ouvert. BOOTH_PORT_FILE : il y est écrit, pour le lanceur Chromium (scripts/kiosk/photobooth.sh).
+ */
+export async function listenFree(server, port, { tries = 10 } = {}) {
+  for (let p = port; ; p++) {
+    try {
+      await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(p, () => { server.off('error', reject); resolve(); });
+      });
+      break;
+    } catch (e) {
+      if (e.code !== 'EADDRINUSE' || !port || p >= port + tries - 1) throw e.code === 'EADDRINUSE' ? new Error(`ports ${port} à ${p} déjà utilisés par d'autres applications`) : e;
+      console.warn(`[server] port ${p} déjà utilisé, essai sur ${p + 1}`);
+    }
+  }
+  const open = server.address().port;
+  if (process.env.BOOTH_PORT_FILE) fs.writeFileSync(process.env.BOOTH_PORT_FILE, String(open));
+  return open;
+}
+
+/**
  * Identifiant de session court, pour l'adresse du QR code : 6 lettres et chiffres sans caractères ambigus (ni 0/o, ni 1/l/i),
  * par exemple k7m2qx. exists(id) : déjà pris (le tirage est refait). Les anciens identifiants AAMMJJ-HHMMSS-xxxxxx restent valables.
  */

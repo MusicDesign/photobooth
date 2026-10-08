@@ -6,13 +6,13 @@
 #  - Le serveur plante (code ≠ 0) : il est relancé, la page se reconnecte toute seule.
 #  - Chromium fermé (Alt+F4) : le serveur est arrêté aussi.
 #
-# Variables utiles : PORT (3000), BOOTH_BROWSER (chemin d'un navigateur Chromium/Chrome).
+# Variables utiles : PORT (3000, ou le suivant libre), BOOTH_BROWSER (chemin d'un navigateur Chromium/Chrome).
 set -u
 
 DIR="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
-PORT="${PORT:-3000}"
-URL="http://localhost:$PORT"
 RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}/photobooth-$USER"
+# Port réellement ouvert, écrit par le serveur (3000 pris par une autre application : le suivant libre)
+export BOOTH_PORT_FILE="$RUN_DIR/port"
 PROFILE="${XDG_DATA_HOME:-$HOME/.local/share}/photobooth/chromium"
 LOG="$DIR/data/logs/launcher.log"
 mkdir -p "$RUN_DIR" "$PROFILE" "$(dirname "$LOG")"
@@ -20,7 +20,7 @@ log() { echo "$(date '+%F %T') $*" >>"$LOG"; }
 
 exec 9>"$RUN_DIR/lock"
 if ! flock -n 9; then log "déjà lancée, rien à faire"; exit 0; fi
-rm -f "$RUN_DIR/stop"
+rm -f "$RUN_DIR/stop" "$BOOTH_PORT_FILE"
 
 # Lancé depuis le bureau, le shell ne charge pas ~/.bashrc : Node installé via nvm n'est pas dans le PATH.
 NODE="${NODE:-$(command -v node || true)}"
@@ -61,16 +61,19 @@ stop_browser() {
   pkill -f -- "--user-data-dir=$PROFILE" 2>/dev/null
 }
 
-log "démarrage ($URL)"
+log "démarrage"
 run_server &
 SERVER_LOOP=$!
 trap 'stop_server; stop_browser; wait; exit 0' INT TERM
 
+URL=
 for _ in $(seq 1 60); do
-  curl -sf -o /dev/null "$URL/" && break
+  [ -s "$BOOTH_PORT_FILE" ] && URL="http://localhost:$(cat "$BOOTH_PORT_FILE")" && curl -sf -o /dev/null "$URL/" && break
   kill -0 $SERVER_LOOP 2>/dev/null || { log "le serveur n'a pas démarré, voir ce journal"; exit 1; }
   sleep 0.5
 done
+[ -n "$URL" ] || { log "le serveur n'a pas répondu à temps"; stop_server; wait; exit 1; }
+log "borne : $URL"
 
 # ---------- Navigateur plein écran ----------
 # Chromium coupé net la dernière fois : sans ça, il afficherait « Restaurer les pages ? ».

@@ -4,7 +4,7 @@ import { installFileLog } from './log.js';
 import { createApp } from './app.js';
 
 installFileLog();
-import { lanIp } from './util.js';
+import { lanIp, listenFree } from './util.js';
 
 // Code de sortie 0 : le lanceur de la borne comprend « arrêt volontaire » et ne relance pas.
 // Code RESTART_CODE : « redémarrage » demandé depuis l'admin, le lanceur Linux (BOOTH_LAUNCHER) relance aussitôt.
@@ -12,13 +12,17 @@ const RESTART_CODE = 75;
 const onRestart = process.env.BOOTH_LAUNCHER ? () => process.exit(RESTART_CODE) : null;
 const { app, server, port, config, close } = await createApp({ onShutdown: () => process.exit(0), onRestart });
 
-server.listen(port, () => {
+listenFree(server, port).then((port) => {
   const cfg = config.get();
   console.log(`\n  ${cfg.booth.name}`);
   console.log(`  Borne   : http://localhost:${port}`);
   console.log(`  Admin   : http://localhost:${port}/admin.html  (PIN ${cfg.admin.pin})`);
   console.log(`  Réseau  : http://${lanIp()}:${port}  (partage QR)`);
   console.log(`  Caméra  : ${cfg.camera.driver}   Imprimante : ${cfg.printer.driver}\n`);
+}, async (e) => {
+  console.error(`Démarrage impossible : ${e.message}`);
+  await close().catch(() => {});
+  process.exit(1);
 });
 
 // Adresse publique en HTTPS sur le Wi-Fi de la borne : certificat du domaine (TUTORIEL.md, étape 10.8).

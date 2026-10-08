@@ -167,6 +167,7 @@ async function start() {
   // Import après le choix des dossiers : server/paths.js les lit au chargement.
   const { installFileLog } = await import('../server/log.js');
   const { createApp } = await import('../server/app.js');
+  const { listenFree } = await import('../server/util.js');
   installFileLog();
 
   let stopped = false;
@@ -181,10 +182,7 @@ async function start() {
     onRestart: () => { stopped = true; app.relaunch(app.isPackaged ? {} : { args: [app.getAppPath()] }); app.exit(0); }
   });
   try {
-    await new Promise((resolve, reject) => {
-      server.once('error', (e) => reject(e.code === 'EADDRINUSE' ? new Error(`le port ${port} est déjà utilisé (serveur lancé dans un terminal ?)`) : e));
-      server.listen(port, resolve);
-    });
+    await listenFree(server, port); // port pris par une autre application : le suivant
   } catch (e) {
     // Démarrage raté : on rend la caméra et le Stream Deck avant d'afficher l'erreur, sinon ils restent pris.
     stopped = true;
