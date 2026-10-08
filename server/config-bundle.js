@@ -76,8 +76,9 @@ const templateDirs = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((
 /**
  * Archive de la configuration, à brancher sur une réponse ou un fichier.
  * parts : { settings, templates } (booléens) ; secrets : codes et mots de passe inclus ou non.
+ * templateIds : seulement ces templates (export d'un template depuis sa liste), au lieu de tous.
  */
-export function buildBundle({ config, templates, parts = {}, secrets = false, boothName = '', appVersion = '', extra = {} }) {
+export function buildBundle({ config, templates, parts = {}, secrets = false, boothName = '', appVersion = '', extra = {}, templateIds = null }) {
   const zip = new ZipArchive({ zlib: { level: 6 } });
   const settings = parts.settings === false ? null : (secrets ? clone(config.data) : stripSecrets(config.data));
   zip.append(JSON.stringify({
@@ -91,7 +92,7 @@ export function buildBundle({ config, templates, parts = {}, secrets = false, bo
       if (fs.existsSync(file)) zip.file(file, { name: `uploads/${f}` });
     }
   }
-  if (parts.templates) for (const id of templateDirs(templates.dir)) zip.directory(path.join(templates.dir, id), `templates/${id}`);
+  if (parts.templates) for (const id of templateDirs(templates.dir).filter((id) => !templateIds || templateIds.includes(id))) zip.directory(path.join(templates.dir, id), `templates/${id}`);
   return zip;
 }
 

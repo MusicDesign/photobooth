@@ -862,7 +862,7 @@ function templatesSection() {
           <a class="btn primary small" href="#editor=${encodeURIComponent(t.id)}">Modifier</a>
           <label class="inline"><input type="checkbox" data-enable="${esc(t.id)}" ${cfg.enabled.includes(t.id) ? 'checked' : ''}> Activé</label>
           <label class="inline"><input type="radio" name="defaultTpl" value="${esc(t.id)}" ${cfg.default === t.id ? 'checked' : ''}> Par défaut</label>
-          ${moreMenu([`<button class="menu-item danger" data-del="${esc(t.id)}">Supprimer</button>`])}
+          ${moreMenu([`<a class="menu-item" href="/api/admin/templates/${encodeURIComponent(t.id)}/export" download>Exporter</a>`, `<button class="menu-item danger" data-del="${esc(t.id)}">Supprimer</button>`])}
         </div>
       </div>
     </div>`).join('');

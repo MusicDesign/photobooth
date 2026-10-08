@@ -1430,6 +1430,19 @@ async function runSteps(app, camera) {
     assert.equal((await put('/api/admin/config', { limits: { countdownSec: ' 4 ', maxRetakesPerSession: -1 } }, ADMIN)).status, 200);
     assert.strictEqual(app.config.get().limits.countdownSec, 4, 'texte numérique enregistré comme nombre');
     await put('/api/admin/config', { limits: { countdownSec: before, maxRetakesPerSession: 2 } }, ADMIN);
+    // Export d'un seul template (menu « … » de la liste) : relu par l'import de Sauvegarde, rien d'autre dedans
+    const [tplOne, tplOther] = app.templates.all();
+    const one = await fetch(`${base}/api/admin/templates/${tplOne.id}/export`, { headers: ADMIN });
+    assert.equal(one.status, 200);
+    const oneZip = new AdmZip(Buffer.from(await one.arrayBuffer()));
+    const names = oneZip.getEntries().map((e) => e.entryName);
+    assert.ok(names.includes(`templates/${tplOne.id}/template.json`) && !names.includes('settings.json'), names.join(', '));
+    assert.ok(!names.some((n) => n.startsWith(`templates/${tplOther.id}/`)), 'les autres templates ne sont pas exportés');
+    const oneForm = new FormData();
+    oneForm.append('file', new Blob([oneZip.toBuffer()]), 'template.zip');
+    const onePv = await j('/api/admin/config/import/preview', { method: 'POST', headers: ADMIN, body: oneForm });
+    assert.deepEqual(onePv.data.import.templates.map((t) => t.id), [tplOne.id], JSON.stringify(onePv.data));
+    assert.equal((await fetch(`${base}/api/admin/templates/inconnu/export`, { headers: ADMIN })).status, 404);
     // Import d'un export retouché à la main : refusé en entier, rien d'appliqué, pas de sauvegarde créée
     const res = await fetch(`${base}/api/admin/config/export?settings=1&templates=0&secrets=0`, { headers: ADMIN });
     const zip = new AdmZip(Buffer.from(await res.arrayBuffer()));

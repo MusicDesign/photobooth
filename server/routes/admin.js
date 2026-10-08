@@ -659,6 +659,20 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     buildAllPreviews(templates).then((n) => { if (n) notifyBooth(); });
   };
 
+  // Un template seul (liste des templates, menu « … ») : même archive qu'une sauvegarde, à importer depuis Sauvegarde
+  r.get('/templates/:id/export', (req, res) => {
+    const t = templates.get(req.params.id); // inconnu : 404
+    const { boothName, appVersion } = bundleInfo();
+    const base = `${t.name || t.id} - template`.replace(/[\\/:*?"<>|]+/g, '-');
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="template.zip"; filename*=UTF-8''${encodeURIComponent(`${base}.zip`)}`);
+    const zip = buildBundle({ config, templates, parts: { settings: false, templates: true }, templateIds: [t.id], boothName, appVersion });
+    zip.on('error', (e) => { console.warn(`[export] ${e.message}`); res.destroy(e); });
+    res.on('close', () => { if (!res.writableFinished) zip.abort(); });
+    zip.pipe(res);
+    zip.finalize();
+  });
+
   r.get('/config/export', (req, res) => {
     const on = (k, def) => (req.query[k] === undefined ? def : req.query[k] === '1');
     const parts = { settings: on('settings', true), templates: on('templates', false) };
