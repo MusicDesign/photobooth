@@ -130,13 +130,14 @@ export function formatReport(c) {
   return lines.join('\n');
 }
 
-/** Commande shell suivie ligne à ligne (ou laissée au terminal si interactive : sudo peut demander le mot de passe). */
+/** Commande shell suivie ligne à ligne (ou laissée au terminal si interactive : sudo peut demander le mot de passe).
+ * Lancée depuis le projet : la borne démarrée par l'autostart a pour dossier courant le home (npm install y échouait). */
 export function run(cmd, { say, interactive = false, timeoutMs = 20 * 60 * 1000 } = {}) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env, HOMEBREW_NO_AUTO_UPDATE: '1', HOMEBREW_NO_INSTALL_CLEANUP: '1' };
     if (!interactive) env.DEBIAN_FRONTEND = 'noninteractive';
-    const p = WIN ? spawn('cmd', ['/c', cmd], { env, stdio: interactive ? 'inherit' : ['ignore', 'pipe', 'pipe'] })
-      : spawn('sh', ['-c', cmd], { env, stdio: interactive ? 'inherit' : ['ignore', 'pipe', 'pipe'] });
+    const p = WIN ? spawn('cmd', ['/c', cmd], { cwd: ROOT, env, stdio: interactive ? 'inherit' : ['ignore', 'pipe', 'pipe'] })
+      : spawn('sh', ['-c', cmd], { cwd: ROOT, env, stdio: interactive ? 'inherit' : ['ignore', 'pipe', 'pipe'] });
     let tail = '';
     const onData = (d) => { const s = String(d); tail = (tail + s).slice(-2000); for (const line of s.split('\n')) if (line.trim()) say(line.trim()); };
     p.stdout?.on('data', onData);

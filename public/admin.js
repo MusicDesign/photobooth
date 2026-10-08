@@ -32,7 +32,7 @@ function saveState(state) {
   const el = $('#saveState');
   clearTimeout(saveState.t);
   el.className = `save-state ${state}`;
-  el.textContent = { saving: 'Enregistrement…', saved: '✓ Enregistré', error: 'Non enregistré' }[state];
+  el.innerHTML = { saving: 'Enregistrement…', saved: `<i class="fa-solid fa-check" aria-hidden="true"></i> Enregistré`, error: 'Non enregistré' }[state];
   if (state === 'saved') saveState.t = setTimeout(() => { el.className = 'save-state'; }, 1800);
 }
 
@@ -316,7 +316,7 @@ function settingsSummary() {
   // Tuile : titre, grand chiffre (ou nom), précision, puces ; alerte en rouge ; toute la tuile mène à sa section
   const tile = ({ title, big, sub = '', chips = [], alert = '', href, extra = '' }) => `
     <a class="sum-tile ${alert ? 'alert' : ''}" href="${href}">
-      <span class="sum-title">${title}<span class="hw-go" aria-hidden="true">›</span></span>
+      <span class="sum-title">${title}<span class="hw-go" aria-hidden="true"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></span></span>
       <span class="sum-big">${big}</span>
       ${sub ? `<span class="sum-sub">${sub}</span>` : ''}
       ${extra}
@@ -443,7 +443,7 @@ function hwRow(icon, title, state, status, detail, href) {
   return `<a class="hw-row" href="${href}">
     <svg class="hw-icon" viewBox="0 0 24 24" aria-hidden="true">${HW_ICONS[icon]}</svg>
     <span class="hw-main"><span class="hw-head"><b>${title}</b><span class="hw-dot ${state}"></span><span class="hw-status">${status}</span></span>${detail ? `<span class="hw-detail">${detail}</span>` : ''}</span>
-    <span class="hw-go" aria-hidden="true">›</span></a>`;
+    <span class="hw-go" aria-hidden="true"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></span></a>`;
 }
 
 function hardwareList() {
@@ -517,7 +517,7 @@ function dashboard() {
   <p class="sub">Événement en cours : <b>${esc(c.eventName)}</b> · <a href="#events">changer ou en créer un</a></p>
   <div class="grid stats4">
     ${stat(c.printed, 'tirages imprimés')}
-    ${stat(c.quotaRemaining === null ? '∞' : c.quotaRemaining, 'quota restant', c.quotaReached ? 'err' : '')}
+    ${stat(c.quotaRemaining === null ? '<i class="fa-solid fa-infinity" aria-hidden="true"></i>' : c.quotaRemaining, 'quota restant', c.quotaReached ? 'err' : '')}
     ${stat(c.paperRemaining === null ? '—' : c.paperRemaining, 'feuilles restantes', c.lowPaper ? 'warn' : '')}
     ${stat(c.sessions, 'sessions')}
   </div>
@@ -652,7 +652,7 @@ function printing() {
         <label>Copies maximum avec le code opérateur <input name="operatorMaxCopies" type="number" min="1" max="100" value="${l.operatorMaxCopies}"></label>
         <label class="inline"><input name="allowZeroCopies" type="checkbox" ${l.allowZeroCopies ? 'checked' : ''}> L'invité peut terminer sans imprimer</label>
         <small>Bouton « ${esc(cfg.texts.noPrint)} » sur l'écran des copies, quand une imprimante est branchée. Décoché : au moins un tirage par passage.</small>
-        <small>Ce qui se passe si l'invité ne choisit rien : <a href="#flow">Parcours invité → Délais</a>.</small>
+        <small>Ce qui se passe si l'invité ne choisit rien : <a href="#flow">Parcours invité <i class="fa-solid fa-arrow-right" aria-hidden="true"></i> Délais</a>.</small>
       </div>
       <div>
         <label>Quota de tirages de l'événement (0 = illimité) <input name="eventQuota" type="number" min="0" value="${l.eventQuota}"></label>
@@ -683,7 +683,7 @@ function tpIdleScreen(t, logo, sample) {
   return `<div class="tp-screen tp-idle">
     <img class="tp-logo" src="${esc(logo)}" alt="">
     <div class="tp-headline">${esc(t.welcome)}</div>
-    <div class="tp-gal"><span class="tp-stack">${[0, 1, 2].map(() => `<i${sample ? ` style="background-image:url('${esc(sample)}')"` : ''}></i>`).join('')}</span><span><b>${esc(t.gallery)}</b><small>24 photos ›</small></span></div>
+    <div class="tp-gal"><span class="tp-stack">${[0, 1, 2].map(() => `<i${sample ? ` style="background-image:url('${esc(sample)}')"` : ''}></i>`).join('')}</span><span><b>${esc(t.gallery)}</b><small>24 photos <i class="fa-solid fa-chevron-right" aria-hidden="true"></i></small></span></div>
   </div>`;
 }
 
@@ -789,7 +789,7 @@ function templatesSection() {
   const formatOptions = (sel) => Object.entries(S.formats).map(([k, f]) => `<option value="${k}" ${sel === k ? 'selected' : ''}>${esc(f.name)} · ${f.width}×${f.height}</option>`).join('');
   const cards = S.templates.map((t) => `
     <div class="card tpl-card" data-tpl-card="${esc(t.id)}">
-      <button type="button" class="tpl-handle" title="Glisser pour changer l'ordre sur la borne" aria-label="Déplacer ${esc(t.name)}">⠿</button>
+      <button type="button" class="tpl-handle" title="Glisser pour changer l'ordre sur la borne" aria-label="Déplacer ${esc(t.name)}"><i class="fa-solid fa-grip-vertical" aria-hidden="true"></i></button>
       <div class="tpl-thumb-box"><canvas class="tpl-preview" data-tpl="${esc(t.id)}" width="${Math.round(t.width * (160 / Math.max(t.width, t.height)))}" height="${Math.round(t.height * (160 / Math.max(t.width, t.height)))}"></canvas></div>
       <div class="tpl-meta">
         <div class="tpl-name">${esc(t.name)}${KIND_LABEL[t.kind] ? ` <span class="badge">${KIND_LABEL[t.kind]}</span>` : ''}${KIND_LABEL[t.kind] && !cfg.gifEnabled ? ' <span class="badge warn">masqué</span>' : ''}</div>
@@ -1062,7 +1062,7 @@ function lightsSection() {
           <button class="btn ghost small" type="button" data-light-forget="${esc(d.id)}">Oublier</button></td>
       </tr>`).join('');
   return `
-  <p class="sub">Lumières Govee, Elgato et Philips Hue du réseau local, pilotées directement par la borne (sans internet ni compte) : allumées à son démarrage, ambiance à l'accueil, blanc neutre pour les photos, blanc chaud doux (réglable) quand on éteint la borne. Govee : activer <b>LAN Control</b> dans l'app Govee Home (appareil → réglages). Elgato (Ring Light, Key Light) : rien à activer, la lumière doit seulement être sur le Wi-Fi (app Elgato Control Center). Toutes doivent être sur le même réseau que la borne.</p>
+  <p class="sub">Lumières Govee, Elgato et Philips Hue du réseau local, pilotées directement par la borne (sans internet ni compte) : allumées à son démarrage, ambiance à l'accueil, blanc neutre pour les photos, blanc chaud doux (réglable) quand on éteint la borne. Govee : activer <b>LAN Control</b> dans l'app Govee Home (appareil <i class="fa-solid fa-arrow-right" aria-hidden="true"></i> réglages). Elgato (Ring Light, Key Light) : rien à activer, la lumière doit seulement être sur le Wi-Fi (app Elgato Control Center). Toutes doivent être sur le même réseau que la borne.</p>
   ${hueCard(L)}
   <form id="formLights">
     <div class="card">
@@ -1461,7 +1461,7 @@ function openLightbox(url, alt = 'Photo de test', list = null, index = 0) {
   lb.className = 'co-lightbox';
   const nav = items.length > 1;
   lb.innerHTML = `<img alt=""><video class="hidden" autoplay loop muted playsinline></video>
-    ${nav ? '<button class="lb-arrow prev" type="button" aria-label="Photo précédente">‹</button><button class="lb-arrow next" type="button" aria-label="Photo suivante">›</button>' : ''}
+    ${nav ? '<button class="lb-arrow prev" type="button" aria-label="Photo précédente"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button><button class="lb-arrow next" type="button" aria-label="Photo suivante"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></button>' : ''}
     <div class="lb-bar">${nav ? '<span class="lb-count"></span>' : ''}<button class="btn" type="button">Fermer</button></div>`;
   const img = lb.querySelector('img');
   const video = lb.querySelector('video');
@@ -1564,9 +1564,9 @@ function sessions() {
   else loadEventSessions(selId, page);
   const pages = Math.max(1, Math.ceil((ev?.sessions || 0) / per));
   const pager = pages > 1 ? `<div class="row pager">
-      <button class="btn small" data-page="${page - 1}" ${page <= 1 ? 'disabled' : ''} aria-label="Page précédente">‹</button>
+      <button class="btn small" data-page="${page - 1}" ${page <= 1 ? 'disabled' : ''} aria-label="Page précédente"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
       <span>${(page - 1) * per + 1}–${Math.min(page * per, ev.sessions)} sur ${ev.sessions}</span>
-      <button class="btn small" data-page="${page + 1}" ${page >= pages ? 'disabled' : ''} aria-label="Page suivante">›</button>
+      <button class="btn small" data-page="${page + 1}" ${page >= pages ? 'disabled' : ''} aria-label="Page suivante"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></button>
     </div>` : '';
 
   const STATUS = { shooting: ['en cours', ''], review: ['relecture', ''], copies: ['choix des tirages', ''], printing: ['impression…', 'warn'], done: ['terminée', 'ok'], error: ['erreur', 'err'] };
@@ -1674,9 +1674,9 @@ function eventsSection() {
   eventsPage = Math.min(Math.max(1, eventsPage), pages);
   const shown = all.slice((eventsPage - 1) * EVENTS_PER_PAGE, eventsPage * EVENTS_PER_PAGE);
   const pager = pages > 1 ? `<div class="row pager">
-      <button class="btn small" data-ev-page="${eventsPage - 1}" ${eventsPage <= 1 ? 'disabled' : ''} aria-label="Page précédente">‹</button>
+      <button class="btn small" data-ev-page="${eventsPage - 1}" ${eventsPage <= 1 ? 'disabled' : ''} aria-label="Page précédente"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
       <span>${(eventsPage - 1) * EVENTS_PER_PAGE + 1}–${Math.min(eventsPage * EVENTS_PER_PAGE, all.length)} sur ${all.length}</span>
-      <button class="btn small" data-ev-page="${eventsPage + 1}" ${eventsPage >= pages ? 'disabled' : ''} aria-label="Page suivante">›</button>
+      <button class="btn small" data-ev-page="${eventsPage + 1}" ${eventsPage >= pages ? 'disabled' : ''} aria-label="Page suivante"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></button>
     </div>` : '';
   const key = S.usb?.volume && !S.usb?.exporting;
   const zip = (e, content, label, n) => (n ? `<a class="menu-item" href="/api/admin/events/${encodeURIComponent(e.id)}/export?content=${content}" download>${label}</a>` : '');
@@ -2065,14 +2065,14 @@ function renderLayerList() {
   const layers = [...E.tpl.layers].reverse();
   ul.innerHTML = layers.map((l) => `
     <li class="${l.id === E.selected ? 'selected' : ''} ${l.visible === false ? 'off' : ''}" data-id="${esc(l.id)}">
-      <button class="eye" data-vis="${esc(l.id)}" title="Afficher / masquer">${l.visible === false ? '○' : '●'}</button>
+      <button class="eye" data-vis="${esc(l.id)}" title="Afficher / masquer">${l.visible === false ? '<i class="fa-solid fa-eye-slash" aria-hidden="true"></i>' : '<i class="fa-solid fa-eye" aria-hidden="true"></i>'}</button>
       <span class="ltype ${l.type}">${LAYER_LABEL[l.type]}</span>
       <span class="lname">${esc(layerTitle(l))}</span>
       <span class="lbtns">
         <button data-up="${esc(l.id)}" title="Monter"><i class="fa-solid fa-arrow-up" aria-hidden="true"></i></button>
         <button data-down="${esc(l.id)}" title="Descendre"><i class="fa-solid fa-arrow-down" aria-hidden="true"></i></button>
-        <button data-dup="${esc(l.id)}" title="Dupliquer">⧉</button>
-        <button data-rm="${esc(l.id)}" title="Supprimer">✕</button>
+        <button data-dup="${esc(l.id)}" title="Dupliquer"><i class="fa-solid fa-clone" aria-hidden="true"></i></button>
+        <button data-rm="${esc(l.id)}" title="Supprimer"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
       </span>
     </li>`).join('') || '<li class="muted">Aucun calque</li>';
   ul.querySelectorAll('li[data-id]').forEach((li) => li.addEventListener('click', (e) => {
