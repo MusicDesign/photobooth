@@ -2,7 +2,7 @@
 import { renderTemplate, loadAssets } from './template-render.js';
 import { createCutter, preloadAi } from './cutout-live.js';
 import { FILTERS } from './filters.js';
-import { deviceNotice, updateNotice } from './device-toasts.js';
+import { deviceNotice, updateNotice, systemNotice } from './device-toasts.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -1296,29 +1296,53 @@ async function showDone() {
 
 // ---------- Codes PIN (pavé tactile) ----------
 
-function askPin(title) {
-  return new Promise((resolve) => {
+/**
+ * Pavé du code. submit(pin) envoie le code : sa réponse est le résultat (null si « Annuler »). Code faux (BAD_PIN) :
+ * le pavé reste ouvert, vidé, avec l'erreur ; toute autre erreur (essais bloqués, imprimante…) le ferme et remonte.
+ */
+function askPin(title, submit) {
+  return new Promise((resolve, reject) => {
     const dlg = $('#pinDialog');
     const display = $('#pinDisplay');
+    const error = $('#pinError');
     let value = '';
+    let busy = false;
     $('#pinTitle').textContent = title;
+    error.textContent = '';
     const render = () => { display.textContent = '•'.repeat(value.length) || ' '; };
+    const send = async () => {
+      busy = true;
+      try {
+        const result = await submit(value);
+        finish(() => resolve(result));
+      } catch (e) {
+        if (e.code !== 'BAD_PIN') return finish(() => reject(e));
+        value = '';
+        render();
+        error.textContent = e.message;
+        display.classList.remove('wrong');
+        void display.offsetWidth; // relance l'animation à chaque erreur
+        display.classList.add('wrong');
+      } finally { busy = false; }
+    };
     const onKey = (ev) => {
       const k = ev.target.closest('[data-k]')?.dataset.k; // le clic peut tomber sur l'icône de ⌫
-      if (!k) return;
+      if (!k || busy) return;
+      if (k === 'ok') { if (value) send(); return; }
       if (k === 'del') value = value.slice(0, -1);
-      else if (k === 'ok') return finish(value);
       else if (value.length < 8) value += k;
+      error.textContent = '';
       render();
     };
-    const finish = (result) => {
+    const finish = (settle) => {
       dlg.querySelector('.keypad').removeEventListener('click', onKey);
       $('#pinCancel').onclick = null;
+      display.classList.remove('wrong');
       dlg.close();
-      resolve(result);
+      settle();
     };
     dlg.querySelector('.keypad').addEventListener('click', onKey);
-    $('#pinCancel').onclick = () => finish(null);
+    $('#pinCancel').onclick = () => { if (!busy) finish(() => resolve(null)); };
     render();
     dlg.showModal();
   });
@@ -1326,11 +1350,9 @@ function askPin(title) {
 
 async function operatorUnlock() {
   const gen = state.gen;
-  const pin = await askPin('Code opérateur');
-  if (pin === null || !current(gen)) return;
   try {
-    const session = await api(`/api/session/${state.session.id}/unlock`, { method: 'POST', body: { pin } });
-    if (!current(gen)) return;
+    const session = await askPin('Code opérateur', (pin) => api(`/api/session/${state.session.id}/unlock`, { method: 'POST', body: { pin } }));
+    if (!session || !current(gen)) return;
     state.session = session;
     toast('Limite levée pour cette session');
     keepPhoto();
@@ -1341,13 +1363,11 @@ async function operatorUnlock() {
 
 async function adminAccess() {
   if (state.boot.adminOpen) return openAdmin(); // code admin vide (tests)
-  try { await api('/api/admin/login'); } catch (e) { toast(e.message); return; } // essais bloqués : pas de pavé
-  const pin = await askPin('Code admin');
-  if (pin === null) return;
+  try { await api('/api/admin/login'); } catch (e) { systemNotice(e.message); return; } // essais bloqués : pas de pavé
   try {
-    await api('/api/admin/login', { method: 'POST', body: { pin } });
+    if (!await askPin('Code admin', (pin) => api('/api/admin/login', { method: 'POST', body: { pin } }))) return;
   } catch (e) {
-    toast(e.message);
+    systemNotice(e.message); // essais bloqués après le dernier code faux
     return;
   }
   await openAdmin();
@@ -1518,14 +1538,10 @@ function renderReprint() {
 async function galleryReprint() {
   const it = state.gallery.items[state.gallery.index];
   if (!it) return;
-  let pin;
-  if (state.boot.gallery?.reprint === 'operator') {
-    pin = await askPin('Code opérateur');
-    if (pin === null) return;
-  }
   const copies = state.gallery.copies;
+  const print = (pin) => api(`/api/gallery/${it.id}/print`, { method: 'POST', body: { copies, pin } });
   try {
-    await api(`/api/gallery/${it.id}/print`, { method: 'POST', body: { copies, pin } });
+    if (state.boot.gallery?.reprint === 'operator') { if (!await askPin('Code opérateur', print)) return; } else await print();
     state.gallery.printingId = it.id;
     toast(copies > 1 ? `${copies} tirages lancés` : 'Tirage lancé');
   } catch (e) {

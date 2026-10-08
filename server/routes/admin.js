@@ -124,7 +124,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
   r.post('/login', (req, res) => {
     const ip = ipOf(req);
     guard.check(ip);
-    if (!samePin(req.body?.pin ?? '', adminPin())) { guard.fail(ip); throw new HttpError(401, 'BAD_PIN', 'Code incorrect'); }
+    if (!samePin(req.body?.pin ?? '', adminPin())) { guard.fail(ip); guard.check(ip); throw new HttpError(401, 'BAD_PIN', 'Code incorrect'); } // dernier essai : le blocage tout de suite
     guard.success(ip);
     openSession(res);
     res.json({ ok: true });

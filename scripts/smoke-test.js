@@ -362,9 +362,12 @@ async function runSteps(app, camera) {
 
   await step('admin : refus sans PIN, état complet, réimpression, compteurs', async () => {
     assert.equal((await j('/api/admin/state')).status, 401);
-    // Codes faux : 5 essais, puis attente (429) même avec le bon code, à la connexion comme par l'en-tête
+    // Codes faux : 5 essais (le 5e annonce déjà l'attente), puis 429 même avec le bon code, à la connexion comme par l'en-tête
     const login = (pin) => post('/api/admin/login', { pin });
-    for (let i = 0; i < 5; i++) assert.equal((await login('0000')).status, 401);
+    for (let i = 0; i < 4; i++) assert.equal((await login('0000')).status, 401);
+    const fifth = await login('0000');
+    assert.equal(fifth.status, 429, 'le code faux qui bloque répond déjà par le délai');
+    assert.match(fifth.data.message, /réessayez dans 30 s/);
     const locked = await login(ADMIN['x-admin-pin']);
     assert.equal(locked.status, 429, JSON.stringify(locked.data));
     assert.equal(locked.data.error, 'TOO_MANY_ATTEMPTS');

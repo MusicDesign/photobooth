@@ -214,7 +214,10 @@ body[data-screen="idle"] .toast { bottom: calc(3vh + clamp(64px, 9vmin, 120px) +
 .pin-dialog { border: 0; border-radius: var(--radius); padding: 28px; background: var(--surface); color: var(--on-surface); box-shadow: var(--shadow); width: 360px; text-align: center; }
 .pin-dialog::backdrop { background: rgba(0,0,0,0.45); }
 .pin-dialog h3 { margin: 0 0 12px; color: var(--on-surface); font-size: 24px; }
-.pin-display { font-size: 40px; letter-spacing: 10px; min-height: 52px; margin-bottom: 14px; color: var(--on-surface); }
+.pin-display { font-size: 40px; letter-spacing: 10px; min-height: 52px; margin-bottom: 6px; color: var(--on-surface); }
+.pin-display.wrong { animation: pin-shake .4s; }
+@keyframes pin-shake { 20%, 60% { transform: translateX(-10px); } 40%, 80% { transform: translateX(10px); } }
+.pin-error { min-height: 22px; margin: 0 0 10px; font-size: 17px; font-weight: 600; color: #d93a3a; }
 .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
 .keypad button { appearance: none; border: 0; border-radius: 16px; background: color-mix(in srgb, var(--on-surface) 10%, transparent); color: var(--on-surface); font: inherit; font-size: 30px; font-weight: 700; height: 72px; cursor: pointer; }
 .keypad button:active { filter: brightness(0.85); }

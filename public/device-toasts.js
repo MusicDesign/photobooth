@@ -45,6 +45,11 @@ export function deviceNotice({ label, connected }) {
   show(connected ? '' : 'off', label, connected ? 'connecté' : 'déconnecté');
 }
 
+// Message du système (essais du code bloqués…) : même notification, pastille rouge.
+export function systemNotice(text) {
+  show('off', text, '', 6000);
+}
+
 // Mise à jour disponible, annoncée au lancement de la borne : { type: 'update', version }. Une fois par page.
 let updateShown = false;
 export function updateNotice({ version }) {
