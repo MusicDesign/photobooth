@@ -243,9 +243,20 @@ function updateCard() {
       </div>` : ''}
     </div>
     ${u.incoming?.length && !u.updating ? `<ul class="update-list">${u.incoming.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
-    ${u.log?.length ? `<pre class="setup-log">${esc(u.log.slice(-12).join('\n'))}</pre>` : ''}
+    ${u.updating ? updateProgress(u.step) : ''}
     ${u.error ? `<div class="alert" style="margin:12px 0 0">${esc(u.error)}</div>` : ''}
   </div>`;
+}
+
+/** Barre de progression de la mise à jour, par étape (la relance qui suit a son propre écran). */
+const UPDATE_STEPS = [['pull', 'Téléchargement'], ['deps', 'Dépendances'], ['modules', 'Modules']];
+function updateProgress(step) {
+  const i = Math.max(0, UPDATE_STEPS.findIndex(([id]) => id === step));
+  const pct = Math.round(((i + 0.5) / UPDATE_STEPS.length) * 100);
+  return `<div class="update-progress">
+      <div class="update-bar"><span style="width:${pct}%"></span></div>
+      <div class="cell-sub">Étape ${i + 1} / ${UPDATE_STEPS.length} · ${UPDATE_STEPS[i][1]}</div>
+    </div>`;
 }
 
 function pollUpdate() {

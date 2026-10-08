@@ -490,6 +490,12 @@ details.more .menu { position: absolute; right: 0; top: calc(100% + 4px); z-inde
 .inst-kicker { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .inst-version { font-size: 28px; font-weight: 800; color: var(--s); display: flex; align-items: center; gap: 10px; margin: 2px 0 4px; }
 .inst-version .badge { font-size: 12px; }
+.update-progress { margin-top: 14px; }
+.update-bar { height: 10px; border-radius: 999px; background: #e5e7eb; overflow: hidden; margin-bottom: 8px; }
+.update-bar span { display: block; height: 100%; border-radius: inherit; background: var(--ok); transition: width 0.6s ease;
+  background-image: linear-gradient(45deg, rgba(255,255,255,0.25) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.25) 50%, rgba(255,255,255,0.25) 75%, transparent 75%);
+  background-size: 20px 20px; animation: update-stripes 1s linear infinite; }
+@keyframes update-stripes { to { background-position: 20px 0; } }
 .inst-table { margin-top: 16px; }
 .inst-table td.inst-dot { width: 1%; padding-right: 0; }
 .inst-table td.inst-fix { text-align: right; }

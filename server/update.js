@@ -22,7 +22,7 @@ export class Updater {
     this.setup = setup;
     this.restart = restart;
     this.busy = busy;
-    this.state = { available: fs.existsSync(path.join(ROOT, '.git')), version: localVersion(), remoteVersion: null, commit: null, date: null, subject: null, branch: null, behind: null, incoming: [], checkedAt: null, error: null, updating: false, log: [], updatedAt: null, needRestart: false, restarting: false };
+    this.state = { available: fs.existsSync(path.join(ROOT, '.git')), version: localVersion(), remoteVersion: null, commit: null, date: null, subject: null, branch: null, behind: null, incoming: [], checkedAt: null, error: null, updating: false, log: [], updatedAt: null, needRestart: false, restarting: false, step: null };
   }
 
   git(...args) {
@@ -67,14 +67,19 @@ export class Updater {
     this.state.updating = true;
     this.state.error = null;
     this.state.log = [];
+    // Étape en cours, pour la barre de progression de l'admin (le détail reste dans log et la console)
+    const step = (s) => { this.state.step = s; };
     const say = (line) => { if (!line) return; this.state.log.push(line); log?.(line); console.log(`[update] ${line}`); };
     try {
       if (await this.git('status', '--porcelain', '--untracked-files=no')) throw new Error('modifications locales non enregistrées : mise à jour refusée (voir git status)');
       const branch = this.state.branch || 'main';
+      step('pull');
       say(`git pull --ff-only origin ${branch}`);
       say(await this.git('pull', '--ff-only', 'origin', branch));
+      step('deps');
       say('npm install');
       await run('npm install --no-audit --no-fund', { say });
+      step('modules');
       if (this.setup) { say('Modules nécessaires'); await this.setup.install({ log: say }); }
       await this.version();
       Object.assign(this.state, { behind: 0, incoming: [], remoteVersion: this.state.version, updatedAt: new Date().toISOString(), needRestart: true });
@@ -91,6 +96,7 @@ export class Updater {
       say(`Échec : ${first(e)}`);
     } finally {
       this.state.updating = false;
+      this.state.step = null;
     }
     return this.status();
   }
