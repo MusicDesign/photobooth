@@ -40,6 +40,7 @@ export function categorize(module, msg = '') {
 
 const entries = [];
 const listeners = new Set();
+let run = null; // exécution en cours dans le fichier : { file, offset (taille au lancement), rotations }
 let seq = 0;
 
 /**
@@ -82,6 +83,7 @@ export function installLogCapture() {
 export function installFileLog(file = LOG_FILE) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   let size = fs.existsSync(file) ? fs.statSync(file).size : 0;
+  run = { file, offset: size, rotations: 0 };
   installLogCapture();
   onLog((e) => {
     if (!e.file) return;
@@ -90,10 +92,26 @@ export function installFileLog(file = LOG_FILE) {
       if (size + line.length > MAX_BYTES) {
         fs.renameSync(file, `${file}.1`);
         size = 0;
+        run.rotations++;
       }
       fs.appendFileSync(file, line);
       size += Buffer.byteLength(line);
     } catch { /* disque plein, droits : le terminal reste la référence */ }
   });
   console.log(`[log] journal : ${file}`);
+}
+
+/**
+ * Journal de l'exécution en cours (depuis le lancement du logiciel), tel qu'écrit dans booth.log : début dans
+ * booth.log.1 si le fichier a tourné entre-temps (deux tours ou plus : le début est perdu, booth.log.1 entier).
+ * Sans journal fichier (tests) : les lignes gardées en mémoire.
+ */
+export function runLogText() {
+  const line = (e) => `${new Date(e.t).toISOString()} ${e.level} ${e.text}\n`;
+  if (!run) return entries.filter((e) => e.file).map(line).join('');
+  const read = (f, from = 0) => {
+    try { const b = fs.readFileSync(f); return b.subarray(Math.min(from, b.length)).toString('utf8'); } catch { return ''; }
+  };
+  if (!run.rotations) return read(run.file, run.offset);
+  return read(`${run.file}.1`, run.rotations === 1 ? run.offset : 0) + read(run.file);
 }

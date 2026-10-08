@@ -7,7 +7,7 @@ import { ZipArchive } from 'archiver';
 import { UPLOADS_DIR, OUTPUT_DIR } from '../paths.js';
 import { samplePhotos } from '../samples.js';
 import { HttpError, parseCookies, safeName, localDate } from '../util.js';
-import { LOG_FILE, LOG_CATEGORIES, recentLogs, onLog, publicEntry } from '../log.js';
+import { LOG_FILE, LOG_CATEGORIES, recentLogs, onLog, publicEntry, runLogText } from '../log.js';
 import { validateConfigPatch, screenPatch, EDITABLE_SECTIONS } from '../config-validate.js';
 import { CAMERA_DRIVERS, CAMERA_FALLBACKS } from '../camera/index.js';
 import { MANUAL_SETTINGS, MAX_SHOTS } from '../camera/control.js';
@@ -623,6 +623,15 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     const off = onLog((e) => send('log', publicEntry(e)));
     const keep = setInterval(() => res.write(': \n\n'), 20000); // proxy, veille : la connexion reste ouverte
     req.on('close', () => { off(); clearInterval(keep); });
+  });
+
+  // Journal depuis le lancement du logiciel (bouton Télécharger de la page Journal), en texte
+  r.get('/logs/run', (req, res) => {
+    const now = new Date();
+    const base = safeName(`${config.get().booth.name || 'Borne'} - journal ${localDate(now)} ${String(now.getHours()).padStart(2, '0')}h${String(now.getMinutes()).padStart(2, '0')}`);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="journal.log"; filename*=UTF-8''${encodeURIComponent(`${base}.log`)}`);
+    res.send(runLogText());
   });
 
   r.get('/logs', (req, res) => {

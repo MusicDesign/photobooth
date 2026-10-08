@@ -692,6 +692,12 @@ async function runSteps(app, camera) {
     assert.equal(logs.status, 200);
     const { default: AdmZip } = await import('adm-zip');
     assert.deepEqual(new AdmZip(Buffer.from(await logs.arrayBuffer())).getEntries().map((e) => e.entryName).sort(), ['booth.log', 'booth.log.1']);
+    // Bouton Télécharger de la page Journal : l'exécution en cours seulement (ici sans fichier : les lignes en mémoire)
+    console.log('[test] ligne de cette exécution');
+    const run = await fetch(`${base}/api/admin/logs/run`, { headers: ADMIN });
+    assert.equal(run.status, 200);
+    const runText = await run.text();
+    assert.ok(runText.includes('[test] ligne de cette exécution') && !runText.includes('\nancienne\n'), 'journal de l\'exécution en cours');
     // Journal en direct : lignes en mémoire classées par module, appels à l'API, puis chaque nouvelle ligne
     const { categorize } = await import('../server/log.js');
     assert.equal(categorize('gphoto2', 'x'), 'camera');

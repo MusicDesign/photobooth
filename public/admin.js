@@ -2782,7 +2782,7 @@ function logsSection() {
       <span class="log-state" id="logState"></span>
       <div class="cell-actions">
         <button type="button" class="btn small" id="logPause">${LOG.paused ? 'Reprendre' : 'Pause'}</button>
-        <a class="btn small" href="/api/admin/logs" download>Télécharger</a>
+        <a class="btn small" href="/api/admin/logs/run" download>Télécharger</a>
       </div>
     </div>
     <div class="log-list" id="logList"></div>
