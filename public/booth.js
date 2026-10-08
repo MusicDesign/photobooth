@@ -1375,29 +1375,27 @@ async function operatorUnlock() {
   }
 }
 
-async function adminAccess() {
-  if (state.boot.adminOpen) return openAdmin(); // code admin vide (tests)
+async function adminAccess(section = '') {
+  if (state.boot.adminOpen) return openAdmin(section); // code admin vide (tests)
   let before;
   try { before = await api('/api/admin/login'); } catch (e) { systemNotice(e.message); return; } // essais bloqués : pas de pavé
-  if (before.authed) return openAdmin(); // « Retour à la borne » il y a peu : pas de code
+  if (before.authed) return openAdmin(section); // « Retour à la borne » il y a peu : pas de code
   try {
     if (!await askPin('Code admin', (pin) => api('/api/admin/login', { method: 'POST', body: { pin } }))) return;
   } catch (e) {
     systemNotice(e.message); // essais bloqués après le dernier code faux
     return;
   }
-  await openAdmin();
+  await openAdmin(section);
+}
+
+/** Notification de mise à jour touchée : code admin si besoin, puis page Installation. */
+function openInstall() {
+  if (state.screen !== 'idle') return; // invité en pleine séance
+  adminAccess('install');
 }
 
 /** Départ vers l'admin : déclenchement programmé annulé et session non validée abandonnée avant de quitter la page. */
-/** Notification de mise à jour touchée : page Installation si l'admin est déjà connecté (sinon rien, pas de pavé). */
-async function openInstallIfAdmin() {
-  if (state.screen !== 'idle') return; // invité en pleine séance
-  let authed = state.boot.adminOpen;
-  if (!authed) authed = (await api('/api/admin/login').catch(() => null))?.authed;
-  if (authed) openAdmin('install');
-}
-
 async function openAdmin(section = '') {
   const armed = state.armedSession;
   state.armedSession = null;
@@ -1842,7 +1840,7 @@ function connectWs() {
     try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'deck') { onDeckPress(msg.id); return; }
     if (msg.type === 'device') { deviceNotice(msg); return; }
-    if (msg.type === 'update') { updateNotice(msg, openInstallIfAdmin); return; }
+    if (msg.type === 'update') { updateNotice(msg, openInstall); return; }
     if (msg.type === 'sessions' && state.screen === 'idle') renderIdleGallery(); // photo supprimée depuis l'admin
     if (msg.type === 'flashStray') { if (state.boot) { state.boot.camera.flashStray = msg.stray; $('#flashBadge').classList.toggle('hidden', !msg.stray); } return; }
     if (msg.type === 'deckInfo') { // Stream Deck branché ou débranché : la galerie se met à sa taille

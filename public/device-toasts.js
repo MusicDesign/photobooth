@@ -55,7 +55,7 @@ export function systemNotice(text, ms = 6000) {
 }
 
 // Mise à jour disponible, annoncée au lancement de la borne : { type: 'update', version }. Une fois par page.
-// onClick : admin connecté, la notification mène à la page Installation.
+// onClick : sur la borne, code admin puis page Installation.
 let updateShown = false;
 export function updateNotice({ version }, onClick = null) {
   if (updateShown) return;

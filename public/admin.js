@@ -3523,7 +3523,7 @@ function scheduleRefresh() {
     try { msg = JSON.parse(ev.data); } catch { /* ignoré */ }
     if (msg?.type === 'deck') return onDeckPress(msg.id);
     if (msg?.type === 'deckInfo') return;
-    if (msg?.type === 'update') return updateNotice(msg, S ? () => { location.hash = 'install'; } : null); // connecté : vers la page Installation
+    if (msg?.type === 'update') return updateNotice(msg, () => { location.hash = 'install'; }); // page Installation, après le code si déconnecté
     if (msg?.type === 'device') { deviceNotice(msg); if (S && currentSection() !== 'editor') scheduleRefresh(); return; } // la page affichée suit l'état annoncé (lumières, boîtier, Wi-Fi…)
     if (msg?.type === 'config') refreshDevices(); // pilote de caméra changé (boîtier branché / débranché), entre autres
     if (S && ['dashboard', 'sessions', 'events'].includes(currentSection())) scheduleRefresh();
