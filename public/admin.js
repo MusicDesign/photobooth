@@ -238,7 +238,13 @@ function syncUpdateNav() {
 }
 
 async function installUpdate() {
-  if (!await askConfirm(`Mettre à jour la borne ?\n\n${S.update?.canRestart ? 'Elle redémarre toute seule à la fin.' : 'Elle devra ensuite redémarrer.'}`, 'Mettre à jour', 'retake')) return;
+  const u = S.update || {};
+  const target = pendingVersion();
+  // Nouveautés : un commit par version (« 0.8.28 : … »), le numéro en gras
+  const list = (u.incoming || []).filter((x) => !/^Merge /.test(x)).map((x) => { const m = x.match(/^(\d+\.\d+\.\d+)\s*:\s*(.*)$/); return m ? `<b>${esc(m[1])}</b> ${esc(m[2])}` : esc(x); });
+  const title = target ? `Mettre à jour vers la ${target} ?` : 'Mettre à jour la borne ?';
+  const text = `Version installée : ${u.version || '?'}. ${u.canRestart ? 'La borne redémarre toute seule à la fin.' : 'La borne devra ensuite redémarrer.'}`;
+  if (!await askConfirm(text, 'Mettre à jour', 'retake', { title, list, tone: 'primary' })) return;
   try { S.update = (await api('/api/admin/update/install', { method: 'POST' })).update; } catch (err) { toast(err.message, true); return; }
   if (currentSection() === 'install') render(); else location.hash = 'install'; // progression sur la page Installation
   pollUpdate();
@@ -3371,11 +3377,17 @@ async function waitRelaunch() {
   }
 }
 /** Confirmation dans la page : se valide à la souris, au clavier ou depuis le Stream Deck. */
-function askConfirm(text, okLabel, deckIcon = 'power') {
+/** opts.title : titre au-dessus du texte ; opts.list : lignes sous le texte ; opts.tone : 'danger' (rouge, par défaut) ou 'primary' (noir). */
+function askConfirm(text, okLabel, deckIcon = 'power', { title = '', list = [], tone = 'danger' } = {}) {
   return new Promise((resolve) => {
     const dlg = $('#confirmDialog');
+    $('#confirmTitle').textContent = title;
+    $('#confirmTitle').classList.toggle('hidden', !title);
     $('#confirmText').textContent = text;
+    $('#confirmList').innerHTML = list.map((l) => `<li>${l}</li>`).join('');
+    $('#confirmList').classList.toggle('hidden', !list.length);
     $('#cfOk').textContent = okLabel;
+    $('#cfOk').className = `btn ${tone}`;
     $('#cfOk').dataset.icon = deckIcon; // pictogramme de la touche « valider » sur le Stream Deck
     const done = (v) => { dlg.close(); $('#cfOk').onclick = $('#cfCancel').onclick = dlg.oncancel = null; sendDeckUi(); resolve(v); };
     $('#cfOk').onclick = () => done(true);
@@ -3458,7 +3470,7 @@ function sendDeckUi() {
       .map(([id]) => ({ id, label: pw[id][0], icon: pw[id][1], kind: pw[id][2], ...(id === 'btnShutdown' ? { style: DECK_DANGER } : {}) }));
     items.push({ id: 'pwCancel', label: 'Annuler', icon: 'x', kind: 'ghost' });
   } else if (dlg.open) {
-    items = [{ id: 'cfOk', label: $('#cfOk').textContent, icon: $('#cfOk').dataset.icon || 'power', kind: 'primary', style: DECK_DANGER }, { id: 'cfCancel', label: 'Annuler', icon: 'x', kind: 'ghost' }];
+    items = [{ id: 'cfOk', label: $('#cfOk').textContent, icon: $('#cfOk').dataset.icon || 'power', kind: 'primary', style: $('#cfOk').classList.contains('danger') ? DECK_DANGER : undefined }, { id: 'cfCancel', label: 'Annuler', icon: 'x', kind: 'ghost' }];
   } else {
     items = [{ id: 'btnBooth', label: 'Retour à la borne', icon: 'back', kind: 'ghost' }];
     if (shell) items.push({ id: 'btnLogout', label: 'Déconnexion', icon: 'logout', kind: 'ghost' });
