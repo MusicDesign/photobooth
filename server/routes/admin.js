@@ -38,7 +38,7 @@ function screenPatch(body = {}) {
 }
 const IMAGE_EXT = { 'image/png': '.png', 'image/svg+xml': '.svg', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
 
-export function adminRouter({ booth, config, store, templates, themes, devices, deck, lights = null, screen = null, setup = null, updater = null, usb = null, shutdown, restart, kioskScreen = () => null, remoteScreen = null }) {
+export function adminRouter({ booth, config, store, templates, themes, devices, deck, lights = null, screen = null, setup = null, updater = null, usb = null, shutdown, restart, powerOff = null, canPowerOff = () => false, kioskScreen = () => null, remoteScreen = null }) {
   const r = express.Router();
   const tokens = new Set();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024 } });
@@ -110,6 +110,12 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
     if (booth.printing() && !req.body?.force) throw new HttpError(409, 'PRINTING', 'Une impression est en cours');
     res.json({ ok: true });
     shutdown();
+  });
+  r.post('/poweroff', (req, res) => {
+    if (!powerOff || !canPowerOff()) throw new HttpError(409, 'POWEROFF_UNAVAILABLE', 'Extinction de l\'ordinateur non disponible sur cette machine');
+    if (booth.printing() && !req.body?.force) throw new HttpError(409, 'PRINTING', 'Une impression est en cours');
+    res.json({ ok: true });
+    powerOff();
   });
 
   // ---------- Boîtier : réglages de prise de vue et calibrage ----------
@@ -215,6 +221,7 @@ export function adminRouter({ booth, config, store, templates, themes, devices, 
       usb: usb?.status() || null, // clé USB branchée, copie en cours ou dernière copie
       cameraSettings: MANUAL_SETTINGS, // réglages du mode manuel, dans l'ordre, avec leur libellé
       canShutdown: !!shutdown,
+      canPowerOff: !!powerOff && canPowerOff(),
       canRestart: !!restart,
       dataWarnings: [store.warning, store.sessionWarning, config.warning].filter(Boolean), // base ou configuration reprise d'une sauvegarde, fiches de session illisibles
       subjectModel: modelStatus('subject'), // modèle de détourage précis : installé ou à télécharger

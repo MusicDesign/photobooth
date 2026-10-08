@@ -1,6 +1,6 @@
 /**
  * App de bureau de la borne : le serveur tourne dans ce processus, la borne s'affiche
- * dans une fenêtre plein écran (kiosque). « Éteindre la borne » dans l'admin ferme l'app.
+ * dans une fenêtre plein écran (kiosque). « Quitter la borne » dans l'admin ferme l'app, « Éteindre » l'ordinateur.
  *
  * Raccourci de secours au clavier : Ctrl+Maj+Q quitte.
  */

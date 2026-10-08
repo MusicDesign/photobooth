@@ -3134,7 +3134,8 @@ async function boot() {
   }
   $('#login').classList.add('hidden');
   $('#shell').classList.remove('hidden');
-  $('#btnShutdown').classList.toggle('hidden', !S.canShutdown);
+  $('#btnQuit').classList.toggle('hidden', !S.canShutdown);
+  $('#btnShutdown').classList.toggle('hidden', !S.canPowerOff);
   $('#btnRestart').classList.toggle('hidden', !S.canRestart);
   sendDeckUi();
   if (!S.formats || !S.theme || S.templates.some((t) => !t.layers)) {
@@ -3154,18 +3155,20 @@ window.addEventListener('beforeunload', (e) => { if (currentSection() === 'edito
 $('#btnLogout').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }); location.reload(); };
 // Retour à la borne dans la même fenêtre : on se déconnecte, sinon la zone cachée rouvrirait l'admin sans code.
 $('#btnBooth').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }).catch(() => {}); location.href = '/'; };
-$('#btnShutdown').onclick = async () => {
-  if (!await askConfirm('Éteindre la borne ?\n\nLe logiciel se ferme. Pour le relancer : icône « Cheeesy » sur le bureau.', 'Éteindre')) return;
+/** Quitter (le logiciel se ferme) ou éteindre (l'ordinateur aussi) : confirmation, puis impression en cours à confirmer. */
+async function stopBooth(url, question, ok, title, sub) {
+  if (!await askConfirm(question, ok)) return;
   try {
-    await api('/api/admin/shutdown', { method: 'POST', body: {} });
+    await api(url, { method: 'POST', body: {} });
   } catch (e) {
-    if (e.code !== 'PRINTING' || !await askConfirm(`${e.message}\n\nÉteindre quand même ?`, 'Éteindre quand même')) return toast(e.message, true);
-    await api('/api/admin/shutdown', { method: 'POST', body: { force: true } });
+    if (e.code !== 'PRINTING' || !await askConfirm(`${e.message}\n\n${ok} quand même ?`, `${ok} quand même`)) return toast(e.message, true);
+    await api(url, { method: 'POST', body: { force: true } });
   }
   // Le lanceur ferme la fenêtre ; ce message ne reste visible que dans un navigateur ordinaire.
-  document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>Borne éteinte</h1>
-    <p class="sub">Pour la relancer : icône « Cheeesy » sur le bureau.</p></div></div>`;
-};
+  document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>${title}</h1><p class="sub">${sub}</p></div></div>`;
+}
+$('#btnQuit').onclick = () => stopBooth('/api/admin/shutdown', 'Quitter la borne ?\n\nPour la relancer : icône « Cheeesy » sur le bureau.', 'Quitter', 'Borne fermée', 'Pour la relancer : icône « Cheeesy » sur le bureau.');
+$('#btnShutdown').onclick = () => stopBooth('/api/admin/poweroff', 'Éteindre la borne ?\n\nL\'ordinateur s\'éteint.', 'Éteindre', 'Extinction…', 'L\'ordinateur s\'éteint.');
 // Redémarrer : le logiciel se ferme proprement (caméra, Stream Deck) et se relance tout seul sur l'accueil.
 $('#btnRestart').onclick = async () => {
   if (!await askConfirm('Redémarrer la borne ?\n\nLe logiciel se ferme puis se relance tout seul, en quelques secondes. Utile si la caméra ou le Stream Deck ne répond plus.', 'Redémarrer', 'retake')) return;
@@ -3277,6 +3280,7 @@ function sendDeckUi() {
     if (shell) items.push({ id: 'deckCalib', label: 'Calibrer', icon: 'camera', kind: 'ghost', disabled: !calibReady() });
     // Redémarrer et éteindre sur la rangée du haut, retour et déconnexion en bas
     if (shell && !$('#btnRestart').classList.contains('hidden')) items.push({ id: 'btnRestart', label: 'Redémarrer', icon: 'retake', kind: 'primary', style: { bg: '#2f6fdd', fg: '#ffffff', border: null } });
+    if (shell && !$('#btnQuit').classList.contains('hidden')) items.push({ id: 'btnQuit', label: 'Quitter', icon: 'x', kind: 'ghost' });
     if (shell && !$('#btnShutdown').classList.contains('hidden')) items.push({ id: 'btnShutdown', label: 'Éteindre', icon: 'power', kind: 'primary', style: DECK_DANGER });
   }
   deckSock.send(JSON.stringify({ type: 'ui', screen: dlg.open ? 'admin-confirm' : 'admin', items, colors: S?.theme?.colors || {} }));

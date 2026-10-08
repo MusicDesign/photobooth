@@ -1,6 +1,8 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import { Config } from './config.js';
@@ -29,8 +31,9 @@ import { ROOT, OUTPUT_DIR, PUBLIC_DIR, SESSIONS_DIR, PRINTS_DIR, TEMPLATES_DIR, 
 /**
  * Assemble l'application. Les variables d'environnement BOOTH_CAMERA et
  * BOOTH_PRINTER forcent un pilote sans toucher au fichier de config (tests).
- * onShutdown : appelé quand l'admin éteint la borne, après fermeture du serveur
+ * onShutdown : appelé quand l'admin quitte la borne, après fermeture du serveur
  * (le lanceur quitte alors le processus, l'app Electron ferme sa fenêtre).
+ * « Éteindre » arrête en plus l'ordinateur (Linux, si la session a le droit de l'éteindre sans mot de passe).
  * onRestart : pareil pour « Redémarrer » ; seul un lanceur capable de se relancer le fournit (app Electron).
  */
 export async function createApp({ port = Number(process.env.PORT) || 3000, onShutdown = null, onRestart = null, remoteScreen = null, backgroundCamera = false } = {}) {
@@ -193,12 +196,23 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
     }, 300);
   });
   const shutdown = stopThen(onShutdown, 'arrêt');
+  // Éteindre l'ordinateur : systemctl poweroff, permis sans mot de passe à la session ouverte devant l'écran
+  // (logind répond « yes »). Vérifié au démarrage : sinon le bouton n'est pas proposé.
+  let canPowerOff = false;
+  if (process.platform === 'linux') {
+    promisify(execFile)('busctl', ['call', 'org.freedesktop.login1', '/org/freedesktop/login1', 'org.freedesktop.login1.Manager', 'CanPowerOff'], { timeout: 5000 })
+      .then(({ stdout }) => { canPowerOff = /"yes"/.test(stdout); }, () => {});
+  }
+  const powerOff = stopThen(async () => {
+    try { await promisify(execFile)('systemctl', ['poweroff'], { timeout: 10000 }); } catch (e) { console.error(`[booth] extinction : ${e.message}`); }
+    await onShutdown?.();
+  }, 'extinction');
   const restart = stopThen(onRestart, 'redémarrage');
   // Mise à jour depuis l'admin (dépôt git) : version en cours lue au démarrage
   const updater = new Updater({ setup, restart });
   updater.version().catch(() => {});
 
-  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, lights, screen, setup, updater, usb, shutdown, restart, kioskScreen, remoteScreen }));
+  app.use('/api/admin', adminRouter({ booth, config, store, templates, themes, devices, deck, lights, screen, setup, updater, usb, shutdown, restart, powerOff, canPowerOff: () => canPowerOff, kioskScreen, remoteScreen }));
   // Écran déporté (iPad…) : l'écran de la borne et son toucher, avec le code admin (voir electron/remote-screen.js)
   app.get('/remote', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'remote.html')));
   // API de l'écran de la borne : seulement depuis la borne (les téléphones n'ont besoin que de ping et de la galerie)
