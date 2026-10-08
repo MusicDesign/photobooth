@@ -368,10 +368,32 @@ export class Booth {
     return ev;
   }
 
+  /**
+   * Place occupée par une session sur le disque (tout son dossier). Gardée en cache tant que le dossier ne change
+   * pas (date de modification) : l'état de l'admin, relu souvent, ne reparcourt pas des centaines de dossiers.
+   */
+  sessionBytes(id) {
+    const dir = this.sessionDir(id);
+    let mtime;
+    try { mtime = fs.statSync(dir).mtimeMs; } catch { return 0; }
+    this.sizeCache ||= new Map();
+    const hit = this.sizeCache.get(id);
+    if (hit && hit.mtime === mtime) return hit.bytes;
+    const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).reduce((n, f) => {
+      const p = path.join(d, f.name);
+      try { return n + (f.isDirectory() ? walk(p) : fs.statSync(p).size); } catch { return n; }
+    }, 0);
+    let bytes = 0;
+    try { bytes = walk(dir); } catch { /* dossier disparu entre-temps */ }
+    this.sizeCache.set(id, { mtime, bytes });
+    return bytes;
+  }
+
   /** Événement avec ses chiffres, pour l'admin. */
   eventView(ev) {
     const sessions = this.store.sessionsOfEvent(ev.id);
     return {
+      bytes: sessions.reduce((n, s) => n + this.sessionBytes(s.id), 0),
       ...ev,
       active: ev.id === this.store.data.activeEventId,
       sessions: sessions.length,

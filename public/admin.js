@@ -1730,6 +1730,12 @@ document.addEventListener('toggle', (e) => {
 let photosView = (() => { try { return localStorage.getItem('photosView') || 'grid'; } catch { return 'grid'; } })();
 
 // ---------- Événements : liste paginée, actions par événement ----------
+/** Poids sur le disque : Ko, Mo ou Go, une décimale sous 10. */
+const weight = (b = 0) => {
+  if (!b) return '—';
+  const [v, u] = b >= 1e9 ? [b / 1e9, 'Go'] : b >= 1e6 ? [b / 1e6, 'Mo'] : [b / 1e3, 'Ko'];
+  return `${v.toFixed(v < 10 ? 1 : 0).replace('.', ',')} ${u}`;
+};
 const EVENTS_PER_PAGE = 12;
 let eventsPage = 1;
 function eventsSection() {
@@ -1751,6 +1757,7 @@ function eventsSection() {
       <td class="num">${e.photos}</td>
       <td class="num">${e.finals}</td>
       <td class="num">${e.printed || 0}</td>
+      <td class="num">${weight(e.bytes)}</td>
       <td class="actions"><div class="cell-actions">
         <a class="btn small" href="#sessions=${encodeURIComponent(e.id)}">Photos</a>
         ${moreMenu([
@@ -1774,7 +1781,7 @@ function eventsSection() {
   <div class="card">
     ${pager ? `<div class="ev-foot ev-top">${pager}</div>` : ''}
     <table class="data-table ev-table">
-      <thead><tr><th>Événement</th><th class="num">Sessions</th><th class="num">Originaux</th><th class="num">Montages</th><th class="num">Tirages</th><th></th></tr></thead>
+      <thead><tr><th>Événement</th><th class="num">Sessions</th><th class="num">Originaux</th><th class="num">Montages</th><th class="num">Tirages</th><th class="num">Poids</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     ${pager ? `<div class="ev-foot">${pager}</div>` : ''}

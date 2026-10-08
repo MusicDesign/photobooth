@@ -610,6 +610,9 @@ async function runSteps(app, camera) {
     assert.equal(b.sessions, 1);
     const evs = (await j(`/api/admin/events/${ev.id}/sessions`, { headers: ADMIN })).data;
     assert.deepEqual(evs.sessions.map((x) => x.id), [s2.id]);
+    // Poids de l'événement : tout le dossier de sa session (photos, montage, miniatures)
+    const dirBytes = fs.readdirSync(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s2.id)).reduce((n, f) => n + fs.statSync(path.join(process.env.BOOTH_OUTPUT_DIR, 'sessions', s2.id, f)).size, 0);
+    assert.ok(dirBytes > 0 && evs.event.bytes === dirBytes, `poids de l'événement : ${evs.event.bytes} pour ${dirBytes} sur le disque`);
     assert.deepEqual([evs.page, evs.pages, evs.total], [1, 1, 1]);
     // Session en relecture pas encore validée par l'invité : jamais exportée (il peut encore la refuser)
     const pending = (await post('/api/session', { templateId: 'strip-3' })).data;
