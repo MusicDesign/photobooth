@@ -66,7 +66,10 @@ export class Booth {
     this.port = port;
     this.jobToSession = new Map();
     this.armed = new Map(); // sessionId → { index, file } : photo programmée pendant le décompte
+    this.armedTtlMs = 30000; // après le déclenchement prévu : photo jamais demandée, la session redevient purgeable
     this.capturing = new Set(); // sessionId dont une photo est en cours d'arrivée
+    this.composing = new Set(); // sessionId dont le montage est en cours
+    this.abandoned = new Set(); // abandonnées pendant une prise ou un montage : supprimées à la fin
     this.focusing = new Map(); // sessionId → mise au point en cours avant un boomerang
     this.exports = new Map(); // eventId → nombre d'exports en cours (ZIP téléchargé, copie sur clé USB)
     this.removing = Promise.resolve(); // suppression des dossiers de session, en arrière-plan
@@ -108,7 +111,7 @@ export class Booth {
     for (const s of this.store.sessionsWithStatus('printing')) {
       const pending = (s.printJobs || []).filter((j) => j.status !== 'done' && j.status !== 'error');
       if (!pending.length) {
-        s.status = s.printJobs?.some((j) => j.status === 'error') ? 'error' : 'done';
+        s.status = this.settledStatus(s);
         this.store.saveSession(s);
         continue;
       }
@@ -121,6 +124,12 @@ export class Booth {
 
   printing() {
     return this.jobToSession.size > 0;
+  }
+
+  /** Plus aucun tirage en cours : le dernier décide (un ancien tirage raté puis réimprimé ne bloque rien). */
+  settledStatus(s) {
+    const last = s.printJobs?.[s.printJobs.length - 1];
+    return last?.status === 'error' ? 'error' : 'done';
   }
 
   cfg() {
@@ -248,16 +257,39 @@ export class Booth {
   async abandonSession(id) {
     if (this.armed.has(id)) await this.disarm(id); // parti pendant le décompte : plus de déclenchement programmé
     const s = this.store.getSession(id);
-    if (!s || !this.isUnvalidated(s)) return false;
+    if (!s || !['shooting', 'review'].includes(s.status) || s.kept) return false;
+    // Photo ou montage en route : supprimée à la fin (voir busyWith), sinon elle serait réenregistrée
+    if (this.capturing.has(id) || this.composing.has(id)) { this.abandoned.add(id); return true; }
     this.deleteSession(id);
     return true;
+  }
+
+  /**
+   * Prise ou montage en cours (session protégée du nettoyage). Abandonnée par l'invité ou supprimée par
+   * l'admin pendant l'attente : effacée à la fin au lieu d'être réenregistrée.
+   */
+  async busyWith(s, set, fn) {
+    set.add(s.id);
+    let out, err;
+    try { out = await fn(); } catch (e) { err = e; }
+    set.delete(s.id);
+    if (this.abandoned.has(s.id) && !this.capturing.has(s.id) && !this.composing.has(s.id)) {
+      this.abandoned.delete(s.id);
+      if (this.store.getSession(s.id) === s) this.deleteSession(s.id);
+    }
+    if (this.store.getSession(s.id) !== s) {
+      fs.rmSync(this.sessionDir(s.id), { recursive: true, force: true }); // fichiers arrivés après la suppression
+      throw new HttpError(410, 'SESSION_ABANDONED', 'Session annulée');
+    }
+    if (err) throw err;
+    return out;
   }
 
   /** Supprime les sessions non validées de plus de maxAgeMs (la borne a pu ne pas prévenir : page rechargée, coupure). */
   purgeUnvalidatedSessions(maxAgeMs = 15 * 60 * 1000) {
     const now = Date.now();
     const stale = Object.values(this.store.data.sessions)
-      .filter((s) => this.isUnvalidated(s) && now - new Date(s.createdAt).getTime() > maxAgeMs);
+      .filter((s) => this.isUnvalidated(s) && !this.composing.has(s.id) && now - new Date(s.createdAt).getTime() > maxAgeMs);
     for (const s of stale) this.deleteSession(s.id);
     if (stale.length) console.log(`[booth] ${stale.length} session(s) non validée(s) supprimée(s)`);
   }
@@ -474,7 +506,10 @@ export class Booth {
     let i = Number.isInteger(index) ? index : s.shots.findIndex((sh) => !sh);
     if (i < 0 || i >= template.shots) i = 0;
     const file = path.join(this.sessionDir(s.id), `shot-${i + 1}-${Date.now()}.jpg`);
-    this.armed.set(s.id, { index: i, file });
+    const entry = { index: i, file };
+    this.armed.set(s.id, entry);
+    // Photo jamais demandée (borne quittée pendant le décompte sans prévenir) : la session redevient purgeable
+    setTimeout(() => { if (this.armed.get(s.id) === entry) this.armed.delete(s.id); }, Math.max(0, Number(fireInMs) || 0) + this.armedTtlMs).unref?.();
     console.log(`[booth] session ${s.id} : pré-armement photo ${i + 1}, déclenchement dans ${Math.round(Number(fireInMs) || 0)} ms`);
     this.camera.arm({ fireInMs: Math.max(0, Number(fireInMs) || 0), file })
       .catch((e) => console.warn(`[camera] pré-armement : ${e.message}`));
@@ -508,18 +543,19 @@ export class Booth {
     this.armed.delete(s.id);
     console.log(`[booth] session ${s.id} : photo ${index + 1} demandée${isRetake ? ' (reprise)' : ''}${armed ? '' : ' sans pré-armement'}`);
     const file = armed && armed.index === index ? armed.file : path.join(this.sessionDir(s.id), `shot-${index + 1}-${Date.now()}.jpg`);
-    this.capturing.add(s.id); // protège la session du nettoyage des sessions vides
-    try {
-      if (this.camera.mode === 'browser') {
-        if (!photoBuffer) throw new HttpError(400, 'PHOTO_REQUIRED', 'Photo manquante (champ "photo")');
-        await normalizeShot(photoBuffer, file);
-      } else {
-        await this.camera.capture(file);
+    // capturing : protège la session du nettoyage des sessions vides
+    await this.busyWith(s, this.capturing, async () => {
+      try {
+        if (this.camera.mode === 'browser') {
+          if (!photoBuffer) throw new HttpError(400, 'PHOTO_REQUIRED', 'Photo manquante (champ "photo")');
+          await normalizeShot(photoBuffer, file);
+        } else {
+          await this.camera.capture(file);
+        }
+      } finally {
+        this.onShotDone?.(); // lumières de prise de vue : retour à la lumière douce
       }
-    } finally {
-      this.capturing.delete(s.id);
-      this.onShotDone?.(); // lumières de prise de vue : retour à la lumière douce
-    }
+    });
 
     if (isRetake) {
       s.retakes += 1;
@@ -579,22 +615,20 @@ export class Booth {
     if (!['shooting', 'review'].includes(s.status)) throw new HttpError(409, 'SESSION_CLOSED', 'Cette session est terminée');
     const isRetake = !!s.shots[0];
     if (isRetake && cfg.limits.maxRetakesPerSession >= 0 && s.retakes >= cfg.limits.maxRetakesPerSession) throw new HttpError(409, 'RETAKE_LIMIT', 'Nombre de reprises atteint');
-    this.capturing.add(s.id);
-    let frames;
-    try {
-      if (this.camera.mode === 'browser') {
-        if (!frameBuffers?.length) throw new HttpError(400, 'FRAMES_REQUIRED', 'Images de la vidéo manquantes (champ "frames")');
-        frames = frameBuffers;
-      } else {
+    const frames = await this.busyWith(s, this.capturing, async () => {
+      try {
+        if (this.camera.mode === 'browser') {
+          if (!frameBuffers?.length) throw new HttpError(400, 'FRAMES_REQUIRED', 'Images de la vidéo manquantes (champ "frames")');
+          return frameBuffers;
+        }
         await this.focusing.get(s.id); // mise au point du décompte, si elle n'est pas finie
-        frames = await this.camera.recordClip({ durationMs: template.boomerang.durationSec * 1000, fps: BOOMERANG_FPS });
+        return await this.camera.recordClip({ durationMs: template.boomerang.durationSec * 1000, fps: BOOMERANG_FPS });
+      } catch (e) {
+        throw e instanceof HttpError ? e : new HttpError(502, 'CLIP_FAILED', `Vidéo impossible : ${e.message}`);
+      } finally {
+        this.onShotDone?.();
       }
-    } catch (e) {
-      throw e instanceof HttpError ? e : new HttpError(502, 'CLIP_FAILED', `Vidéo impossible : ${e.message}`);
-    } finally {
-      this.capturing.delete(s.id);
-      this.onShotDone?.();
-    }
+    });
     if (frames.length < 2) throw new HttpError(502, 'CLIP_FAILED', 'Vidéo trop courte : l\'aperçu n\'a presque pas envoyé d\'images');
     const clipDir = path.join(this.sessionDir(s.id), `clip-${Date.now()}`);
     fs.mkdirSync(clipDir, { recursive: true });
@@ -635,19 +669,21 @@ export class Booth {
     const keepPlain = filter !== undefined && s.final?.plain && fs.existsSync(s.final.plain);
     if (offered.list.length > 1 && !keepPlain) opts.plainFile = plainFile;
     const t0 = Date.now();
-    if (boomerang) {
-      const poster = path.join(dir, 'poster.jpg');
-      const frames = s.shots[0].frames?.length ? s.shots[0].frames : [s.shots[0].file];
-      finalFile = await composeBoomerang(template, frames, path.join(dir, 'final'), { ...opts, posterFile: poster });
-      await thumbnail(poster, thumbFile);
-    } else if (gif) {
-      const poster = path.join(dir, 'poster.jpg');
-      await composeGif(template, s.shots.map((sh) => sh.file), finalFile, { ...opts, posterFile: poster });
-      await thumbnail(poster, thumbFile); // miniature fixe : la galerie reste légère
-    } else {
-      await compose(template, s.shots.map((sh) => sh.file), finalFile, opts);
-      await thumbnail(finalFile, thumbFile);
-    }
+    await this.busyWith(s, this.composing, async () => {
+      if (boomerang) {
+        const poster = path.join(dir, 'poster.jpg');
+        const frames = s.shots[0].frames?.length ? s.shots[0].frames : [s.shots[0].file];
+        finalFile = await composeBoomerang(template, frames, path.join(dir, 'final'), { ...opts, posterFile: poster });
+        await thumbnail(poster, thumbFile);
+      } else if (gif) {
+        const poster = path.join(dir, 'poster.jpg');
+        await composeGif(template, s.shots.map((sh) => sh.file), finalFile, { ...opts, posterFile: poster });
+        await thumbnail(poster, thumbFile); // miniature fixe : la galerie reste légère
+      } else {
+        await compose(template, s.shots.map((sh) => sh.file), finalFile, opts);
+        await thumbnail(finalFile, thumbFile);
+      }
+    });
     console.log(`[booth] session ${s.id} : montage ${boomerang ? 'boomerang' : gif ? 'GIF' : 'photo'} en ${((Date.now() - t0) / 1000).toFixed(1)} s`);
     s.final = { file: finalFile, thumb: thumbFile, plain: opts.plainFile || (keepPlain ? s.final.plain : null), composedAt: new Date().toISOString() };
     s.status = 'review';
@@ -769,7 +805,7 @@ export class Booth {
     try {
       job = await this.printer.print(s.final.file, copies, { sessionId: s.id });
     } catch (e) {
-      s.status = 'error';
+      // Statut inchangé (relecture, ou terminé pour une réimpression) : l'invité peut réessayer ou finir sans tirage
       s.error = e.message;
       this.store.saveSession(s);
       throw new HttpError(502, 'PRINT_FAILED', `Impression impossible : ${e.message}`);
@@ -808,14 +844,14 @@ export class Booth {
       s.status = 'error';
       s.error = job.message || 'Erreur imprimante';
       if (entry && !entry.refunded) this.chargeJob(s, entry, -1); // tirage raté : ni compté, ni papier consommé
-    } else if (s.printJobs.every((j) => j.status === 'done')) {
-      s.status = 'done';
+    } else if (s.printJobs.every((j) => j.status === 'done' || j.status === 'error')) {
+      s.status = this.settledStatus(s);
     }
     // Tirage bloqué (papier) qui sort finalement une fois le papier remis : on le recompte.
     if (job.status === 'done' && entry?.refunded) this.chargeJob(s, entry, 1);
     this.store.saveSession(s);
-    // Après une erreur on garde le lien : un tirage bloqué peut encore sortir (voir CupsPrinter.watch).
-    if (job.status === 'done') this.jobToSession.delete(job.jobId);
+    // Après une erreur on garde le lien : un tirage bloqué peut encore sortir (voir CupsPrinter.watch), sauf fin du suivi.
+    if (job.status === 'done' || job.final) this.jobToSession.delete(job.jobId);
     this.broadcast({ type: 'print', sessionId, jobId: job.jobId, status: job.status, message: job.message || null, sessionStatus: s.status });
   }
 

@@ -2,7 +2,8 @@ import { EventEmitter } from 'node:events';
 
 /**
  * Un pilote d'impression émet des événements 'job' :
- * { jobId, status: 'queued' | 'printing' | 'done' | 'error', message? }
+ * { jobId, status: 'queued' | 'printing' | 'done' | 'error', message?, final? }
+ * final : erreur après laquelle le tirage n'est plus suivi (sinon un tirage en erreur peut encore sortir).
  */
 export class BasePrinter extends EventEmitter {
   name = 'base';
