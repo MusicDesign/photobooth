@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Cheeesy
+Description=Logo Cheeesy au démarrage de la borne
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/cheeesy
+ScriptFile=/usr/share/plymouth/themes/cheeesy/cheeesy.script

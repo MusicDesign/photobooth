@@ -113,12 +113,27 @@ if [ "$KIOSK" = 1 ]; then
       echo "Connexion automatique de $USER ($f)"
       break
     done
+    # Écran de démarrage (Plymouth) : thème Cheeesy (scripts/kiosk/plymouth), logo public/assets/bootlogo.png.
+    # L'activation reconstruit l'image de démarrage (initramfs, une trentaine de secondes) : seulement quand le thème
+    # ou le logo changent. Il faut le module « script » de Plymouth (paquet plymouth-plugin-script sous Fedora).
+    PLY_SET=/usr/sbin/plymouth-set-default-theme PLY_DIR=/usr/share/plymouth/themes/cheeesy
+    PLY_SCRIPT="$(ls /usr/lib*/plymouth/script.so /usr/lib/*/plymouth/script.so 2>/dev/null | head -1 || true)"
+    if [ ! -x "$PLY_SET" ] || [ -z "$PLY_SCRIPT" ]; then echo "Écran de démarrage : Plymouth (module script) absent, logo Cheeesy non installé"
+    elif [ "$("$PLY_SET" 2>/dev/null || true)" != cheeesy ] || ! cmp -s public/assets/bootlogo.png "$PLY_DIR/bootlogo.png" || ! cmp -s scripts/kiosk/plymouth/cheeesy.script "$PLY_DIR/cheeesy.script"; then
+      sudo mkdir -p "$PLY_DIR"
+      sudo cp scripts/kiosk/plymouth/cheeesy.plymouth scripts/kiosk/plymouth/cheeesy.script public/assets/bootlogo.png "$PLY_DIR/"
+      echo "Écran de démarrage : reconstruction de l'image de démarrage…"
+      if PLY_ERR="$(sudo "$PLY_SET" -R cheeesy 2>&1 >/dev/null)"; then echo "Écran de démarrage Cheeesy installé"
+      else echo "Écran de démarrage : échec de plymouth-set-default-theme"; echo "$PLY_ERR" | tail -5; KIOSK_FAILED=1; fi
+    fi
     # Menu de démarrage (GRUB) masqué : démarrage direct, menu toujours joignable en maintenant Échap ou Maj.
+    # « splash » sur la ligne du noyau : Plymouth affiche le logo au lieu des messages de démarrage.
     # update-grub et grub2-mkconfig sont dans /usr/sbin, hors du PATH d'un utilisateur Debian : chemins complets.
     # Le menu est régénéré tant qu'il est plus ancien que le réglage (une régénération ratée est retentée).
     if [ -f /etc/default/grub ]; then
-      if ! grep -qx 'GRUB_TIMEOUT=0' /etc/default/grub || ! grep -qx 'GRUB_TIMEOUT_STYLE=hidden' /etc/default/grub; then
-        sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/; /^GRUB_TIMEOUT_STYLE=/d' /etc/default/grub
+      if ! grep -qx 'GRUB_TIMEOUT=0' /etc/default/grub || ! grep -qx 'GRUB_TIMEOUT_STYLE=hidden' /etc/default/grub \
+        || ! grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=.*splash' /etc/default/grub; then
+        sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/; /^GRUB_TIMEOUT_STYLE=/d; /^GRUB_CMDLINE_LINUX_DEFAULT=/{/splash/!s/"$/ splash"/}' /etc/default/grub
         echo 'GRUB_TIMEOUT_STYLE=hidden' | sudo tee -a /etc/default/grub >/dev/null
       fi
       GRUB_CFG=/boot/grub/grub.cfg; [ -d /boot/grub2 ] && GRUB_CFG=/boot/grub2/grub.cfg
@@ -137,7 +152,7 @@ if [ "$KIOSK" = 1 ]; then
     if [ "${KIOSK_FAILED:-0}" = 1 ]; then echo; echo "Réglages système incomplets : relancez scripts/install.sh --kiosk (mot de passe demandé)."; exit 1; fi
     mkdir -p "$HOME/.config/photobooth" && cp scripts/kiosk/SETUP_VERSION "$HOME/.config/photobooth/kiosk-setup-version"
     echo
-    echo "Redémarrez le PC pour terminer : connexion automatique, icône Cheeesy sur le bureau, borne en plein écran."
+    echo "Redémarrez le PC pour terminer : logo Cheeesy au démarrage, connexion automatique, borne en plein écran."
   fi
 fi
 

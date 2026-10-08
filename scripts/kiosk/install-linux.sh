@@ -7,7 +7,8 @@
 #   scripts/kiosk/install-linux.sh --electron         app Electron du dépôt (npm run app)
 #   scripts/kiosk/install-linux.sh --exec CHEMIN      autre exécutable, ex. l'AppImage construite
 #   scripts/kiosk/install-linux.sh --no-autostart     sans lancement automatique
-#   scripts/kiosk/install-linux.sh --no-sleep         écran jamais éteint ni verrouillé, pas de vue Activités ni de gestes GNOME (borne dédiée)
+#   scripts/kiosk/install-linux.sh --no-sleep         écran jamais éteint ni verrouillé, pas de vue Activités ni de gestes GNOME,
+#                                                     fond d'écran Cheeesy (borne dédiée)
 #   scripts/kiosk/install-linux.sh --uninstall        retire icônes et lancement automatique
 set -eu
 
@@ -41,6 +42,7 @@ if [ $UNINSTALL -eq 1 ]; then
     gsettings reset org.gnome.mutter overlay-key
     for k in toggle-overview toggle-application-view toggle-message-tray toggle-quick-settings; do gsettings reset org.gnome.shell.keybindings "$k" 2>/dev/null || true; done
     gsettings reset org.gnome.desktop.notifications show-banners
+    for k in picture-uri picture-uri-dark picture-options; do gsettings reset org.gnome.desktop.background "$k"; done
   fi
   echo "Icônes et lancement automatique retirés."
   exit 0
@@ -129,7 +131,11 @@ if [ $NOSLEEP -eq 1 ] && command -v gsettings >/dev/null; then
     gsettings set org.gnome.shell.keybindings "$k" "[]" 2>/dev/null || true
   done
   gsettings set org.gnome.desktop.notifications show-banners false
-  echo "Vue Activités sautée à l'ouverture de session, gestes et raccourcis de GNOME coupés (effet à la prochaine connexion)."
+  # Fond d'écran Cheeesy, clair et sombre selon le style du bureau (public/assets/wallpapers).
+  gsettings set org.gnome.desktop.background picture-uri "file://$DIR/public/assets/wallpapers/wall_light.png"
+  gsettings set org.gnome.desktop.background picture-uri-dark "file://$DIR/public/assets/wallpapers/wall_dark.png"
+  gsettings set org.gnome.desktop.background picture-options 'zoom'
+  echo "Vue Activités sautée à l'ouverture de session, gestes et raccourcis de GNOME coupés (effet à la prochaine connexion), fond d'écran Cheeesy."
 fi
 
 echo "Installé : $EXEC"

@@ -1,0 +1,11 @@
+# Démarrage de la borne : logo Cheeesy (bootlogo.png, copié par scripts/install.sh --kiosk) centré sur fond #282828,
+# à 40 % de la largeur de l'écran.
+Window.SetBackgroundTopColor(0.157, 0.157, 0.157);
+Window.SetBackgroundBottomColor(0.157, 0.157, 0.157);
+
+logo = Image("bootlogo.png");
+width = Window.GetWidth() * 0.4;
+logo = logo.Scale(width, width * logo.GetHeight() / logo.GetWidth());
+sprite = Sprite(logo);
+sprite.SetX(Window.GetX() + (Window.GetWidth() - logo.GetWidth()) / 2);
+sprite.SetY(Window.GetY() + (Window.GetHeight() - logo.GetHeight()) / 2);
