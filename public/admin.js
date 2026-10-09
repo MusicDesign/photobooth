@@ -1,7 +1,7 @@
 /* Page d'administration : réglages, thème, templates (éditeur de calques), compteurs, sessions. */
 import { renderTemplate, loadAssets, loadImage } from './template-render.js';
 import { FILTERS } from './filters.js';
-import { deviceNotice, updateNotice } from './device-toasts.js';
+import { deviceNotice, updateNotice, systemNotice } from './device-toasts.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -3615,6 +3615,7 @@ function scheduleRefresh() {
       if (S) api('/api/admin/update').then((r) => { S.update = r.update; if (currentSection() === 'dashboard') render(); else syncUpdateNav(); }).catch(() => {});
       return;
     }
+    if (msg?.type === 'notice') { systemNotice(msg.text, 5000, { ok: msg.ok }); return; }
     if (msg?.type === 'device') { deviceNotice(msg); if (S && currentSection() !== 'editor') scheduleRefresh(); return; } // la page affichée suit l'état annoncé (lumières, boîtier, Wi-Fi…)
     if (msg?.type === 'config') refreshDevices(); // pilote de caméra changé (boîtier branché / débranché), entre autres
     if (S && ['dashboard', 'sessions', 'events'].includes(currentSection())) scheduleRefresh();

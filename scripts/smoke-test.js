@@ -1255,8 +1255,16 @@ async function runSteps(app, camera) {
     assert.equal(sc.available, true);
     assert.equal(sc.display?.name, 'Écran simulé');
     assert.deepEqual([sc.brightness, sc.volume, sc.managed], [100, 0, false], JSON.stringify(sc));
+    const { default: WebSocket } = await import('ws');
+    const wsN = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise((r) => wsN.on('open', r));
+    const notices = [];
+    wsN.on('message', (m) => { const msg = JSON.parse(m); if (msg.type === 'notice') notices.push(msg); });
     const r = await post('/api/admin/screen', { brightness: 40, volume: 20 }, ADMIN);
     assert.equal(r.status, 200, JSON.stringify(r.data));
+    await new Promise((res) => setTimeout(res, 100));
+    assert.deepEqual(notices.map((n) => [n.ok, n.text]), [[true, 'Écran Écran simulé : luminosité 40 %, volume 20 %']], 'notification système de l\'envoi');
+    wsN.close();
     assert.deepEqual([r.data.screen.brightness, r.data.screen.volume, r.data.screen.managed], [40, 20, true]);
     assert.deepEqual(app.screen.driver.values, { brightness: 40, volume: 20 }, 'valeurs envoyées à l\'écran');
     assert.equal((await post('/api/admin/screen', { brightness: 150 }, ADMIN)).status, 400);

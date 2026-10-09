@@ -189,6 +189,7 @@ export class Screen extends EventEmitter {
     const s = this.state;
     if (!s.display) return;
     const cfg = this.cfg();
+    const sent = [], failed = [];
     for (const prop of PROPS) {
       const v = cfg[prop];
       if (typeof v !== 'number') { delete this.applied[prop]; continue; } // null : l'écran garde son réglage
@@ -201,11 +202,17 @@ export class Screen extends EventEmitter {
         if (s.brightness != null) s[prop] = await this.driver.get(s.display.id, prop).catch(() => v); // illisible : pas de relecture
         s.error = null;
         console.log(`[screen] ${what} ${v} % envoyé à l'écran ${s.display.name || s.display.id}${s[prop] == null ? ' (sans relecture possible)' : ''}`);
+        sent.push(`${what} ${v} %`);
       } catch (e) {
         s.error = `${what} : ${firstLine(e)}`;
         console.warn(`[screen] ${what} ${v} % non envoyé : ${firstLine(e)}`);
+        failed.push(`${what} ${v} %`);
       }
     }
+    // Notification sur la borne et l'admin (app.js) : un message pour tout l'envoi
+    const name = `Écran${s.display.name ? ` ${s.display.name}` : ''}`;
+    if (sent.length) this.emit('notice', { ok: true, text: `${name} : ${sent.join(', ')}` });
+    if (failed.length) this.emit('notice', { ok: false, text: `${name} : ${failed.join(', ')} non envoyé${failed.length > 1 ? 's' : ''}` });
   }
 
   status() {

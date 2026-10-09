@@ -123,6 +123,11 @@ export async function createApp({ port = Number(process.env.PORT) || 3000, onShu
   usb.start();
   // Écran de la borne en DDC/CI : luminosité et volume depuis l'admin, renvoyés à chaque démarrage (voir screen.js)
   const screen = new Screen({ config });
+  // Réglages envoyés à l'écran : notification système sur la borne et l'admin. Celle du démarrage part souvent avant
+  // que la borne soit connectée : rejouée aux écrans qui se connectent dans les 20 s
+  let screenNotice = null;
+  screen.on('notice', (n) => { screenNotice = { type: 'notice', ...n, at: Date.now() }; broadcast(screenNotice); });
+  wss.on('connection', (ws) => { if (screenNotice && Date.now() - screenNotice.at < 20000) ws.send(JSON.stringify(screenNotice)); });
   screen.start().catch((e) => console.warn(`[screen] ${e.message}`));
   // Installation : état vérifié au démarrage ; ce qui ne demande pas de mot de passe (Homebrew sur Mac, modèle IA,
   // cadres de démo) s'installe en arrière-plan, le reste est affiché dans le tableau de bord (voir setup.js)

@@ -1840,6 +1840,7 @@ function connectWs() {
     try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'deck') { onDeckPress(msg.id); return; }
     if (msg.type === 'device') { deviceNotice(msg); return; }
+    if (msg.type === 'notice') { systemNotice(msg.text, 5000, { ok: msg.ok }); return; }
     if (msg.type === 'update') { updateNotice(msg, openInstall); return; }
     if (msg.type === 'sessions' && state.screen === 'idle') renderIdleGallery(); // photo supprimée depuis l'admin
     if (msg.type === 'flashStray') { if (state.boot) { state.boot.camera.flashStray = msg.stray; $('#flashBadge').classList.toggle('hidden', !msg.stray); } return; }
