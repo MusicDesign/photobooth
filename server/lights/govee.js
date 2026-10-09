@@ -105,15 +105,18 @@ export class GoveeLan {
     this.socket.send(JSON.stringify(msg), port, ip, () => {});
   }
 
-  /** Lance une recherche ; les réponses arrivent par onScan pendant `ms`. */
-  async scan(ms = 2500) {
+  /**
+   * Lance une recherche ; les réponses arrivent par onScan pendant `ms`. hosts : adresses appelées une à une (lumières
+   * déjà connues), sinon tout le réseau local ; le multicast part dans les deux cas.
+   */
+  async scan({ hosts = null } = {}, ms = 2500) {
     // Réseau absent au démarrage, revenu ou changé depuis : le socket est rouvert sur la bonne interface
     const now = lanAddress();
     if (this.socket && now?.address !== this.local?.address) await this.stop();
     if (!this.socket) await this.start();
     if (!this.socket) return;
     this.send(MCAST, SCAN_PORT, SCAN_MSG);
-    for (const ip of subnetHosts(this.local)) this.send(ip, SCAN_PORT, SCAN_MSG);
+    for (const ip of hosts || subnetHosts(this.local)) this.send(ip, SCAN_PORT, SCAN_MSG);
     await new Promise((r) => setTimeout(r, ms));
   }
 
@@ -155,9 +158,9 @@ export class MockGovee {
   fades(sku) { return fades(sku); }
   async start() {}
   async stop() {}
-  async scan(ms = 50) {
+  async scan() {
     for (const d of this.devices) this.onScan?.({ ...d });
-    await new Promise((r) => setTimeout(r, ms));
+    await new Promise((r) => setTimeout(r, 50));
   }
 
   command(ip, cmd, data) {

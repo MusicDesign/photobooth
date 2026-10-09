@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
 import { promisify } from 'node:util';
 import { MockPrinter } from './mock.js';
 import { CupsPrinter } from './cups.js';
@@ -54,8 +55,35 @@ export async function detectCupsPrinter(cups = {}) {
   return { found: true, reason: `file CUPS « ${name} » prête${usb ? ' (USB)' : ''}` };
 }
 
+/**
+ * Signature du bus USB, presque gratuite (macOS : arbre ioreg sans les détails ; Linux : /sys/bus/usb/devices) :
+ * elle change dès qu'un appareil est branché ou débranché. null si illisible.
+ */
+async function usbBusSignature() {
+  try {
+    if (process.platform === 'darwin') {
+      const { stdout } = await execFileP('ioreg', ['-p', 'IOUSB', '-w0'], { timeout: 3000 });
+      return stdout.split('\n').map((l) => l.replace(/\s+<class.*$/, '')).join('\n'); // sans compteurs qui bougent
+    }
+    return fs.readdirSync('/sys/bus/usb/devices').sort().join(',');
+  } catch { return null; }
+}
+
+// lpinfo interroge tous les ports USB (près d'une seconde) : relancé seulement si le bus USB a changé, ou passé ce délai
+const USB_RECHECK_MS = 60000;
+let usbCache = null; // { wanted, sig, present, at }
+
 /** true / false, ou null si on ne peut pas savoir (outil absent, droits). */
 async function usbPrinterPresent(wanted) {
+  const sig = await usbBusSignature();
+  const c = usbCache;
+  if (sig && c && c.wanted === wanted && c.sig === sig && c.present !== null && Date.now() - c.at < USB_RECHECK_MS) return c.present;
+  const present = await usbPrinterLookup(wanted);
+  usbCache = { wanted, sig, present, at: Date.now() };
+  return present;
+}
+
+async function usbPrinterLookup(wanted) {
   try {
     const { stdout } = await execFileP('lpinfo', ['--include-schemes', 'usb', '-v'], { timeout: 8000 });
     const found = stdout.split('\n').map((l) => l.match(/usb:\/\/([^/?]+)\/([^?\s]+)/i)).filter(Boolean)

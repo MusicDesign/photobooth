@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { GoveeLan, MockGovee } from './govee.js';
+import { GoveeLan, MockGovee, lanAddress } from './govee.js';
 import { ElgatoLan, MockElgato } from './elgato.js';
 import { HueLan, MockHue } from './hue.js';
 
@@ -25,6 +25,11 @@ export const lightType = (sku = '') => TYPES[sku] || (/ring light/i.test(sku) ? 
 
 const RESCAN_MS = 10000;
 const ONLINE_MS = 3 * RESCAN_MS; // plus vue depuis 3 recherches (30 s) : hors ligne
+// Toutes les RESCAN_MS, les lumières connues sont appelées à leur adresse. Le réseau entier (≈ 500 requêtes) n'est
+// balayé qu'au démarrage, au bouton « Rechercher », au changement de réseau ou à la perte d'une lumière (son adresse a
+// pu changer), et pas plus de SWEEPS passages de suite sans nouvelle lumière (LOST_SWEEPS après une perte)
+const SWEEPS = 6;        // 1 min
+const LOST_SWEEPS = 12;  // 2 min
 const SETTLE_MS = 1000;          // le temps que les lumières atteignent leur niveau (calibrage)
 const WHITE_MIN_K = 2900, WHITE_MAX_K = 7000; // plage par défaut du cycle des lumières blanches (Elgato : 2900-7000 K)
 const TICK_MS = 100, WHITE_TICK_MS = 40; // cadence de l'ambiance ; les lumières blanches (Elgato) : valeur recalculée très souvent, un seul envoi à la fois
@@ -71,6 +76,8 @@ export class Lights extends EventEmitter {
     this.queue = Promise.resolve();
     this.rescanTimer = null;
     this.running = false;
+    this.sweepsLeft = SWEEPS;  // balayages complets du réseau encore prévus (voir SWEEPS)
+    this.lanIp = null;         // adresse locale au dernier balayage complet : réseau changé, on rebalaye
   }
 
   cfg() { return this.config.get().lights || {}; }
@@ -119,6 +126,7 @@ export class Lights extends EventEmitter {
       await drv.start();
     }
     this.running = true;
+    this.sweepsLeft = SWEEPS;
     await this.scanAll();
     // Borne allumée : lumières allumées (réglages d'avant gardés, c'est l'état « hors prise de vue » à rendre)
     for (const d of this.targets('any')) {
@@ -174,8 +182,21 @@ export class Lights extends EventEmitter {
     return p;
   }
 
-  scanAll() {
-    return Promise.all(this.drivers.map((drv) => drv.scan()));
+  /** full : tout le réseau ; sinon seulement les adresses des lumières connues (Hue : son pont, dans les deux cas). */
+  scanAll({ full = true } = {}) {
+    let hosts = null;
+    if (full) this.lanIp = lanAddress()?.address || null;
+    else {
+      const ips = [...Object.values(this.cfg().devices || {}), ...this.seen.values()].map((d) => d?.ip).filter((ip) => ip && !ip.includes('#'));
+      hosts = [...new Set(ips)];
+    }
+    return Promise.all(this.drivers.map((drv) => drv.scan({ hosts })));
+  }
+
+  /** Relance les balayages complets pour au moins n passages. */
+  sweep(n, why) {
+    if (this.sweepsLeft === 0) console.log(`[lights] recherche des lumières relancée : ${why}`);
+    this.sweepsLeft = Math.max(this.sweepsLeft, n);
   }
 
   found(d, drv) {
@@ -197,7 +218,17 @@ export class Lights extends EventEmitter {
 
   async rescanOnce() {
     const before = new Set(this.onlineIds());
-    await this.scanAll();
+    const known = new Set(this.seen.keys());
+    if ((lanAddress()?.address || null) !== this.lanIp) this.sweep(SWEEPS, 'réseau changé');
+    const full = this.sweepsLeft > 0;
+    await this.scanAll({ full });
+    const after = this.onlineIds();
+    if (full) {
+      if ([...this.seen.keys()].some((id) => !known.has(id))) this.sweepsLeft = Math.max(this.sweepsLeft, SWEEPS); // nouvelle lumière : on continue
+      else if (--this.sweepsLeft === 0) console.log('[lights] recherche des lumières en pause (rien de nouveau) : bouton Rechercher de l\'admin');
+    }
+    const lost = [...before].filter((id) => !after.includes(id));
+    if (lost.length) this.sweep(LOST_SWEEPS, `${lost.map((id) => this.cfg().devices?.[id]?.name || this.seen.get(id)?.sku || id).join(', ')} hors ligne`);
     // Lumière revenue (rallumée au mur) : elle reprend la scène en cours
     if (this.onlineIds().some((id) => !before.has(id))) this.enqueue(() => { this.scene = null; return this.applyWanted(); });
   }
@@ -333,7 +364,7 @@ export class Lights extends EventEmitter {
   setCountdown(n) {
     if (!Number.isFinite(n) || n <= 0 || this.boost !== 'wait' || this.scene !== 'shooting' || this.holds.size || !this.running) return;
     this.boost = 'ramp';
-    console.log(`[lights] décompte ${n} s : montée vers la pleine luminosité`);
+    if (this.targets('shooting').length) console.log(`[lights] décompte ${n} s : montée vers la pleine luminosité`); // aucune lumière en ligne : rien à dire
     this.ramp = { start: Date.now(), dur: Math.max(300, n * 1000 - 400), sent: new Map() };
     const step = () => {
       if (this.boost !== 'ramp' || !this.running) return this.stopRamp();
@@ -359,8 +390,8 @@ export class Lights extends EventEmitter {
     if (this.boost === 'wait' || !this.running) return;
     this.stopRamp();
     this.boost = 'wait';
-    console.log('[lights] photo prise : retour à la lumière douce');
     if (this.scene !== 'shooting' || this.holds.size) return;
+    if (this.targets('shooting').length) console.log('[lights] photo prise : retour à la lumière douce');
     this.enqueue(async () => { for (const d of this.targets('shooting')) d.drv.command(d.ip, 'brightness', { value: this.waitLevel(d) }); });
   }
 
@@ -500,6 +531,7 @@ export class Lights extends EventEmitter {
   /** Recherche immédiate puis lecture de l'état de chaque lumière (bouton « Rechercher »). */
   async discover() {
     if (!this.running) throw new Error('Activez d\'abord les appareils connectés');
+    this.sweep(SWEEPS, 'bouton Rechercher');
     await this.scanAll();
     await Promise.all(this.onlineIds().map(async (id) => {
       const d = this.seen.get(id);

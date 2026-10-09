@@ -53,12 +53,15 @@ export class ElgatoLan {
     return res.json();
   }
 
-  /** Chaque adresse du réseau est appelée sur le port 9123 (64 à la fois) : seules les Elgato répondent. */
-  async scan() {
+  /**
+   * Chaque adresse du réseau est appelée sur le port 9123 (64 à la fois) : seules les Elgato répondent. hosts : seulement
+   * ces adresses (lumières déjà connues).
+   */
+  async scan({ hosts: only = null } = {}) {
     this.local = lanAddress(); // réseau revenu ou changé depuis le démarrage
     if (!this.local) return;
     this.lastSent.clear(); // à chaque recherche : une lumière changée à la main est reprise
-    const hosts = subnetHosts(this.local);
+    const hosts = only || subnetHosts(this.local);
     const probe = async (ip) => {
       try {
         const info = await this.get(ip, '/elgato/accessory-info', 1200);

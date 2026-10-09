@@ -48,6 +48,9 @@ class M1ddc {
     // Écran qui ne répond pas (port HDMI intégré des Mac Apple Silicon, DDC/CI coupé dans le menu de l'écran) :
     // m1ddc rend une valeur hors bornes (110, -128…) au lieu d'une erreur
     if (Number.isNaN(v) || v < 0 || v > 100) throw new Error('pas de réponse DDC/CI');
+    // D'autres écrans (PLE2283H) acceptent les réglages mais répondent 0 à toute lecture : un 0 avec un contraste à 0
+    // aussi, c'est une lecture impossible (null : valeur inconnue), pas un écran noir
+    if (v === 0 && parseInt(await run(this.bin, ['display', this.num(id), 'get', 'contrast']), 10) === 0) return null;
     return v;
   }
   async set(id, prop, value) { await run(this.bin, ['display', this.num(id), 'set', this.prop(prop), String(value)]); }
@@ -109,6 +112,7 @@ export class Screen extends EventEmitter {
     this.applied = {}; // dernière valeur envoyée par réglage : la même n'est pas renvoyée à chaque changement de config
     this.queue = Promise.resolve();
     this.timer = null;
+    this.announced = false; // écran trouvé (ou non) écrit au journal, une fois
   }
 
   cfg() { return this.config.get().screen || {}; }
@@ -129,10 +133,14 @@ export class Screen extends EventEmitter {
     if (!this.driver) { console.warn(`[screen] ${this.state.error}`); return; }
     this.timer = setInterval(() => this.refresh().catch(() => {}), RESCAN_MS);
     this.timer.unref?.();
-    await this.refresh();
+    await this.refresh(); // annonce l'écran trouvé (voir announce), puis lui envoie les réglages
+  }
+
+  /** Écran trouvé au démarrage, écrit au journal avant les réglages qui lui sont envoyés. */
+  announce() {
     const s = this.state;
     console.log(s.display
-      ? `[screen] écran ${s.display.name || s.display.id} : luminosité ${s.brightness ?? '?'} %${s.volumeOk ? `, volume ${s.volume ?? '?'} %` : ''} (${this.driver.name})`
+      ? `[screen] écran ${s.display.name || s.display.id} : ${s.brightness == null ? 'réglages illisibles en DDC/CI' : `luminosité ${s.brightness} %${s.volumeOk ? `, volume ${s.volume ?? '?'} %` : ''}`} (${this.driver.name})`
       : `[screen] aucun écran pilotable en DDC/CI (${this.driver.name}${s.error ? ` : ${s.error}` : ''})`);
   }
 
@@ -149,10 +157,16 @@ export class Screen extends EventEmitter {
         // Écran demandé, sinon le premier écran externe nommé qui répond vraiment en DDC/CI
         const named = s.displays.filter((d) => d.name);
         const candidates = wanted ? s.displays.filter((d) => d.id === wanted || d.name === wanted) : named;
-        for (const d of candidates) {
+        // Écran déjà reconnu illisible (répond 0 à tout) et toujours là : rien à relire, la liste suffit
+        const prev = this.state.display;
+        const known = this.state.brightness == null && prev ? candidates.find((d) => d.id === prev.id) : null;
+        if (known) s.display = known;
+        else for (const d of candidates) {
           try { s.brightness = await this.driver.get(d.id, 'brightness'); s.display = d; break; } catch { /* écran muet : le suivant */ }
         }
-        if (s.display) {
+        if (known) s.volumeOk = this.state.volumeOk;
+        else if (s.display && s.brightness == null) s.volumeOk = true; // illisible : le volume se règle quand même
+        else if (s.display) {
           try { s.volume = await this.driver.get(s.display.id, 'volume'); s.volumeOk = true; } catch { s.volume = null; s.volumeOk = false; }
         } else if (candidates.length) {
           s.error = `${candidates.map((d) => d.name || d.id).join(', ')} ne répond pas en DDC/CI`;
@@ -162,7 +176,9 @@ export class Screen extends EventEmitter {
         s.display = null;
       }
       s.checkedAt = new Date().toISOString();
+      if (s.display?.id !== this.state.display?.id) this.applied = {}; // autre écran, ou rebranché : réglages renvoyés
       this.state = s;
+      if (!this.announced) { this.announced = true; this.announce(); }
       await this._apply();
     });
   }
@@ -177,13 +193,18 @@ export class Screen extends EventEmitter {
       const v = cfg[prop];
       if (typeof v !== 'number') { delete this.applied[prop]; continue; } // null : l'écran garde son réglage
       if (prop === 'volume' && !s.volumeOk) continue;
-      if (s[prop] === v && this.applied[prop] === v) continue;
+      if ((s[prop] === v || s[prop] == null) && this.applied[prop] === v) continue; // null : écran illisible, envoyé une fois
+      const what = prop === 'volume' ? 'volume' : 'luminosité';
       try {
         await this.driver.set(s.display.id, prop, v);
         this.applied[prop] = v;
-        s[prop] = await this.driver.get(s.display.id, prop).catch(() => v);
+        if (s.brightness != null) s[prop] = await this.driver.get(s.display.id, prop).catch(() => v); // illisible : pas de relecture
         s.error = null;
-      } catch (e) { s.error = `${prop === 'volume' ? 'volume' : 'luminosité'} : ${firstLine(e)}`; }
+        console.log(`[screen] ${what} ${v} % envoyé à l'écran ${s.display.name || s.display.id}${s[prop] == null ? ' (sans relecture possible)' : ''}`);
+      } catch (e) {
+        s.error = `${what} : ${firstLine(e)}`;
+        console.warn(`[screen] ${what} ${v} % non envoyé : ${firstLine(e)}`);
+      }
     }
   }
 
