@@ -140,14 +140,15 @@ export class Screen extends EventEmitter {
   refresh() {
     if (!this.driver) return Promise.resolve();
     return this.enqueue(async () => {
-      const s = this.state;
+      // Lecture dans un état à part, publié d'un coup à la fin : pendant les lectures DDC/CI (lentes), status() garde
+      // l'état précédent au lieu d'un écran à null, que la surveillance des appareils prendrait pour un débranchement
+      const s = { ...this.state, display: null, brightness: null, volume: null, error: null };
       try {
         s.displays = await this.driver.list();
         const wanted = String(this.cfg().display || '');
         // Écran demandé, sinon le premier écran externe nommé qui répond vraiment en DDC/CI
         const named = s.displays.filter((d) => d.name);
         const candidates = wanted ? s.displays.filter((d) => d.id === wanted || d.name === wanted) : named;
-        s.display = null; s.brightness = null; s.volume = null; s.error = null;
         for (const d of candidates) {
           try { s.brightness = await this.driver.get(d.id, 'brightness'); s.display = d; break; } catch { /* écran muet : le suivant */ }
         }
@@ -161,6 +162,7 @@ export class Screen extends EventEmitter {
         s.display = null;
       }
       s.checkedAt = new Date().toISOString();
+      this.state = s;
       await this._apply();
     });
   }

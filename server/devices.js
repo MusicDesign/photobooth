@@ -16,6 +16,8 @@ import { wifiStatus } from './network.js';
  * Émet 'camera' et 'printer' (nouveau pilote, ancien pilote) après chaque bascule,
  * et 'network' quand le Wi-Fi apparaît ou disparaît (les QR codes en dépendent).
  */
+const CAMERA_MISSES = 2; // détections ratées de suite avant de lâcher le boîtier (une toutes les pollMs)
+
 export class Devices extends EventEmitter {
   constructor({ config, pollMs = 3000, printerBusy = () => false }) {
     super();
@@ -30,6 +32,7 @@ export class Devices extends EventEmitter {
     this.timer = null;
     this.pending = null;
     this.closed = false;
+    this.cameraMisses = 0; // détections USB ratées de suite alors que le boîtier était là
   }
 
   /**
@@ -99,7 +102,14 @@ export class Devices extends EventEmitter {
     // « gphoto2 --auto-detect » lancé pendant une photo la bloque, comme toute commande concurrente.
     if (this.camera?.name === 'gphoto2' && this.camera.inUse?.()) return { driver: 'gphoto2', reason: 'boîtier en cours d\'utilisation' };
     const d = await detectGphoto2(c.gphoto2);
-    if (d.found) return { driver: 'gphoto2', port: d.port, reason: `${d.model} détecté en USB${d.ignored.length ? ` (${d.ignored.join(', ')} ignoré)` : ''}` };
+    if (d.found) {
+      this.cameraMisses = 0;
+      return { driver: 'gphoto2', port: d.port, reason: `${d.model} détecté en USB${d.ignored.length ? ` (${d.ignored.join(', ')} ignoré)` : ''}` };
+    }
+    // Juste après l'arrêt du live view, le boîtier disparaît un instant de l'USB : une seule détection ratée ne
+    // le fait pas basculer sur le repli (pilote recréé, connexion USB réinitialisée, alerte de déconnexion)
+    if (this.camera?.name === 'gphoto2' && ++this.cameraMisses < CAMERA_MISSES) return { driver: 'gphoto2', reason: `${d.reason} : nouvelle détection avant repli` };
+    this.cameraMisses = 0;
     return { driver: c.fallback || 'browser', reason: `${d.reason} → repli ${c.fallback || 'browser'}` };
   }
 

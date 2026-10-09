@@ -12,6 +12,8 @@ import sharp from 'sharp';
  * Sur Mac, l'application Stream Deck d'Elgato doit être quittée (elle réserve l'appareil).
  * Sous Linux, une règle udev donne l'accès sans sudo (voir TUTORIEL.md).
  */
+const RECOVER_MS = 10000; // erreur de lecture USB : délai pour rouvrir le Stream Deck sans annoncer de déconnexion
+
 export class StreamDeckRemote {
   constructor({ config, onPress, onInfo = () => {} }) {
     this.config = config;
@@ -27,6 +29,7 @@ export class StreamDeckRemote {
     this.opening = false;
     this.lib = null;
     this.drawSeq = 0;
+    this.lostAt = 0;         // erreur de lecture : réouverture en cours depuis ce moment
   }
 
   cfg() {
@@ -54,7 +57,7 @@ export class StreamDeckRemote {
   status() {
     const c = this.cfg();
     return {
-      enabled: c.enabled, connected: !!this.deck, model: this.model, error: this.error, keys: this.buttons().length,
+      enabled: c.enabled, connected: !!this.deck || Date.now() - this.lostAt < RECOVER_MS, model: this.model, error: this.error, keys: this.buttons().length,
       screen: this.ui?.screen || null, items: (this.ui?.items || []).map((i) => i.icon || (i.image ? 'image' : i.label)),
       layout: this.drawnLayout || null, // touche → action, ligne par ligne (diagnostic)
       drawnAt: this.drawnAt || null, drawError: this.drawError || null
@@ -78,12 +81,16 @@ export class StreamDeckRemote {
       if (!list.length) { this.error = null; return; }
       const deck = await this.lib.openStreamDeck(list[0].path, { resetToLogoOnClose: true });
       this.deck = deck;
+      this.lostAt = 0;
       this.model = deck.PRODUCT_NAME || list[0].model || 'Stream Deck';
       this.error = null;
       deck.on('down', (control) => this.handleDown(control));
+      // Erreur de lecture (hid_read_timeout, bus USB chargé) : node-hid cesse de lire les touches, il faut rouvrir.
+      // Réouverture tout de suite ; pendant RECOVER_MS, status() le dit encore connecté (pas d'alerte s'il revient)
       deck.on('error', (e) => {
-        console.warn(`[streamdeck] ${e?.message || e}`);
-        this.close();
+        console.warn(`[streamdeck] ${e?.message || e} : réouverture`);
+        this.lostAt = Date.now();
+        this.close().then(() => this.scan());
       });
       await deck.clearPanel();
       await deck.setBrightness(this.cfg().brightness).catch(() => {});
