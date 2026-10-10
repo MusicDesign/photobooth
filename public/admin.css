@@ -602,3 +602,15 @@ details.more .menu { position: absolute; right: 0; top: calc(100% + 4px); z-inde
 .log-cat.c-api, .log-cat.c-apiAdmin { color: #7d8594; }
 .log-empty { padding: 12px; color: #7d8594; }
 @media (max-width: 800px) { .log-row { grid-template-columns: 80px 1fr; } .log-cat, .log-mod { display: none; } .log-list { height: 60vh; } }
+
+/* Tableau de bord : prêt pour l'événement */
+.ready-card { margin-bottom: 22px; }
+.ready-card h3 { display: flex; align-items: center; gap: 10px; }
+.ready-list { display: flex; flex-direction: column; margin: 0 -10px; }
+.ready-row { display: flex; align-items: center; gap: 12px; padding: 9px 10px; color: inherit; text-decoration: none; border-radius: 8px; }
+.ready-row:hover { background: var(--hover, rgba(0, 0, 0, .04)); }
+.ready-row span:nth-child(2) { flex: 1; }
+.ready-row i { opacity: .4; font-size: 12px; }
+.ready-ok { margin-top: 6px; }
+.ready-ok summary { cursor: pointer; font-size: 14px; color: var(--muted, #667); padding: 4px 0; }
+.ready-card h3 .badge { text-transform: none; letter-spacing: 0; }

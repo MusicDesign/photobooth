@@ -570,6 +570,59 @@ function hardwareList() {
   </div>`;
 }
 
+/**
+ * Contrôle « prêt pour l'événement » : ce qui doit être en ordre avant d'ouvrir la borne aux invités (réglages de
+ * test oubliés, matériel, consommables). err : à régler ; warn : à vérifier ; ok. Chaque point mène à sa page.
+ */
+function readiness() {
+  const cfg = S.config, c = S.counters, cam = S.camera || {}, pr = S.printer || {};
+  const out = [];
+  const add = (state, label, href) => out.push({ state, label, href });
+  add(String(cfg.admin?.pin ?? '') ? 'ok' : 'err', String(cfg.admin?.pin ?? '') ? 'Code admin défini' : 'Pas de code admin : n\'importe qui peut ouvrir l\'admin', '#security');
+  add(cfg.booth.window === 'fullscreen' ? 'err' : 'ok', cfg.booth.window === 'fullscreen' ? 'Fenêtre en plein écran classique : les invités peuvent quitter la borne' : 'Fenêtre verrouillée (kiosque)', '#control');
+  add(cam.driver === 'gphoto2' && cam.ok ? 'ok' : 'err', cam.driver === 'gphoto2' ? (cam.ok ? 'Boîtier photo prêt' : 'Boîtier photo en erreur') : 'Boîtier photo non détecté', '#camera');
+  if (pr.driver === 'none') add('warn', 'Impression désactivée : QR code seulement', '#printing');
+  else if (pr.driver === 'mock') add('err', 'Imprimante simulée : rien ne sortira', '#printing');
+  else add(pr.ok ? 'ok' : 'err', pr.ok ? 'Imprimante prête' : `Imprimante : ${pr.message || 'pas prête'}`, '#printing');
+  if (pr.driver !== 'none') {
+    if (c.paperRemaining === null) add('warn', 'Papier non suivi', '#dashboard');
+    else add(c.paperRemaining <= 0 ? 'err' : c.lowPaper ? 'warn' : 'ok', `${plural(c.paperRemaining, 'feuille restante', 'feuilles restantes')}`, '#dashboard');
+  }
+  if (c.quotaReached) add('err', 'Quota de tirages atteint', '#printing');
+  const enabled = S.templates.filter((t) => cfg.templates.enabled.includes(t.id));
+  add(enabled.length ? 'ok' : 'err', enabled.length ? plural(enabled.length, 'template activé', 'templates activés') : 'Aucun template activé', '#templates');
+  const sh = cfg.share || {};
+  if (sh.qrOnDone !== false) {
+    const wifi = !!S.devices?.network?.wifi;
+    add(wifi || sh.requireWifi === false ? 'ok' : 'err', wifi ? 'Wi-Fi connecté : QR codes affichés' : sh.requireWifi === false ? 'QR codes affichés sans Wi-Fi' : 'Pas de Wi-Fi : QR codes masqués', '#sharing');
+  }
+  if (S.disk) add(S.disk.free < 1e9 ? 'err' : S.disk.low ? 'warn' : 'ok', `${go(S.disk.free)} libres pour les photos`, '#events');
+  const missing = (S.setup?.items || []).filter((it) => it.state !== 'ok');
+  if (S.setup) add(missing.some((it) => it.required) ? 'err' : missing.length ? 'warn' : 'ok', missing.length ? `Installation incomplète : ${missing.map((it) => it.label).join(', ')}` : 'Installation complète', '#install');
+  const L = S.lights;
+  if (L?.available && L.enabled && L.devices.length) {
+    const off = L.devices.filter((x) => !x.online);
+    add(off.length ? 'warn' : 'ok', off.length ? `Lumières hors ligne : ${off.map((x) => x.name || x.type).join(', ')}` : 'Lumières en ligne', '#lights');
+  }
+  for (const w of S.dataWarnings || []) add('err', w, '#backup');
+  return out;
+}
+
+function readinessCard() {
+  const checks = readiness();
+  const bad = checks.filter((x) => x.state !== 'ok');
+  const ok = checks.filter((x) => x.state === 'ok');
+  const row = (x) => `<a class="ready-row" href="${x.href}"><span class="hw-dot ${x.state}"></span><span>${esc(x.label)}</span><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></a>`;
+  const errs = bad.filter((x) => x.state === 'err').length;
+  const head = !bad.length ? '<span class="badge ok">Tout est prêt</span>'
+    : `<span class="badge ${errs ? 'err' : 'warn'}">${plural(bad.length, 'point à régler', 'points à régler')}</span>`;
+  return `<div class="card ready-card">
+    <h3>Prêt pour l'événement ${head}</h3>
+    ${bad.length ? `<div class="ready-list">${[...bad.filter((x) => x.state === 'err'), ...bad.filter((x) => x.state === 'warn')].map(row).join('')}</div>` : ''}
+    <details class="ready-ok"><summary>${plural(ok.length, 'vérification réussie', 'vérifications réussies')}</summary><div class="ready-list">${ok.map(row).join('')}</div></details>
+  </div>`;
+}
+
 function dashboard() {
   const c = S.counters;
   const cfg = S.config;
@@ -579,6 +632,7 @@ function dashboard() {
   ${(S.dataWarnings || []).map((w) => `<div class="alert">${esc(w)}</div>`).join('')}
   ${updatePending() ? `<div class="update-banner"><span><b>Mise à jour disponible</b>${pendingVersion() ? ` · ${esc(pendingVersion())}` : ''}</span><button class="btn small primary" id="btnDashUpdate">Mettre à jour</button></div>` : ''}
   <p class="sub">Événement en cours : <b>${esc(c.eventName)}</b> · <a href="#events">changer ou en créer un</a></p>
+  ${readinessCard()}
   <div class="grid stats4">
     ${stat(c.printed, 'tirages imprimés')}
     ${stat(c.quotaRemaining === null ? '<i class="fa-solid fa-infinity" aria-hidden="true"></i>' : c.quotaRemaining, 'quota restant', c.quotaReached ? 'err' : '')}

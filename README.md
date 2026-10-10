@@ -211,11 +211,14 @@ le serveur se ferme puis sort avec le code 0, que le lanceur lit comme un arrêt
    machine) : écran tactile, veille, connexion automatique, `gvfs-gphoto2-volume-monitor`
    désactivé, hotspot Wi-Fi + `share.baseUrl` pour le QR code, `ddcutil` pour l'écran,
    vitesse du détourage précis (repli automatique sur le modèle rapide si trop lent).
-3. **Finitions** : passage de la persistance JSON à SQLite si les événements grossissent.
+3. **Répétition générale** sur le mini PC avec tout le matériel : 4 à 6 h, quelques centaines de
+   séances, partage par QR code avec de vrais téléphones. La carte « Prêt pour l'événement » du
+   tableau de bord liste ce qui reste à régler avant d'ouvrir la borne.
 
 ## Limites connues
 
-- Persistance en fichier JSON : très bien pour un événement, à passer en SQLite pour
-  des milliers de sessions.
+- Persistance en JSON : une fiche par session dans son dossier, `data/db.json` pour les événements et
+  les compteurs (historique des tirages limité aux 5000 derniers, compteurs non concernés). Suffisant
+  pour des dizaines de milliers de sessions ; SQLite n'apporterait rien tant qu'un seul serveur écrit.
 - L'authentification admin est un simple PIN : suffisant sur un réseau local fermé,
   pas pour une exposition sur internet.
